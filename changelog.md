@@ -3,7 +3,7 @@
   - 模块: `manual.sh activate / resume / status`
   - 备份: `backup.sh save / list / restore`
   - 广告与 Hosts: `ad.sh block / recovery / list`、`update/host.sh update`
-  - 高级: `iptables/dns.sh enable`、`update/agh.sh`、`update/mihomo.sh`、`update/desc.sh`
+  - 高级: `iptables/dns.sh enable`、`update/agh.sh`、`update/mihomo.sh`、`update/proxy.sh`、`update/desc.sh`
   - 内核: `update.sh`
   - 恢复备份与更新内核需二次点击确认，输出直接回显在页面
 - `ad.sh list` 改为批量读取属性：1 次 `lsattr` 替代 153 次，并用参数展开去掉每行的 `sed` fork
