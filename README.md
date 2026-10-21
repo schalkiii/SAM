@@ -15,6 +15,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
 - **全量配置备份**：卸载时备份到 `/sdcard/SAM-backup/<时间>/`（setting、AGH、SmartDNS、Mihomo、名单、hosts、定时）
+- **默认仅回环监听**：AGH WebUI / Mihomo 控制台 / 各 DNS 默认只听 127.0.0.1，需要电脑管理时在设置里打开「允许局域网访问」
 - **工具页**：WebUI 里 16 个按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
 - **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC 与 `mksh -n` 校验
 - 广告过滤加入 GOODBYEADS 规则集与其放行列表

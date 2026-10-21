@@ -67,6 +67,7 @@ update_setting(){
     modify_setting "${old_content}" "${out_content}" "CRONTAB_ENABLE"
     modify_setting "${old_content}" "${out_content}" "MODULE_DNS_MODE"
     modify_setting "${old_content}" "${out_content}" "BYPASS_ENABLE"
+    modify_setting "${old_content}" "${out_content}" "LAN_ACCESS"
     modify_setting "${old_content}" "${out_content}" "NETWORK_REFRESH"
     modify_setting "${old_content}" "${out_content}" "AD_BLOCK_ENABLE"
     modify_setting "${old_content}" "${out_content}" "BACKUP_CONF"

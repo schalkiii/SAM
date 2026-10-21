@@ -15,6 +15,18 @@ start(){
         return 1
     }
     
+    # 按 LAN_ACCESS 决定监听地址(默认只监听回环，避免同 WiFi 设备直接用本机 DNS)
+    if [ "${LAN_ACCESS}" = "true" ]; then
+        bind_addr="[::]:3721"
+    else
+        bind_addr="127.0.0.1:3721"
+    fi
+    current_bind=$(grep -m1 "^bind " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -n "${current_bind}" ] && [ "${current_bind}" != "${bind_addr}" ]; then
+        sed -i "s|^bind .*|bind ${bind_addr}|" "${SMARTDNS_CONF}"
+        log "i" "${SMARTDNS_BIN} 监听地址改为 ${bind_addr}"
+    fi
+
     # 二进制与 musl 加载器软链必须存在，否则 exec 直接失败
     if [ ! -x "${SMARTDNS_PATH}/${SMARTDNS_BIN}" ]; then
         log "e" "${SMARTDNS_BIN} 二进制不存在: ${SMARTDNS_PATH}/${SMARTDNS_BIN}"

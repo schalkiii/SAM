@@ -16,8 +16,9 @@ log-level: silent
 ipv6: true
 # 禁用 TCP Keep Alive
 disable-keep-alive: true
-# 进程匹配模式
-find-process-mode: always
+# 进程匹配模式: always/strict/off
+# 本配置没有 PROCESS-NAME 规则，设为 off 可省掉每个连接的进程查找开销
+find-process-mode: off
 # 更新时间
 updatetime: &Time 10800
 

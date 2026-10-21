@@ -20,6 +20,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - `scripts/watchdog.sh` 5 秒守护：拉起掉线服务、重建 iptables、按 mtime 热加载配置
 - `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换）
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
+- 监听地址由 `LAN_ACCESS` 决定（默认 false = 只回环）：AGH 在 `update/agh.sh` 改写、Mihomo 在 `update/mihomo.sh` 改写、SmartDNS 在 `service/sd.sh` 启动前改写
 - `scripts/backup.sh` 卸载前把配置备份到 `/sdcard/SAM-backup/<时间>/`
 - `scripts/ad.sh list` 输出广告屏蔽的影响范围（App|路径|状态），WebUI「查看影响范围」用它
 - WebUI「工具」页是各脚本命令的图形入口：新增带子命令的脚本时，同步在 `webroot/index.html` 加 `data-script` / `data-args` 按钮

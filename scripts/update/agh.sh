@@ -73,5 +73,22 @@ get_end_line(){
     fi
 }
 
+# 修改 WebUI 监听地址
+# 默认只监听回环: 0.0.0.0 会让同一 WiFi 下的设备用默认密码直接登进来
+modify_web_addr(){
+    if [ "${LAN_ACCESS}" = "true" ]; then
+        web_addr="0.0.0.0:3000"
+    else
+        web_addr="127.0.0.1:3000"
+    fi
+
+    current_addr=$(grep -m1 "^  address:" "${AGH_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -n "${current_addr}" ] && [ "${current_addr}" != "${web_addr}" ]; then
+        log "i" "修改 ${AGH_BIN} WebUI 监听 ${current_addr} 为 ${web_addr}"
+        sed -i "s|^  address: .*|  address: ${web_addr}|" "${AGH_CONF}"
+    fi
+}
+
 modify_conf
 modify_dns_port
+modify_web_addr

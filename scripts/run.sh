@@ -29,6 +29,8 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # 非 root: 参数落盘后提权
+# /data/local/tmp 其他应用可进入，参数里可能带订阅链接，收紧权限
+umask 077
 args_file="/data/local/tmp/.sam_args.$$"
 : > "${args_file}" 2>/dev/null || { echo "无法创建临时文件: ${args_file}" >&2; exit 1; }
 for arg in "$@"; do

@@ -1,3 +1,15 @@
+# 2026.10.21.4
+- 安全: 新增 `LAN_ACCESS`(默认 false)。关闭时只监听回环
+  - AdGuardHome WebUI: `127.0.0.1:3000`
+  - Mihomo: `external-controller 127.0.0.1:9090`、`allow-lan false`、`bind-address 127.0.0.1`、`dns.listen 127.0.0.1`
+  - SmartDNS: `bind 127.0.0.1:3721`
+  - 开启后恢复 `0.0.0.0` / `[::]`，供电脑等其它设备访问
+- 性能: Mihomo `find-process-mode` 由 `always` 改为 `off`（本配置没有 PROCESS-NAME 规则，省掉每连接的进程查找）
+- 安全: `run.sh` 提权时参数文件加 `umask 077`，避免 `/data/local/tmp` 下被其它应用读取（可能含订阅链接）
+- 健壮性: Mihomo 配置改写对 `device` / `enhanced-mode` / `listen` 缺失做了保护，不再出现空值比较报错
+- 内核: Mihomo `1.19.31` -> `1.19.32`（android-arm64-v8，已校验 ELF aarch64）
+- 版本核对: SmartDNS 48.4 为最新稳定；AdGuardHome 0.107.79 为最新稳定，`1.0.0-b.1` 仍是 beta（新 UI 与新版本方案），默认不采用
+
 # 2026.10.21.3
 - 修复软重启后「恢复运行」只有 AdGuardHome 起来、SmartDNS 起不来
   - 原因: SmartDNS 是 musl 动态链接的可执行文件，缺少 loader 软链时 `exec` 直接失败；AGH 是静态 Go 二进制所以不受影响

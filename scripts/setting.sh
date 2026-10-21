@@ -20,6 +20,7 @@ setting_default(){
     CRONTAB_ENABLE=false
     MODULE_DNS_MODE=2
     BYPASS_ENABLE=false
+    LAN_ACCESS=false
     NETWORK_REFRESH=true
     AD_BLOCK_ENABLE=true
     BACKUP_CONF=true
@@ -149,6 +150,7 @@ setting_validate(){
     setting_fix_bool BACKUP_CONF true
     setting_fix_bool ENABLE_WHITELIST false
     setting_fix_bool BYPASS_ENABLE false
+    setting_fix_bool LAN_ACCESS false
     setting_fix_bool NETWORK_REFRESH true
     setting_fix_bool AD_BLOCK_ENABLE true
 

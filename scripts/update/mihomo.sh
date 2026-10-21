@@ -95,14 +95,24 @@ modify_dns(){
 }
 
 # 修改 Mihomo DNS 端口
-modify_dns_port(){
-    # 获取 Mihomo DNS 端口
-    port_value=$(cat ${MIHOMO_CONF} | grep "listen" | awk '{print $2}' | tr -d "[:space:]" | sed "s/0.0.0.0://g")
-    # 判断 Mihomo DNS 端口 与设置的端口不一致则修改
-    if [ "${MIHOMO_DNS_PORT}" != "${port_value}" ]; then        
-        log "i" "修改 Mihomo DNS 端口 ${port_value} 为 ${MIHOMO_DNS_PORT}"
-        cat ${MIHOMO_CONF} | sed -i "s/listen: 0.0.0.0:${port_value}/listen: 0.0.0.0:${MIHOMO_DNS_PORT}/g" ${MIHOMO_CONF}
+modify_lan_access(){
+    # 关闭 LAN_ACCESS 时全部只监听回环:
+    # 0.0.0.0 会让同一 WiFi 下的设备直接访问控制端口/借用代理/当成 DNS
+    if [ "${LAN_ACCESS}" = "true" ]; then
+        lan_value="true"
+        bind_value="*"
+        controller_value="0.0.0.0:9090"
+        listen_value="0.0.0.0:${MIHOMO_DNS_PORT}"
+    else
+        lan_value="false"
+        bind_value="127.0.0.1"
+        controller_value="127.0.0.1:9090"
+        listen_value="127.0.0.1:${MIHOMO_DNS_PORT}"
     fi
+
+    sed -i         -e "s|^allow-lan:.*|allow-lan: ${lan_value}|"         -e "s|^bind-address:.*|bind-address: \"${bind_value}\"|"         -e "s|^external-controller:.*|external-controller: ${controller_value}|"         -e "s|^  listen: .*|  listen: ${listen_value}|"         "${MIHOMO_CONF}"
+
+    log "i" "局域网访问: ${lan_value} | 控制端口 ${controller_value} | DNS ${listen_value}"
 }
 
 # 修改 DNS 模式
@@ -116,6 +126,7 @@ modify_dns_mode(){
     content=$(cat ${MIHOMO_CONF})
     # 读取所需修改行
     line=$(echo "${content}" | sed -n "/enhanced-mode:/=" | sed -n "1p")
+    [ -z "${line}" ] && return 0
     let "line++" 
     
     # fake-ip 配置
@@ -129,6 +140,7 @@ modify_dns_mode(){
 modify_tun_device(){
     # 获取 Mihomo TUN 网卡
     device_value=$(cat ${MIHOMO_CONF} | grep "device" | awk '{print $2}' | tr -d "[:space:]")
+    [ -z "${device_value}" ] && return 0
     # 判断 Mihomo TUN 网卡 与设置的网卡不一致则修改
     if [ "${TUN_DEVICE}" != "${device_value}" ]; then        
         log "i" "修改 Mihomo TUN 网卡 ${device_value} 为 ${TUN_DEVICE}"
@@ -322,7 +334,7 @@ add_smart_conf(){
 
 modify_sub
 modify_dns
-modify_dns_port
+modify_lan_access
 modify_dns_mode
 modify_tun_device
 modify_ipv6_proxy
