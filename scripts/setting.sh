@@ -21,6 +21,10 @@ setting_default(){
     MODULE_DNS_MODE=2
     BYPASS_ENABLE=false
     LAN_ACCESS=false
+    SMARTDNS_RESPONSE_MODE=first-ping
+    SMARTDNS_SPEED_CHECK=ping,tcp:80,tcp:443
+    SMARTDNS_DUALSTACK=true
+    SMARTDNS_TTL_MIN=5
     NETWORK_REFRESH=true
     AD_BLOCK_ENABLE=true
     BACKUP_CONF=true
@@ -151,15 +155,27 @@ setting_validate(){
     setting_fix_bool ENABLE_WHITELIST false
     setting_fix_bool BYPASS_ENABLE false
     setting_fix_bool LAN_ACCESS false
+    setting_fix_bool SMARTDNS_DUALSTACK true
     setting_fix_bool NETWORK_REFRESH true
     setting_fix_bool AD_BLOCK_ENABLE true
 
     setting_fix_number AGH_DNS_PORT 5300
     setting_fix_number MIHOMO_DNS_PORT 1053
+    setting_fix_number SMARTDNS_TTL_MIN 5
 
     setting_fix_enum MODULE_DNS_MODE 2 1 2
     setting_fix_enum WHITELIST_MODE 1 1 2
     setting_fix_enum MIHOMO_DNS_MODE fake-ip fake-ip redir-host
+    setting_fix_enum SMARTDNS_RESPONSE_MODE first-ping first-ping fastest-ip fastest-response
+
+    # 测速方式只允许 none / ping / tcp:端口 的组合
+    case "${SMARTDNS_SPEED_CHECK}" in
+        none|ping|tcp:*|ping,tcp:*|tcp:*,tcp:*|ping,tcp:*,tcp:*) ;;
+        *)
+            log "e" "设置项 SMARTDNS_SPEED_CHECK 取值非法(${SMARTDNS_SPEED_CHECK})，已回退为默认"
+            SMARTDNS_SPEED_CHECK="ping,tcp:80,tcp:443"
+            ;;
+    esac
 
     if [ -z "${TUN_DEVICE}" ]; then
         log "e" "设置项 TUN_DEVICE 为空，已回退为 Meta"

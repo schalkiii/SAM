@@ -27,6 +27,37 @@ start(){
         log "i" "${SMARTDNS_BIN} 监听地址改为 ${bind_addr}"
     fi
 
+    # 按设置改写响应模式 / 测速方式 / 双栈优选
+    # 这三项直接决定"冷查询"要等多久，值变了才改文件
+    new_response=$(grep -m1 "^response-mode " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -n "${new_response}" ] && [ "${new_response}" != "${SMARTDNS_RESPONSE_MODE}" ]; then
+        sed -i "s|^response-mode .*|response-mode ${SMARTDNS_RESPONSE_MODE}|" "${SMARTDNS_CONF}"
+        log "i" "${SMARTDNS_BIN} 响应模式改为 ${SMARTDNS_RESPONSE_MODE}"
+    fi
+
+    new_speed=$(grep -m1 "^speed-check-mode " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -n "${new_speed}" ] && [ "${new_speed}" != "${SMARTDNS_SPEED_CHECK}" ]; then
+        sed -i "s|^speed-check-mode .*|speed-check-mode ${SMARTDNS_SPEED_CHECK}|" "${SMARTDNS_CONF}"
+        log "i" "${SMARTDNS_BIN} 测速方式改为 ${SMARTDNS_SPEED_CHECK}"
+    fi
+
+    if [ "${SMARTDNS_DUALSTACK}" = "true" ]; then
+        dualstack_value="yes"
+    else
+        dualstack_value="no"
+    fi
+    new_dualstack=$(grep -m1 "^dualstack-ip-selection " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -n "${new_dualstack}" ] && [ "${new_dualstack}" != "${dualstack_value}" ]; then
+        sed -i "s|^dualstack-ip-selection .*|dualstack-ip-selection ${dualstack_value}|" "${SMARTDNS_CONF}"
+        log "i" "${SMARTDNS_BIN} 双栈优选改为 ${dualstack_value}"
+    fi
+
+    new_ttl=$(grep -m1 "^rr-ttl-min " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -n "${new_ttl}" ] && [ "${new_ttl}" != "${SMARTDNS_TTL_MIN}" ]; then
+        sed -i "s|^rr-ttl-min .*|rr-ttl-min ${SMARTDNS_TTL_MIN}|" "${SMARTDNS_CONF}"
+        log "i" "${SMARTDNS_BIN} 缓存 TTL 下限改为 ${SMARTDNS_TTL_MIN}s"
+    fi
+
     # 二进制与 musl 加载器软链必须存在，否则 exec 直接失败
     if [ ! -x "${SMARTDNS_PATH}/${SMARTDNS_BIN}" ]; then
         log "e" "${SMARTDNS_BIN} 二进制不存在: ${SMARTDNS_PATH}/${SMARTDNS_BIN}"

@@ -1,3 +1,12 @@
+# 2026.10.21.5
+- 新增 SmartDNS 调优项（设置页「SmartDNS 调优」）
+  - `SMARTDNS_RESPONSE_MODE`: first-ping / fastest-ip / fastest-response
+  - `SMARTDNS_SPEED_CHECK`: none / ping / tcp:443 / ping,tcp:80,tcp:443
+  - `SMARTDNS_DUALSTACK`: 双栈 IP 优选开关
+  - `SMARTDNS_TTL_MIN`: 缓存 TTL 下限，提高可减少冷查询与测速次数
+- 以上四项在 SmartDNS 启动前按设置改写 `smartdns.conf`，值变化才写文件
+- 用于定位「AGH 里 3721 上游延迟 100ms」：测速阶段（ping 在移动网络常被限制）与响应模式等待是主因
+
 # 2026.10.21.4
 - 安全: 新增 `LAN_ACCESS`(默认 false)。关闭时只监听回环
   - AdGuardHome WebUI: `127.0.0.1:3000`

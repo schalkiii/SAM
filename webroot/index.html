@@ -236,6 +236,46 @@
             </div>
 
             <div class="content-section">
+                <h3>SmartDNS 调优</h3>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>响应模式</h4>
+                        <div class="setting-desc">first-ping 综合最快；fastest-ip 要等全部测速（最慢）；fastest-response 不等测速（延迟最低）</div>
+                    </div>
+                    <select class="setting-select" data-key="SMARTDNS_RESPONSE_MODE">
+                        <option value="first-ping">first-ping</option>
+                        <option value="fastest-ip">fastest-ip</option>
+                        <option value="fastest-response">fastest-response</option>
+                    </select>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>测速方式</h4>
+                        <div class="setting-desc">none / ping / tcp:443 / ping,tcp:80,tcp:443。移动网络下 ping 常被限制，先试 tcp:443</div>
+                    </div>
+                    <input class="setting-input setting-input-wide" type="text" data-key="SMARTDNS_SPEED_CHECK">
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>缓存 TTL 下限</h4>
+                        <div class="setting-desc">秒。上游 TTL 低于该值时按该值缓存；提高到 60 可明显减少冷查询与测速次数</div>
+                    </div>
+                    <input class="setting-input" type="number" data-key="SMARTDNS_TTL_MIN">
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>双栈 IP 优选</h4>
+                        <div class="setting-desc">对 A/AAAA 做时延比较；不用 IPv6 时关掉可少一次等待</div>
+                    </div>
+                    <label class="switch"><input type="checkbox" data-key="SMARTDNS_DUALSTACK"><span class="track"></span></label>
+                </div>
+            </div>
+
+            <div class="content-section">
                 <h3>其他</h3>
 
                 <div class="setting-row">

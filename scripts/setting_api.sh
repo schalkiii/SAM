@@ -70,9 +70,9 @@ need_refresh(){
 }
 
 # 支持的设置项分类
-BOOL_KEYS="SMARTDNS_ENABLE AGH_ENABLE BLOCK_IPV6_DNS MIHOMO_ENABLE MIHOMO_IPV6 IP_IPTABLES HOST_ENABLE CRONTAB_ENABLE BACKUP_CONF ENABLE_WHITELIST BYPASS_ENABLE NETWORK_REFRESH AD_BLOCK_ENABLE LAN_ACCESS"
-NUMBER_KEYS="AGH_DNS_PORT MIHOMO_DNS_PORT"
-TEXT_KEYS="TUN_DEVICE EXCLUDE_NODE"
+BOOL_KEYS="SMARTDNS_ENABLE AGH_ENABLE BLOCK_IPV6_DNS MIHOMO_ENABLE MIHOMO_IPV6 IP_IPTABLES HOST_ENABLE CRONTAB_ENABLE BACKUP_CONF ENABLE_WHITELIST BYPASS_ENABLE NETWORK_REFRESH AD_BLOCK_ENABLE LAN_ACCESS SMARTDNS_DUALSTACK"
+NUMBER_KEYS="AGH_DNS_PORT MIHOMO_DNS_PORT SMARTDNS_TTL_MIN"
+TEXT_KEYS="TUN_DEVICE EXCLUDE_NODE SMARTDNS_SPEED_CHECK"
 ARRAY_KEYS="SUB_URL BLACKLIST_WIFI"
 
 # 枚举项的允许值
@@ -81,6 +81,7 @@ enum_allowed(){
         MODULE_DNS_MODE) echo "1 2" ;;
         WHITELIST_MODE) echo "1 2" ;;
         MIHOMO_DNS_MODE) echo "fake-ip redir-host" ;;
+        SMARTDNS_RESPONSE_MODE) echo "first-ping fastest-ip fastest-response" ;;
         *) echo "" ;;
     esac
 }
@@ -186,7 +187,7 @@ set_scalar(){
         fi
         replace_line "${item_key}" "${item_key}=${item_value}" || return 1
 
-    elif in_keys "${item_key}" MODULE_DNS_MODE WHITELIST_MODE MIHOMO_DNS_MODE; then
+    elif in_keys "${item_key}" MODULE_DNS_MODE WHITELIST_MODE MIHOMO_DNS_MODE SMARTDNS_RESPONSE_MODE; then
         allowed_values="$(enum_allowed "${item_key}")"
         allowed_ok=0
         for allowed_value in ${allowed_values}; do
