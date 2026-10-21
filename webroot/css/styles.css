@@ -301,6 +301,14 @@ body {
     background-color: var(--accent-color);
 }
 
+.resume-service {
+    background-color: #f39c12;
+}
+
+.uninstall-service {
+    background-color: #e74c3c;
+}
+
 /* 服务状态样式 */
 .service-status {
     margin-top: 12px;

@@ -180,6 +180,16 @@ load_setting(){
 
     setting_sanitize "${setting_file}"
 
+    # 临时目录可能被并发清理，清洗文件不存在时重试一次再兜底
+    if [ ! -f "${SETTING_CLEAN}" ]; then
+        setting_sanitize "${setting_file}"
+    fi
+    if [ ! -f "${SETTING_CLEAN}" ]; then
+        log "e" "配置清洗失败，使用默认设置"
+        setting_normalize
+        return 1
+    fi
+
     if sh -n "${SETTING_CLEAN}" 2>"${TMP_PATH}/setting.error.$$"; then
         . "${SETTING_CLEAN}"
     else

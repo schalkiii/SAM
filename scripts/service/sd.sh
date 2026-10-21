@@ -15,6 +15,13 @@ start(){
         return 1
     }
     
+    # 二进制与 musl 加载器软链必须存在，否则 exec 直接失败
+    if [ ! -x "${SMARTDNS_PATH}/${SMARTDNS_BIN}" ]; then
+        log "e" "${SMARTDNS_BIN} 二进制不存在: ${SMARTDNS_PATH}/${SMARTDNS_BIN}"
+        return 1
+    fi
+    ensure_module_links
+
     # 进入工作路径，并启动
     cd ${SMARTDNS_PATH}
     SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1 &
@@ -26,7 +33,15 @@ start(){
         sleep 0.5 2>/dev/null || sleep 1
         wait_ready=$((wait_ready + 1))
     done
-    isRun ${SMARTDNS_BIN} && log "i" "${SMARTDNS_BIN} 启动成功" || log "e" "${SMARTDNS_BIN} 启动失败"
+    if isRun ${SMARTDNS_BIN}; then
+        log "i" "${SMARTDNS_BIN} 启动成功"
+    else
+        log "e" "${SMARTDNS_BIN} 启动失败"
+        # 把最后一行日志带上，便于定位是缺 loader、配置错还是端口占用
+        if [ -f "${TMP_PATH}/${SMARTDNS_BIN}.log" ]; then
+            log "e" "${SMARTDNS_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>/dev/null)"
+        fi
+    fi
 }
 
 # 停止

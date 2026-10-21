@@ -1,3 +1,14 @@
+# 2026.10.21.3
+- 修复软重启后「恢复运行」只有 AdGuardHome 起来、SmartDNS 起不来
+  - 原因: SmartDNS 是 musl 动态链接的可执行文件，缺少 loader 软链时 `exec` 直接失败；AGH 是静态 Go 二进制所以不受影响
+  - 开机脚本只在真开机时建软链，软重启 / 临时 root 下不会执行
+  - 新增 `ensure_module_links()`，在 `service.sh start` 与 `sd.sh start` 时补齐 `bin/smartdns`、`ld-musl-aarch64.so.1`、`ld-linux.so`
+- SmartDNS 启动失败时把日志最后一行写进 `module.log`，便于定位是缺 loader、配置错还是端口占用
+- 修复改设置后报「设置文件语法错误 ... setting.clean no such file or directory」
+  - 原因: `service.sh start` 会 `rm -rf tmp/*`，把其他进程正在用的 `setting.clean.<pid>` 一并删掉
+  - 启动时不再清空 tmp；`load_setting` 对清洗文件缺失做重试与兜底
+- 修复「恢复运行」「立即卸载」按钮白底白字：补上背景色
+
 # 2026.10.21.2
 - 新增 WebUI「工具」页：15 个按钮覆盖脚本命令
   - 模块: `manual.sh activate / resume / status`

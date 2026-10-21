@@ -9,6 +9,9 @@ stop_reason="stopped"
 
 # 启动
 start(){
+    # 补齐 SmartDNS 的软链接(软重启/临时 root 下开机脚本不会执行)
+    ensure_module_links
+
     # 启动 SmartDNS
     ${SERVICE_PATH}/sd.sh start
     if [ "${MODULE_DNS_MODE}" = "2" ]; then
@@ -109,7 +112,8 @@ stop(){
 case "$1" in
     # 启动
     start)
-        rm -rf "${TMP_PATH}/"*
+        # 不再 rm -rf tmp/*: 会把其他进程正在用的 setting.clean.* 一起删掉，
+        # 表现为"设置文件语法错误 ... no such file or directory"
         log "i" "start >>>"
         start
         log "i" "<<< start"

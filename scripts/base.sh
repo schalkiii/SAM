@@ -25,6 +25,26 @@ has_cmd(){
     command -v "${1}" > /dev/null 2>&1
 }
 
+# 确保 SmartDNS 运行所需的软链接存在
+# SmartDNS 是 musl 动态链接的可执行文件，缺少 loader 软链时 exec 会直接失败，
+# 表现为「AGH 能起来、SmartDNS 起不来」。开机脚本只在真开机时建这些链接，
+# 软重启 / 临时 root 场景必须由运行时补齐。
+ensure_module_links(){
+    [ -d "${BIN_PATH}" ] || return 0
+
+    if [ ! -e "${BIN_PATH}/${SMARTDNS_BIN}" ] && [ ! -L "${BIN_PATH}/${SMARTDNS_BIN}" ]; then
+        ln -s "${SMARTDNS_PATH}/${SMARTDNS_BIN}" "${BIN_PATH}/${SMARTDNS_BIN}" 2>/dev/null
+    fi
+
+    if [ ! -e "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" ] && [ ! -L "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" ]; then
+        ln -s "${SMARTDNS_PATH}/lib/libc.so" "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" 2>/dev/null
+    fi
+
+    if [ ! -e "${SMARTDNS_PATH}/lib/ld-linux.so" ] && [ ! -L "${SMARTDNS_PATH}/lib/ld-linux.so" ]; then
+        ln -s "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" "${SMARTDNS_PATH}/lib/ld-linux.so" 2>/dev/null
+    fi
+}
+
 # 占位符
 placeholder(){
     i=0
