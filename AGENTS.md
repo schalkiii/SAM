@@ -22,6 +22,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
 - `scripts/backup.sh` 卸载前把配置备份到 `/sdcard/SAM-backup/<时间>/`
 - `scripts/ad.sh list` 输出广告屏蔽的影响范围（App|路径|状态），WebUI「查看影响范围」用它
+- WebUI「工具」页是各脚本命令的图形入口：新增带子命令的脚本时，同步在 `webroot/index.html` 加 `data-script` / `data-args` 按钮
 - 配置真身只有 `setting.conf`，注释即文档。**新增配置键必须同步四处**：
   `scripts/setting.sh` 默认值与校验 → `scripts/setting_api.sh` 的 KEY 白名单 → `customize.sh` 升级迁移列表 → WebUI 的 `data-key`
 - 行尾统一 LF；脚本 0755；不要提交 `dist/`

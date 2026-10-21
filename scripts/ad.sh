@@ -387,8 +387,13 @@ list_ad(){
     app_name="其他"
     in_array=0
 
-    echo "APP|路径|状态"
+    ad_entries="${TMP_PATH}/ad_entries.$$"
+    ad_attrs="${TMP_PATH}/ad_attrs.$$"
+    ad_paths="${TMP_PATH}/ad_paths.$$"
+    : > "${ad_entries}"
+    : > "${ad_paths}"
 
+    # 第一遍: 解析数组，记录 App、路径、是否存在
     while IFS= read -r line; do
         case "${line}" in
             "ad_path=("*)
@@ -398,11 +403,8 @@ list_ad(){
         esac
 
         [ ${in_array} -eq 1 ] || continue
-
-        # 数组结束
         [ "${line}" = ")" ] && break
 
-        # 注释行即 App 名称
         case "${line}" in
             "# "*)
                 app_name="${line#\# }"
@@ -410,26 +412,69 @@ list_ad(){
                 ;;
         esac
 
-        # 只处理带引号的路径行
         case "${line}" in
             *'"'*) ;;
             *) continue ;;
         esac
 
-        ad_item=$(echo "${line}" | sed -e 's/^[[:space:]]*"//' -e 's/".*$//')
+        # 用参数展开取引号内的路径: 每行 sed 都要 fork 一次，150 条会很慢
+        ad_item="${line#*\"}"
+        ad_item="${ad_item%%\"*}"
         [ -z "${ad_item}" ] && continue
 
-        if [ ! -e "${ad_item}" ]; then
-            ad_state="不存在"
-        elif lsattr -d "${ad_item}" 2>/dev/null | awk '{print $1}' | grep -q "i"; then
-            ad_state="已锁定"
+        if [ -e "${ad_item}" ]; then
+            echo "${app_name}|${ad_item}|1" >> "${ad_entries}"
+            echo "${ad_item}" >> "${ad_paths}"
         else
-            ad_state="存在未锁定"
+            echo "${app_name}|${ad_item}|0" >> "${ad_entries}"
         fi
-
-        echo "${app_name}|${ad_item}|${ad_state}"
     done < "${0}"
+
+    # 第二遍: 一次性读取所有存在路径的属性，避免逐个 fork lsattr
+    : > "${ad_attrs}"
+    if [ -s "${ad_paths}" ] && command -v lsattr > /dev/null 2>&1; then
+        # shellcheck disable=SC2046
+        lsattr -d $(cat "${ad_paths}") 2>/dev/null > "${ad_attrs}"
+    fi
+
+    echo "APP|路径|状态"
+
+    # 用一个带区段标记的流喂给 awk:
+    # 两个文件直接 FNR==NR 会在第一个文件为空时失效(空文件下 NR==FNR 恒成立)
+    {
+        echo "ATTRS"
+        cat "${ad_attrs}"
+        echo "ENTRIES"
+        cat "${ad_entries}"
+    } | awk '
+        $0 == "ATTRS" { mode = "attrs"; next }
+        $0 == "ENTRIES" { mode = "entries"; next }
+
+        mode == "attrs" {
+            flags = $1
+            target = $0
+            sub(/^[^[:space:]]+[[:space:]]+/, "", target)
+            locked[target] = (flags ~ /i/)
+            next
+        }
+
+        mode == "entries" {
+            count = split($0, parts, "|")
+            if (count < 3) next
+            if (parts[3] == "0") {
+                state = "不存在"
+            } else if (parts[2] in locked) {
+                state = locked[parts[2]] ? "已锁定" : "存在未锁定"
+            } else {
+                state = "存在(属性未知)"
+            }
+            print parts[1] "|" parts[2] "|" state
+        }
+    '
+
+    rm -f "${ad_entries}" "${ad_attrs}" "${ad_paths}"
 }
+
 
 # 添加指令
 case "${1}" in

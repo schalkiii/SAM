@@ -1,3 +1,15 @@
+# 2026.10.21.2
+- 新增 WebUI「工具」页：15 个按钮覆盖脚本命令
+  - 模块: `manual.sh activate / resume / status`
+  - 备份: `backup.sh save / list / restore`
+  - 广告与 Hosts: `ad.sh block / recovery / list`、`update/host.sh update`
+  - 高级: `iptables/dns.sh enable`、`update/agh.sh`、`update/mihomo.sh`、`update/desc.sh`
+  - 内核: `update.sh`
+  - 恢复备份与更新内核需二次点击确认，输出直接回显在页面
+- `ad.sh list` 改为批量读取属性：1 次 `lsattr` 替代 153 次，并用参数展开去掉每行的 `sed` fork
+- 修复 `list_ad` 在属性文件为空时 `awk` 的 `FNR==NR` 恒成立、导致只输出表头的问题
+- README 增加工具页说明
+
 # 2026.10.21.1
 - 新增「查看影响范围」：列出广告屏蔽会处理/已锁定的 App 与路径（`sh scripts/ad.sh list`），并在设置页内展示统计
 - 修复从 WebUI 启动时 hosts 监控不会启动（挂载动作排在监控之后）

@@ -367,6 +367,74 @@ async function saveSettings() {
     }
 }
 
+// ---- 工具页 ----
+
+// 执行工具按钮对应的脚本命令，并把输出回显到页面
+async function runToolButton(button) {
+    const view = document.getElementById("tool-output");
+    const script = button.dataset.script;
+    const args = button.dataset.args || "";
+    const originalText = button.textContent;
+    const header = "执行: " + script + (args ? " " + args : "");
+
+    button.disabled = true;
+    button.textContent = "执行中...";
+    if (view) view.textContent = header + newlineChar() + "请稍等...";
+
+    try {
+        const result = await runShell(script, args);
+        const parts = [];
+        if (out(result)) parts.push(out(result));
+        if (err(result)) parts.push("[stderr] " + err(result));
+        const text = parts.join(newlineChar());
+
+        if (view) {
+            view.textContent = header + newlineChar() + newlineChar() + (text || "(无输出)");
+            view.scrollTop = 0;
+        }
+        showToast(text ? "执行完成" : "执行完成(无输出)", 3000);
+        await updateServiceStatus();
+    } catch (error) {
+        if (view) view.textContent = header + newlineChar() + "执行失败: " + error;
+        showToast("执行失败", 5000);
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+}
+
+// 换行符: 避免在 JS 源码里写转义序列
+function newlineChar() {
+    return String.fromCharCode(10);
+}
+
+// 危险操作需要二次点击确认
+function initToolButtons() {
+    document.querySelectorAll(".tool-btn").forEach(button => {
+        let armed = false;
+        let timer = null;
+        const originalText = button.textContent;
+
+        button.addEventListener("click", () => {
+            if (button.dataset.confirm === "1" && !armed) {
+                armed = true;
+                button.textContent = "再点一次确认";
+                showToast("再次点击执行：" + originalText, 4000);
+                timer = setTimeout(() => {
+                    armed = false;
+                    button.textContent = originalText;
+                }, 4000);
+                return;
+            }
+
+            clearTimeout(timer);
+            armed = false;
+            button.textContent = originalText;
+            runToolButton(button);
+        });
+    });
+}
+
 // 页面导航功能
 function pageNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
@@ -487,6 +555,9 @@ async function uninstallModule() {
 
     // 页面导航
     pageNavigation();
+
+    // 工具页按钮
+    initToolButtons();
 
     // 更新服务状态
     await updateServiceStatus();

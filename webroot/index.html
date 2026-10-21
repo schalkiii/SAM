@@ -319,6 +319,66 @@
             </div>
             <div class="setting-tip">保存后会自动重启服务，约需数秒。直通开关也可以不重启：守护循环会在 5 秒内让它生效。</div>
         </div>
+
+        <!-- 工具页面: 所有脚本命令的图形入口 -->
+        <div id="tool-page" class="page">
+            <div class="toolbar">
+                <h2>工具</h2>
+            </div>
+
+            <div class="content-section">
+                <h3>模块</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-script="manual.sh" data-args="activate">激活模块</button>
+                    <button class="tool-btn" data-script="manual.sh" data-args="resume">恢复运行</button>
+                    <button class="tool-btn" data-script="manual.sh" data-args="status">查看状态</button>
+                </div>
+                <div class="setting-desc">激活模块用于刚刷入、还在 modules_update 的情况；恢复运行用于软重启之后。</div>
+            </div>
+
+            <div class="content-section">
+                <h3>配置备份</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-script="backup.sh" data-args="save">立即备份</button>
+                    <button class="tool-btn" data-script="backup.sh" data-args="list">备份列表</button>
+                    <button class="tool-btn danger" data-script="backup.sh" data-args="restore" data-confirm="1">恢复最近备份</button>
+                </div>
+                <div class="setting-desc">备份内容: setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时，保留最近 5 份。</div>
+            </div>
+
+            <div class="content-section">
+                <h3>广告与 Hosts</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-script="ad.sh" data-args="block">屏蔽广告文件</button>
+                    <button class="tool-btn" data-script="ad.sh" data-args="recovery">恢复广告文件</button>
+                    <button class="tool-btn" data-script="ad.sh" data-args="list">影响范围</button>
+                    <button class="tool-btn" data-script="update/host.sh" data-args="update">更新 hosts</button>
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>高级</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-script="iptables/dns.sh" data-args="enable">重建 DNS 规则</button>
+                    <button class="tool-btn" data-script="update/agh.sh" data-args="">重新生成 AGH 配置</button>
+                    <button class="tool-btn" data-script="update/mihomo.sh" data-args="">重新生成 Mihomo 配置</button>
+                    <button class="tool-btn" data-script="update/desc.sh" data-args="">刷新模块描述</button>
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>内核更新</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn danger" data-script="update.sh" data-args="" data-confirm="1">更新内核</button>
+                </div>
+                <div class="setting-desc">从 GitHub 拉取最新 SmartDNS / AdGuardHome / Mihomo，耗时较长且会重启服务。需要网络。</div>
+            </div>
+
+            <div class="content-section">
+                <h3>输出</h3>
+                <pre id="tool-output" class="log-view">点击上面的按钮执行，结果会显示在这里</pre>
+            </div>
+        </div>
     </div>
     
     <!-- 底部导航栏 -->
@@ -334,6 +394,10 @@
         <a class="nav-item" data-page="monitor-page">
             <div class="nav-icon">📊</div>
             <span>监控</span>
+        </a>
+        <a class="nav-item" data-page="tool-page">
+            <div class="nav-icon">🧰</div>
+            <span>工具</span>
         </a>
         <a class="nav-item" data-page="setting-page">
             <div class="nav-icon">🎛️</div>
