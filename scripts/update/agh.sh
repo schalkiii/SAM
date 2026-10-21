@@ -21,13 +21,13 @@ modify_conf(){
     default_dns=$(echo "${DNS_LIST}" | grep -Ev "^[[:space:]]*$" | sed "s/^/${prefix}/g")
     default_dns=$(echo ${default_dns} | sed "s/ /∷/g")
     # 判断 SmartDNS 启用，则使用 SmartDNS，未启用则使用默认DNS
-    if [ ${SMARTDNS_ENABLE} = true ] && [ ${MODULE_DNS_MODE} = 2 ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
+    if [ "${SMARTDNS_ENABLE}" = true ] && [ "${MODULE_DNS_MODE}" = 2 ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
         log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
         modify_dns "${prefix}127.0.0.1:${SMARTDNS_PORT}"
-    elif [ ${MIHOMO_ENABLE} = true ] && [ ${MODULE_DNS_MODE} = 1 ] && [ $(isRun ${MIHOMO_BIN} "pid") ]; then
+    elif [ "${MIHOMO_ENABLE}" = true ] && [ "${MODULE_DNS_MODE}" = 1 ] && [ $(isRun ${MIHOMO_BIN} "pid") ]; then
         log "i" "${AGH_BIN} 上游DNS使用 ${MIHOMO_BIN}"
         modify_dns "${prefix}127.0.0.1:${MIHOMO_DNS_PORT}"
-    elif [ ${MIHOMO_ENABLE} = false ] && [ ${SMARTDNS_ENABLE} = true ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
+    elif [ "${MIHOMO_ENABLE}" = false ] && [ "${SMARTDNS_ENABLE}" = true ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
         log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
         modify_dns "${prefix}127.0.0.1:${SMARTDNS_PORT}"
     else
@@ -46,7 +46,10 @@ modify_dns_port(){
     # 获取 AdGuardHome DNS 端口
     port_value=$(cat ${AGH_CONF} | sed -n '/port:/p' | grep "port" | awk 'NR==2{print $2}' | tr -d "[:space:]")
     # 判断 AdGuardHome DNS 端口与设置的端口不一致则修改
-    if ! [ ${AGH_DNS_PORT} -eq ${port_value} ]; then
+    # port_value 读不到时不要做数值比较，否则 [ 会直接报错
+    [ -z "${port_value}" ] && return 0
+
+    if ! [ "${AGH_DNS_PORT}" -eq "${port_value}" ]; then
         log "i" "修改 AdGuardHome DNS 端口 ${port_value} 为 ${AGH_DNS_PORT}"
         cat ${AGH_CONF} | sed -i "s/port: ${port_value}/port: ${AGH_DNS_PORT}/g" ${AGH_CONF}
     fi

@@ -44,14 +44,22 @@ file_log(){
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${1}" >> "${LOG_FILE}" 2>/dev/null
 }
 
+# 设置飞行模式: Android 11+ 优先用 cmd connectivity，老系统回退 settings + broadcast
+airplane_set(){
+    if command -v cmd > /dev/null 2>&1 && cmd connectivity airplane-mode "${1}" > /dev/null 2>&1; then
+        return 0
+    fi
+    settings put global airplane_mode_on "${2}" 2>/dev/null
+    am broadcast -a android.intent.action.AIRPLANE_MODE > /dev/null 2>&1
+}
+
 # 开关一次飞行模式，让系统与 App 立即重新发起 DNS 查询
 refresh_network(){
     file_log "配置变更涉及 DNS 链路，刷新一次网络"
-    for airplane_state in 1 0; do
-        settings put global airplane_mode_on ${airplane_state} 2>/dev/null
-        am broadcast -a android.intent.action.AIRPLANE_MODE > /dev/null 2>&1
-        sleep 1
-    done
+    airplane_set enable 1
+    sleep 1
+    airplane_set disable 0
+    sleep 1
 }
 
 # 判断本次变更是否需要刷新网络
@@ -239,15 +247,22 @@ apply_settings(){
             ;;
     esac
 
+    # 必须在 restart 之前判断: 重启过程中会清理 tmp 目录
+    refresh_needed=0
+    need_refresh && refresh_needed=1
+
     echo "正在应用配置..."
     sh "${SCRIPTS_PATH}/service.sh" restart
 
-    if need_refresh; then
+    if [ ${refresh_needed} -eq 1 ]; then
         refresh_network
         echo "配置已应用，已刷新网络"
     else
         echo "配置已应用"
     fi
+
+    # 变更记录用完即清，避免之后单独 apply 又触发一次刷新
+    rm -f "${CHANGED_FILE}"
 }
 
 case "${1}" in

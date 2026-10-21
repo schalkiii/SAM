@@ -144,6 +144,6 @@ smartdns_download
 log "i" "<<< update"
 
 # 判断已更新则重启服务
-if [ ${is_update} = true ]; then
+if [ "${is_update}" = true ]; then
     ${SCRIPTS_PATH}/service.sh restart
 fi

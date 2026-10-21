@@ -1,3 +1,12 @@
+# 2026.10.21.1
+- 新增「查看影响范围」：列出广告屏蔽会处理/已锁定的 App 与路径（`sh scripts/ad.sh list`），并在设置页内展示统计
+- 修复从 WebUI 启动时 hosts 监控不会启动（挂载动作排在监控之后）
+- 修复「切换后刷新网络」的判断时机：改为重启前判定，不再依赖 tmp 里的隐藏文件
+- 修复 `setting.clean` 等临时文件在多进程并发解析时互相覆盖（改用 PID 后缀）
+- 飞行模式优先使用 `cmd connectivity airplane-mode`，老系统回退 `settings` + 广播
+- 设置页折叠标题支持键盘操作（role / tabindex / Enter）
+- 变量比较统一加引号；AGH 端口读不到时不再触发数值比较错误
+
 # 2026.10.21
 - 新增 `scripts/setting.sh` 配置安全加载：自动处理 BOM / CRLF / 语法错误 / 缺失项，改坏 `setting.conf` 不再导致服务无法启动
 - 新增 `scripts/manual.sh` 手动控制：`activate` / `resume` / `start` / `stop` / `restart` / `uninstall` / `status`，全程不依赖重启

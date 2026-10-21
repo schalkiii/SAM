@@ -4,7 +4,7 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 # 启动
 start(){ 
     # 判断 Mihomo 未启用，则退出
-    if [ ${MIHOMO_ENABLE} = false ]; then
+    if [ "${MIHOMO_ENABLE}" = false ]; then
         log "e" "${MIHOMO_BIN} 未启用"
         return 1
     fi

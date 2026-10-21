@@ -381,18 +381,71 @@ run(){
     [ "${1}" = "block_ad" ] && log "i" "已屏蔽 ${block_number} 个" || log "i" "已恢复 ${recovery_number} 个"
 }
 
+# 列出会被处理(或已处理)的 App 与路径
+# 输出格式: APP|路径|状态，供 WebUI 展示"影响范围"
+list_ad(){
+    app_name="其他"
+    in_array=0
+
+    echo "APP|路径|状态"
+
+    while IFS= read -r line; do
+        case "${line}" in
+            "ad_path=("*)
+                in_array=1
+                continue
+                ;;
+        esac
+
+        [ ${in_array} -eq 1 ] || continue
+
+        # 数组结束
+        [ "${line}" = ")" ] && break
+
+        # 注释行即 App 名称
+        case "${line}" in
+            "# "*)
+                app_name="${line#\# }"
+                continue
+                ;;
+        esac
+
+        # 只处理带引号的路径行
+        case "${line}" in
+            *'"'*) ;;
+            *) continue ;;
+        esac
+
+        ad_item=$(echo "${line}" | sed -e 's/^[[:space:]]*"//' -e 's/".*$//')
+        [ -z "${ad_item}" ] && continue
+
+        if [ ! -e "${ad_item}" ]; then
+            ad_state="不存在"
+        elif lsattr -d "${ad_item}" 2>/dev/null | awk '{print $1}' | grep -q "i"; then
+            ad_state="已锁定"
+        else
+            ad_state="存在未锁定"
+        fi
+
+        echo "${app_name}|${ad_item}|${ad_state}"
+    done < "${0}"
+}
+
 # 添加指令
 case "${1}" in
     block)
         log "i" "屏蔽 App 广告路径"
         run "block_ad"
         ;;
-    recovery) 
-        log "i" "恢复 App 广告路径" 
-        run "recovery_ad"    
+    recovery)
+        log "i" "恢复 App 广告路径"
+        run "recovery_ad"
+        ;;
+    list)
+        list_ad
         ;;
     *)
-        echo "使用: block(屏蔽) | recovery(恢复)"
+        echo "使用: block(屏蔽) | recovery(恢复) | list(列出影响范围)"
         exit 1
         ;;
 esac

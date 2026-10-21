@@ -4,7 +4,7 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 # 启动
 start(){
     # 判断 crontabs 未启用，则退出
-    if [ ${CRONTAB_ENABLE} = false ]; then
+    if [ "${CRONTAB_ENABLE}" = false ]; then
         log "i" "定时执行已禁用"
         return 1
     fi

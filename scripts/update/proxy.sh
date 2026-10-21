@@ -50,13 +50,13 @@ whitelist_mode(){
 }
 
 
-if [ ${ENABLE_WHITELIST} = true ] && [ ${WHITELIST_MODE} = 1 ]; then
+if [ "${ENABLE_WHITELIST}" = true ] && [ "${WHITELIST_MODE}" = 1 ]; then
     log "i" "使用白名单模式 1"
     app_package "${WHITELIST_FILE}" "白名单" "include-package"
-elif [ ${ENABLE_WHITELIST} = true ] && [ ${WHITELIST_MODE} = 2 ]; then
+elif [ "${ENABLE_WHITELIST}" = true ] && [ "${WHITELIST_MODE}" = 2 ]; then
     log "i" "使用白名单模式 2"
     whitelist_mode
-elif [ ${ENABLE_WHITELIST} = false ]; then
+elif [ "${ENABLE_WHITELIST}" = false ]; then
     log "i" "使用黑名单"
     app_package "${BLACKLIST_FILE}" "黑名单" "exclude-package"
 fi

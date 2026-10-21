@@ -254,6 +254,13 @@
                     <div class="setting-info"><h4>屏蔽 App 广告文件</h4><div class="setting-desc">清空并锁定部分 App 的广告缓存目录(chattr +i)，卸载时自动恢复。App 启动异常时优先关掉这项</div></div>
                     <label class="switch"><input type="checkbox" data-key="AD_BLOCK_ENABLE"><span class="track"></span></label>
                 </div>
+
+                <div class="setting-block">
+                    <div class="log-actions">
+                        <button class="action-btn edit-btn" id="ad-list-btn">查看影响范围</button>
+                    </div>
+                    <pre id="ad-list-view" class="log-view" hidden>点击「查看影响范围」列出会被处理的 App 与路径</pre>
+                </div>
                 <div class="setting-row">
                     <div class="setting-info"><h4>卸载时备份 Mihomo 配置</h4><div class="setting-desc">保存到 /sdcard/Mihomo配置.yaml</div></div>
                     <label class="switch"><input type="checkbox" data-key="BACKUP_CONF"><span class="track"></span></label>

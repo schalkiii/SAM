@@ -224,6 +224,51 @@ async function refreshLog() {
     view.scrollTop = view.scrollHeight;
 }
 
+// 展示广告屏蔽的影响范围
+async function showAdScope() {
+    const view = document.getElementById("ad-list-view");
+    if (!view) return;
+
+    // 再点一次收起
+    if (!view.hidden) {
+        view.hidden = true;
+        return;
+    }
+
+    view.hidden = false;
+    view.textContent = "读取中...";
+
+    const newline = String.fromCharCode(10);
+    const result = await runShell("ad.sh", "list");
+    const lines = out(result).split(newline).filter(line => line.length > 0);
+    if (lines.length === 0) {
+        view.textContent = "未读取到列表";
+        return;
+    }
+
+    const counter = { "已锁定": 0, "存在未锁定": 0, "不存在": 0 };
+    const groups = {};
+
+    lines.forEach(line => {
+        const parts = line.split("|");
+        if (parts.length < 3) return;
+        if (parts[0] === "APP") return;
+        const appName = parts[0];
+        const itemPath = parts[1];
+        const itemState = parts[2];
+        if (counter[itemState] !== undefined) counter[itemState]++;
+        if (!groups[appName]) groups[appName] = [];
+        groups[appName].push(itemState + "  " + itemPath);
+    });
+
+    let text = "已锁定 " + counter["已锁定"] + " 项 / 未锁定 " + counter["存在未锁定"] + " 项 / 不存在 " + counter["不存在"] + " 项" + newline;
+    Object.keys(groups).forEach(appName => {
+        text += newline + "【" + appName + "】" + newline + groups[appName].join(newline) + newline;
+    });
+
+    view.textContent = text;
+}
+
 // 清空日志
 async function clearLog() {
     await runShell("setting_api.sh", "clearlog");
@@ -534,9 +579,19 @@ async function uninstallModule() {
         settingPage.addEventListener("change", () => setSettingsDirty(true));
 
         settingPage.querySelectorAll(".content-section h3").forEach(title => {
-            title.addEventListener("click", () => {
+            const toggleSection = () => {
                 const section = title.parentElement;
                 if (section) section.classList.toggle("collapsed");
+            };
+
+            title.setAttribute("role", "button");
+            title.setAttribute("tabindex", "0");
+            title.addEventListener("click", toggleSection);
+            title.addEventListener("keydown", event => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    toggleSection();
+                }
             });
         });
     }
@@ -549,6 +604,11 @@ async function uninstallModule() {
     const logClearBtn = document.getElementById("log-clear");
     if (logClearBtn) {
         logClearBtn.addEventListener("click", clearLog);
+    }
+
+    const adListBtn = document.getElementById("ad-list-btn");
+    if (adListBtn) {
+        adListBtn.addEventListener("click", showAdScope);
     }
 
     // host 挂载按钮点击事件

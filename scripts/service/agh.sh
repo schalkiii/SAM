@@ -4,7 +4,7 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 # 启动
 start(){
     # 判断 AdGuardHome 未启用，则退出
-    if [ ${AGH_ENABLE} = false ]; then
+    if [ "${AGH_ENABLE}" = false ]; then
         log "e" "${AGH_BIN} 未启用"
         return 1
     fi

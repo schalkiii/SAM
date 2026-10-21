@@ -34,7 +34,7 @@ setting_default(){
 # 1. 去掉文件开头的 UTF-8 BOM(EF BB BF)
 # 2. 去掉 Windows 换行符 CRLF 中的 CR
 setting_sanitize(){
-    SETTING_CLEAN="${TMP_PATH}/setting.clean"
+    SETTING_CLEAN="${TMP_PATH}/setting.clean.$$"
     mkdir -p "${TMP_PATH}" 2>/dev/null
 
     # 仅在文件头确实是 BOM 时才裁掉 3 个字节，避免误伤正文里的多字节字符
@@ -51,7 +51,7 @@ setting_sanitize(){
 # 逐行抢救
 # 整体语法不合法时，只加载能够独立成立的赋值行，跳过坏行
 setting_salvage(){
-    SETTING_SALVAGE="${TMP_PATH}/setting.salvage"
+    SETTING_SALVAGE="${TMP_PATH}/setting.salvage.$$"
     grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "${1}" > "${SETTING_SALVAGE}" 2>/dev/null
 
     while IFS= read -r setting_line; do
@@ -180,10 +180,10 @@ load_setting(){
 
     setting_sanitize "${setting_file}"
 
-    if sh -n "${SETTING_CLEAN}" 2>"${TMP_PATH}/setting.error"; then
+    if sh -n "${SETTING_CLEAN}" 2>"${TMP_PATH}/setting.error.$$"; then
         . "${SETTING_CLEAN}"
     else
-        log "e" "设置文件语法错误: $(head -n 1 "${TMP_PATH}/setting.error" 2>/dev/null)"
+        log "e" "设置文件语法错误: $(head -n 1 "${TMP_PATH}/setting.error.$$" 2>/dev/null)"
         log "e" "已跳过错误项，保留其余可用设置"
         setting_salvage "${SETTING_CLEAN}"
     fi
@@ -191,6 +191,6 @@ load_setting(){
     setting_normalize
     setting_validate
 
-    rm -f "${SETTING_CLEAN}" "${TMP_PATH}/setting.error"
+    rm -f "${SETTING_CLEAN}" "${TMP_PATH}/setting.error.$$"
     return 0
 }

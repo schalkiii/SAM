@@ -21,8 +21,8 @@ out_content+=" 🤖Smart内核: "
 mihomo -v | grep -q "smart" && out_content+="[✅]" || out_content+="[❌]"
 
 out_content+=" ⚙️模式: "
-if [ ${ENABLE_WHITELIST} = true ]; then
-    [ ${WHITELIST_MODE} = 1 ] && out_content+="[白名单 1]" || out_content+="[白名单 2]"
+if [ "${ENABLE_WHITELIST}" = true ]; then
+    [ "${WHITELIST_MODE}" = 1 ] && out_content+="[白名单 1]" || out_content+="[白名单 2]"
 else
     out_content+="[黑名单]"
 fi
@@ -35,9 +35,9 @@ out_content+=" 🚦直通: "
 [ "${BYPASS_ENABLE}" = "true" ] && out_content+="[已开启]" || out_content+="[已关闭]"
 
 out_content+=" 🌐Host: "
-[ ${HOST_ENABLE} = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
+[ "${HOST_ENABLE}" = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
 out_content+=" ⏰定时: "
-[ ${CRONTAB_ENABLE} = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
+[ "${CRONTAB_ENABLE}" = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
 
 out_content+=" 📢注意: 所有服务默认账号和密码都是root"
 

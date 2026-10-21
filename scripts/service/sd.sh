@@ -4,7 +4,7 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 # 启动
 start(){
     # 判断 SmartDNS 未启用，则退出
-    if [ ${SMARTDNS_ENABLE} = false ]; then
+    if [ "${SMARTDNS_ENABLE}" = false ]; then
         log "e" "${SMARTDNS_BIN} 未启用"
         return 1
     fi

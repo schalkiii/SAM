@@ -31,8 +31,6 @@ fi
     MODULE_PATH="/data/adb/modules/SAM"
     # 脚本路径
     SCRIPTS_PATH="$MODULE_PATH/scripts"
-    # Mihomo 配置路径
-    MIHOMO_CONF="$MODULE_PATH/etc/mihomo/config.yaml"
 
     # 备份全部配置(setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时)
     [ -f "$SCRIPTS_PATH/backup.sh" ] && sh "$SCRIPTS_PATH/backup.sh" save

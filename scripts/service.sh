@@ -58,6 +58,21 @@ start(){
         # 关掉开关时要真正卸载，否则旧 hosts 会一直生效
         mount | grep -q " /system/etc/hosts " && umount /system/etc/hosts 2>/dev/null
     fi
+
+    # 确保模块 / hosts 监控在跑
+    # 放在 hosts 挂载之后，否则首次启动时 hosts 还没挂上，host 监控不会被拉起
+    # 开机脚本只在真开机时执行，从 WebUI 启动时这两类监控可能根本不存在
+    if has_cmd inotifyd; then
+        if ! pgrep -f "${INOTIFY_PATH}/module.sh" > /dev/null 2>&1; then
+            inotifyd "${INOTIFY_PATH}/module.sh" "${MODULE_PATH}" > /dev/null 2>&1 &
+        fi
+        if mount | grep -q " /system/etc/hosts "; then
+            if ! pgrep -f "${INOTIFY_PATH}/host.sh" > /dev/null 2>&1; then
+                inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc/hosts" > /dev/null 2>&1 &
+            fi
+        fi
+    fi
+
     # 更新描述
     ${UPDATE_PATH}/desc.sh
 
