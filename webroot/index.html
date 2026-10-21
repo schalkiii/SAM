@@ -17,6 +17,7 @@
         <div id="service-page" class="page active">
             <div class="toolbar">
                 <h2>服务</h2>
+                <span id="bypass-badge" class="bypass-badge bypass-off">过滤模式</span>
             </div>        
             <div class="content-section">
                 <h3>SmartDNS</h3>
@@ -71,6 +72,12 @@
                 <button class="service-btn start-service">启动服务</button>
                 <button class="service-btn stop-service">停止服务</button>
                 <button class="service-btn restart-service">重启服务</button>
+            </div>
+
+            <!-- 临时 root / 只能软重启环境专用 -->
+            <div class="service-control-buttons secondary">
+                <button class="service-btn resume-service">恢复运行(软重启后)</button>
+                <button class="service-btn uninstall-service">立即卸载</button>
             </div>
             
         </div>
@@ -137,6 +144,174 @@
             </div>
             
         </div>
+
+        <!-- 设置页面 -->
+        <div id="setting-page" class="page">
+            <div class="toolbar">
+                <h2>设置</h2>
+                <span id="setting-dirty" class="dirty-badge" hidden>未保存</span>
+            </div>
+
+            <div class="content-section">
+                <h3>工作模式</h3>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>直通模式</h4>
+                        <div class="setting-desc">撤销 DNS 劫持，系统改用网络下发的 DNS。服务与 WebUI 保持运行，适合校园网、认证热点、企业内网</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" data-key="BYPASS_ENABLE">
+                        <span class="track"></span>
+                    </label>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>DNS 结构模式</h4>
+                        <div class="setting-desc">模式 2：Mihomo → AdGuardHome → SmartDNS<br>模式 1：AdGuardHome → Mihomo → SmartDNS</div>
+                    </div>
+                    <select class="setting-select" data-key="MODULE_DNS_MODE">
+                        <option value="2">模式 2</option>
+                        <option value="1">模式 1</option>
+                    </select>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info">
+                        <h4>切换后刷新网络</h4>
+                        <div class="setting-desc">改动直通开关、DNS 模式或 DNS 端口后开关一次飞行模式，让系统和 App 立刻重新解析；WiFi 会短暂断开重连</div>
+                    </div>
+                    <label class="switch"><input type="checkbox" data-key="NETWORK_REFRESH"><span class="track"></span></label>
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>服务开关</h3>
+
+                <div class="setting-row">
+                    <div class="setting-info"><h4>SmartDNS</h4><div class="setting-desc">上游解析与自动分流</div></div>
+                    <label class="switch"><input type="checkbox" data-key="SMARTDNS_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>AdGuardHome</h4><div class="setting-desc">广告拦截与查询日志</div></div>
+                    <label class="switch"><input type="checkbox" data-key="AGH_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>Mihomo</h4><div class="setting-desc">代理与 TUN，需要填写订阅地址</div></div>
+                    <label class="switch"><input type="checkbox" data-key="MIHOMO_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>Mihomo IPv6</h4><div class="setting-desc">允许代理 IPv6 流量</div></div>
+                    <label class="switch"><input type="checkbox" data-key="MIHOMO_IPV6"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>阻断 IPv6 DNS</h4><div class="setting-desc">拦截本机 IPv6 的 53 端口查询，避免绕过过滤</div></div>
+                    <label class="switch"><input type="checkbox" data-key="BLOCK_IPV6_DNS"><span class="track"></span></label>
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>DNS 参数</h3>
+
+                <div class="setting-row">
+                    <div class="setting-info"><h4>AdGuardHome DNS 端口</h4><div class="setting-desc">默认 5300，改完需确保不与其他程序冲突</div></div>
+                    <input class="setting-input" type="number" data-key="AGH_DNS_PORT">
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>Mihomo DNS 端口</h4><div class="setting-desc">默认 1053</div></div>
+                    <input class="setting-input" type="number" data-key="MIHOMO_DNS_PORT">
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>Mihomo DNS 模式</h4><div class="setting-desc">fake-ip 响应更快，redir-host 兼容性更好</div></div>
+                    <select class="setting-select" data-key="MIHOMO_DNS_MODE">
+                        <option value="fake-ip">fake-ip</option>
+                        <option value="redir-host">redir-host</option>
+                    </select>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>TUN 网卡名</h4><div class="setting-desc">默认 Meta</div></div>
+                    <input class="setting-input" type="text" data-key="TUN_DEVICE">
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>其他</h3>
+
+                <div class="setting-row">
+                    <div class="setting-info"><h4>Hosts 挂载</h4><div class="setting-desc">用模块 hosts 覆盖系统 hosts(广告拦截、GitHub 加速)</div></div>
+                    <label class="switch"><input type="checkbox" data-key="HOST_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>定时任务</h4><div class="setting-desc">按 etc/crontabs/root 定时执行</div></div>
+                    <label class="switch"><input type="checkbox" data-key="CRONTAB_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>屏蔽 IP 规则</h4><div class="setting-desc">按 ip.sh 中的名单拦截目标地址</div></div>
+                    <label class="switch"><input type="checkbox" data-key="IP_IPTABLES"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>屏蔽 App 广告文件</h4><div class="setting-desc">清空并锁定部分 App 的广告缓存目录(chattr +i)，卸载时自动恢复。App 启动异常时优先关掉这项</div></div>
+                    <label class="switch"><input type="checkbox" data-key="AD_BLOCK_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>卸载时备份 Mihomo 配置</h4><div class="setting-desc">保存到 /sdcard/Mihomo配置.yaml</div></div>
+                    <label class="switch"><input type="checkbox" data-key="BACKUP_CONF"><span class="track"></span></label>
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>订阅与名单</h3>
+
+                <div class="setting-block">
+                    <h4>订阅地址</h4>
+                    <div class="setting-desc">每行一个，必须是 Clash / Clash.Meta 格式。为空则 Mihomo 无法启动。注意: 订阅链接会明文保存在 setting.conf</div>
+                    <textarea class="setting-textarea" rows="3" data-key="SUB_URL" placeholder="https://example.com/sub?target=clash"></textarea>
+                </div>
+
+                <div class="setting-block">
+                    <h4>排除节点</h4>
+                    <div class="setting-desc">在智能选择、自动选择等组内排除，多个用 | 分隔</div>
+                    <input class="setting-input setting-input-wide" type="text" data-key="EXCLUDE_NODE" placeholder="节点1|节点2">
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info"><h4>应用白名单</h4><div class="setting-desc">开启用白名单，关闭用黑名单(只影响 TUN 规则)</div></div>
+                    <label class="switch"><input type="checkbox" data-key="ENABLE_WHITELIST"><span class="track"></span></label>
+                </div>
+
+                <div class="setting-row">
+                    <div class="setting-info"><h4>白名单模式</h4><div class="setting-desc">模式 1：仅包含名单内 App；模式 2：排除名单外的所有 App</div></div>
+                    <select class="setting-select" data-key="WHITELIST_MODE">
+                        <option value="1">模式 1</option>
+                        <option value="2">模式 2</option>
+                    </select>
+                </div>
+
+                <div class="setting-block">
+                    <h4>黑名单 WIFI</h4>
+                    <div class="setting-desc">每行一个 SSID，连上这些 WIFI 时自动停止服务</div>
+                    <textarea class="setting-textarea" rows="2" data-key="BLACKLIST_WIFI" placeholder="公司WIFI"></textarea>
+                </div>
+            </div>
+
+            <div class="content-section">
+                <h3>运行日志</h3>
+                <div class="setting-block">
+                    <div class="log-actions">
+                        <button class="action-btn edit-btn" id="log-refresh">刷新</button>
+                        <button class="action-btn cancel-btn" id="log-clear">清空</button>
+                    </div>
+                    <pre id="log-view" class="log-view">点击「刷新」查看最近日志</pre>
+                </div>
+            </div>
+
+            <div class="service-control-buttons">
+                <button class="service-btn reload-setting">重新加载</button>
+                <button class="service-btn save-setting">保存并应用</button>
+            </div>
+            <div class="setting-tip">保存后会自动重启服务，约需数秒。直通开关也可以不重启：守护循环会在 5 秒内让它生效。</div>
+        </div>
     </div>
     
     <!-- 底部导航栏 -->
@@ -152,6 +327,10 @@
         <a class="nav-item" data-page="monitor-page">
             <div class="nav-icon">📊</div>
             <span>监控</span>
+        </a>
+        <a class="nav-item" data-page="setting-page">
+            <div class="nav-icon">🎛️</div>
+            <span>设置</span>
         </a>
     </nav>
 </body>

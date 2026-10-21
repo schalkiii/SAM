@@ -115,11 +115,19 @@ filters:
     url: https://github.com/5MayRain/rule/raw/main/rule/AdGuardHome/BlackList.list
     name: 5MayRain
     id: 1766388758
+  - enabled: true
+    url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
+    name: GOODBYEADS
+    id: 1721861846
 whitelist_filters:
   - enabled: true
     url: https://github.com/5MayRain/rule/raw/main/rule/AdGuardHome/WhiteList.list
     name: 5MayRain
     id: 1766388759
+  - enabled: true
+    url: https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
+    name: GOODBYEADS
+    id: 1721861844
 user_rules: []
 dhcp:
   enabled: false

@@ -4,6 +4,12 @@ SKIPUNZIP=1
 # 模块路径
 MODULE_PATH="/data/adb/modules/SAM"
 
+# MODPATH 由管理器提供(临时 root 下手动安装可能缺失)
+if [ -z "${MODPATH}" ]; then
+    ui_print "❌ 缺少 MODPATH，请在模块管理器中刷入，或使用 manual.sh install <zip>"
+    exit 1
+fi
+
 ui_print "📥 开始安装"
 ui_print "📥 解压模块文件"
 unzip -o "${ZIPFILE}" "*" -x "META-INF/*" -d "${MODPATH}" >/dev/null 2>&1
@@ -22,7 +28,16 @@ find "${MODPATH}" -type f -name "*.sh" -exec chmod +x {} \;
 # 设置输出内容
 out_content=$(cat "${MODPATH}/setting.conf")
 # 旧设置内容
-old_content=$(cat "${MODULE_PATH}/setting.conf")
+# 先清洗 BOM 与 CRLF，避免把坏格式原样迁移进新版本
+if [ -f "${MODULE_PATH}/setting.conf" ]; then
+    if [ "$(head -c 3 "${MODULE_PATH}/setting.conf" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then
+        old_content=$(tail -c +4 "${MODULE_PATH}/setting.conf" | sed 's/\n$//')
+    else
+        old_content=$(sed 's/\n$//' "${MODULE_PATH}/setting.conf")
+    fi
+else
+    old_content=""
+fi
 
 # 修改设置
 modify_setting(){
@@ -51,6 +66,9 @@ update_setting(){
     modify_setting "${old_content}" "${out_content}" "HOST_ENABLE"
     modify_setting "${old_content}" "${out_content}" "CRONTAB_ENABLE"
     modify_setting "${old_content}" "${out_content}" "MODULE_DNS_MODE"
+    modify_setting "${old_content}" "${out_content}" "BYPASS_ENABLE"
+    modify_setting "${old_content}" "${out_content}" "NETWORK_REFRESH"
+    modify_setting "${old_content}" "${out_content}" "AD_BLOCK_ENABLE"
     modify_setting "${old_content}" "${out_content}" "BACKUP_CONF"
     modify_setting "${old_content}" "${out_content}" "EXCLUDE_NODE"
     modify_setting "${old_content}" "${out_content}" "SUB_URL"

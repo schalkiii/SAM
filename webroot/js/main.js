@@ -3,11 +3,50 @@ import { fullScreen, exec, toast } from './kernelsu.js'
 const module_path = "/data/adb/modules/SAM"
 const scripts_path = "/data/adb/modules/SAM/scripts"
 
+// 保存中标记，避免连点产生并发重启
+let savingSettings = false;
+
+// 单引号转义，保证参数原样传给 shell
+function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
+// 以 root 执行脚本，参数逐个加引号
+// 走 scripts/run.sh 而不是直接 su -c: 临时 root / KernelSU 环境里可能没有 su 命令
+function runShellArgs(script, args) {
+    const quoted = (args || []).map(shellQuote).join(" ");
+    const suffix = quoted ? " " + quoted : "";
+    return exec(`sh "${scripts_path}/run.sh" sh "${scripts_path}/${script}"${suffix}`);
+}
+
+// 兼容旧调用: 传空格分隔的参数字符串
+function runShell(script, args) {
+    const list = args ? String(args).split(/\s+/).filter(Boolean) : [];
+    return runShellArgs(script, list);
+}
+
+// 执行非脚本命令(如 mount/umount)
+function runCommand(command) {
+    const quoted = String(command).split(/\s+/).filter(Boolean).map(shellQuote).join(" ");
+    return exec(`sh "${scripts_path}/run.sh" ${quoted}`);
+}
+
+// 统一去掉 stdout/stderr 末尾的换行
+// 有些管理器返回的 stdout 带 \n，直接和 "已运行" 比较会永远不相等
+function out(result) {
+    return String((result && result.stdout) || "").trim();
+}
+
+function err(result) {
+    return String((result && result.stderr) || "").trim();
+}
+
 // 获取服务状态
 function getServiceStatus(id, status) {
-    const control = document.getElementById(id);    
+    const control = document.getElementById(id);
+    if (!control) return;
     control.innerHTML = status;
-    if ( status == "已运行" || status == "已挂载" ) {  
+    if ( status == "已运行" || status == "已挂载" ) {
         control.classList.remove('status-inactive');
         control.classList.add('status-active');
     } else {
@@ -16,77 +55,286 @@ function getServiceStatus(id, status) {
     }
 }
 
-// 更新服务状态
-async function updateServiceStatus() {    
-    // SmartDNS 状态
-    var smartdns_status = await exec(`su -c "${scripts_path}/webui.sh status smartdns"`);
-    getServiceStatus("smartdns-status",smartdns_status.stdout);
-        
-    // AdGuardHome 状态
-    var agh_status = await exec(`su -c "${scripts_path}/webui.sh status AdGuardHome"`);
-    getServiceStatus("agh-status",agh_status.stdout);
-           
-    // Mihomo 状态
-    var mihomo_status = await exec(`su -c "${scripts_path}/webui.sh status mihomo"`);
-    getServiceStatus("mihomo-status",mihomo_status.stdout);
-       
-    // Host 状态
-    var host_mount_status = await exec(`su -c "${scripts_path}/webui.sh mount"`);
-    getServiceStatus("host-mount-status",host_mount_status.stdout);
-    
-    const host_mount_action = document.getElementById("host-mount-action");    
-    if ( host_mount_status.stdout == "已挂载" ) {    
-        host_mount_action.classList.add('disable');
-        host_mount_action.textContent = "禁用";
-    } else {
-        host_mount_action.classList.remove('disable');
-        host_mount_action.textContent = "启用";
-    }
-    
-    updateMonitorStatus("wifi","wifi-monitor-status","wifi-monitor-action","wifi-monitor-pid");
-    updateMonitorStatus("host","host-monitor-status","host-monitor-action","host-monitor-pid");
-    updateMonitorStatus("module","module-monitor-status","module-monitor-action","module-monitor-pid");
-    
-   updateServiceStatus();
+// 解析 KEY=VALUE 形式的输出
+function parseKeyValues(text) {
+    const result = {};
+    String(text || "").split(/\n?\n/).forEach(line => {
+        if (!line) return;
+        const pos = line.indexOf("=");
+        if (pos > 0) result[line.slice(0, pos)] = line.slice(pos + 1);
+    });
+    return result;
 }
 
-// 更新监控状态
-async function updateMonitorStatus(value, status, action, showPid) {
-    var monitor = await exec(`su -c "${scripts_path}/webui.sh monitor ${value}"`);    
-    const monitor_status = document.getElementById(status);
-    const monitor_action = document.getElementById(action);
-    if ( monitor.stdout == "已运行" ) {
-        var pid = await exec(`su -c "${scripts_path}/webui.sh pid ${value}"`);
-        document.getElementById(showPid).innerHTML = "PID: " + pid.stdout + ( value == "module" ? " | 监听模块开关，模块启用则运行程序，模块禁用则停止程序" : value == "wifi" ? " | 监听已连接WIFI，监听到WIFI在黑名单内则停止服务，反之则启动" : " | 监听 hosts 文件，修改文件实时生效" );
-        monitor_status.innerHTML = "已运行";
-        monitor_status.classList.remove('status-inactive');
-        monitor_status.classList.add('status-active')
-        monitor_action.classList.add('disable');
-        monitor_action.textContent = "禁用";
-    } else {  
-        document.getElementById(showPid).innerHTML = "PID: null" + ( value == "module" ? " | 监听模块开关，模块启用则运行程序，模块禁用则停止程序" : value == "wifi" ? " | 监听已连接WIFI，监听到WIFI在黑名单内则停止服务，反之则启动。若没有在设置文件添加黑名单，则无法启动监听" : " | 监听 hosts 文件，修改文件实时生效" );      
-        monitor_status.innerHTML = "未运行";
-        monitor_status.classList.remove('status-active');
-        monitor_status.classList.add('status-inactive');
-        monitor_action.classList.remove('disable');
-        monitor_action.textContent = "启用";
+// 最近一次状态快照，启动/停止后直接复用，省掉两次脚本调用
+let lastStatus = {};
+
+// 更新服务状态：一次 allstatus 拿到全部状态
+async function updateServiceStatus() {
+    const status = parseKeyValues(out(await runShell("webui.sh", "allstatus")));
+    lastStatus = status;
+
+    getServiceStatus("smartdns-status", status.smartdns || "未运行");
+    getServiceStatus("agh-status", status.agh || "未运行");
+    getServiceStatus("mihomo-status", status.mihomo || "未运行");
+    getServiceStatus("host-mount-status", status.host || "未挂载");
+
+    // 当前是否处于直通模式
+    const bypassBadge = document.getElementById("bypass-badge");
+    if (bypassBadge) {
+        const bypassOn = status.bypass === "true";
+        bypassBadge.textContent = bypassOn ? "直通模式" : "过滤模式";
+        bypassBadge.classList.toggle("bypass-on", bypassOn);
+        bypassBadge.classList.toggle("bypass-off", !bypassOn);
     }
+
+    const host_mount_action = document.getElementById("host-mount-action");
+    if (host_mount_action) {
+        if ( status.host == "已挂载" ) {
+            host_mount_action.classList.add('disable');
+            host_mount_action.textContent = "禁用";
+        } else {
+            host_mount_action.classList.remove('disable');
+            host_mount_action.textContent = "启用";
+        }
+    }
+
+    updateMonitorStatus("wifi", status);
+    updateMonitorStatus("host", status);
+    updateMonitorStatus("module", status);
 }
 
+// 更新监控状态(数据来自同一次 allstatus)
+function updateMonitorStatus(value, status) {
+    const monitor_status = document.getElementById(value + "-monitor-status");
+    const monitor_action = document.getElementById(value + "-monitor-action");
+    const pid_box = document.getElementById(value + "-monitor-pid");
+    if (!monitor_status || !monitor_action) return;
+
+    const running = status["monitor_" + value] === "已运行";
+    const pid = status["monitor_" + value + "_pid"] || "";
+
+    const hint = value == "module"
+        ? " | 监听模块开关，模块启用则运行程序，模块禁用则停止程序"
+        : value == "wifi"
+            ? " | 监听已连接 WIFI，在黑名单内则停止服务，反之启动"
+            : " | 监听 hosts 文件，修改文件实时生效";
+
+    if (pid_box) {
+        pid_box.innerHTML = "PID: " + (running ? pid : "null") + hint;
+    }
+
+    monitor_status.innerHTML = running ? "已运行" : "未运行";
+    monitor_status.classList.toggle('status-active', running);
+    monitor_status.classList.toggle('status-inactive', !running);
+    monitor_action.classList.toggle('disable', running);
+    monitor_action.textContent = running ? "禁用" : "启用";
+}
+
+/* ---------------- 设置页 ---------------- */
+
+// 解析 setting_api.sh get 的输出
+function parseSettingOutput(text) {
+    const values = {};
+    const arrays = {};
+
+    String(text || "").split(/\n?\n/).forEach(line => {
+        if (!line) return;
+
+        let match = line.match(/^([A-Z0-9_]+)\[count\]=(\d+)$/);
+        if (match) {
+            arrays[match[1]] = [];
+            return;
+        }
+
+        match = line.match(/^([A-Z0-9_]+)\[(\d+)\]=(.*)$/);
+        if (match) {
+            const key = match[1];
+            if (!arrays[key]) arrays[key] = [];
+            arrays[key][Number(match[2])] = match[3];
+            return;
+        }
+
+        const pos = line.indexOf("=");
+        if (pos > 0) {
+            values[line.slice(0, pos)] = line.slice(pos + 1);
+        }
+    });
+
+    return { values: values, arrays: arrays };
+}
+
+// 读取设置并填到表单
+async function loadSettings(silent) {
+    const result = await runShell("setting_api.sh", "get");
+    const parsed = parseSettingOutput(result.stdout);
+
+    document.querySelectorAll("[data-key]").forEach(el => {
+        const key = el.dataset.key;
+
+        if (key === "SUB_URL" || key === "BLACKLIST_WIFI") {
+            const list = (parsed.arrays[key] || []).filter(v => v !== undefined);
+            el.value = list.join("\n");
+        } else if (el.type === "checkbox") {
+            el.checked = parsed.values[key] === "true";
+        } else {
+            el.value = parsed.values[key] !== undefined ? parsed.values[key] : "";
+        }
+    });
+
+    if (!silent) showToast("设置已加载");
+    syncWhitelistMode();
+    labelSettingsControls();
+    setSettingsDirty(false);
+}
+
+// 白名单开关关闭时，"白名单模式"没有意义，置灰避免误改
+function syncWhitelistMode() {
+    const toggle = document.querySelector('[data-key="ENABLE_WHITELIST"]');
+    const mode = document.querySelector('[data-key="WHITELIST_MODE"]');
+    if (!toggle || !mode) return;
+
+    mode.disabled = !toggle.checked;
+    mode.style.opacity = toggle.checked ? "1" : "0.45";
+}
+
+// 未保存提示
+function setSettingsDirty(dirty) {
+    const badge = document.getElementById("setting-dirty");
+    if (badge) badge.hidden = !dirty;
+}
+
+// 给控件补 aria-label，方便读屏
+function labelSettingsControls() {
+    document.querySelectorAll("[data-key]").forEach(el => {
+        if (el.getAttribute("aria-label")) return;
+        const row = el.closest(".setting-row") || el.closest(".setting-block");
+        const title = row ? row.querySelector("h4") : null;
+        if (title) el.setAttribute("aria-label", title.textContent.trim());
+    });
+}
+
+// 查看日志
+async function refreshLog() {
+    const view = document.getElementById("log-view");
+    if (!view) return;
+    view.textContent = "加载中...";
+    const result = await runShell("setting_api.sh", "logview 150");
+    view.textContent = out(result) || "(暂无日志)";
+    view.scrollTop = view.scrollHeight;
+}
+
+// 清空日志
+async function clearLog() {
+    await runShell("setting_api.sh", "clearlog");
+    const view = document.getElementById("log-view");
+    if (view) view.textContent = "(日志已清空)";
+    showToast("日志已清空");
+}
+
+// 多行文本 -> 数组
+function splitLines(text) {
+    return String(text || "")
+        .split(/\n?\n/)
+        .map(v => v.trim())
+        .filter(v => v.length > 0);
+}
+
+// 保存并应用
+async function saveSettings() {
+    if (savingSettings) {
+        showToast("正在保存中，请稍候", 3000);
+        return;
+    }
+
+    const scalars = [];
+    const arrays = [];
+    let invalid = "";
+
+    document.querySelectorAll("[data-key]").forEach(el => {
+        const key = el.dataset.key;
+
+        if (key === "SUB_URL" || key === "BLACKLIST_WIFI") {
+            arrays.push({ key: key, values: splitLines(el.value) });
+            return;
+        }
+
+        if (el.type === "checkbox") {
+            scalars.push(key + "=" + (el.checked ? "true" : "false"));
+            return;
+        }
+
+        const value = String(el.value).trim();
+
+        // 端口必须是 1-65535 的数字
+        if (el.type === "number") {
+            const port = Number(value);
+            if (!value || !/^[0-9]+$/.test(value) || port < 1 || port > 65535) {
+                invalid = key + " 必须是 1-65535 之间的数字";
+                return;
+            }
+        }
+
+        scalars.push(key + "=" + value);
+    });
+
+    if (invalid) {
+        showToast("保存失败: " + invalid, 5000);
+        return;
+    }
+
+    savingSettings = true;
+    const saveBtn = document.querySelector('.save-setting');
+    const saveBtnText = saveBtn ? saveBtn.textContent : "";
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "保存中...";
+    }
+
+    try {
+        toast("正在保存配置......");
+        const setResult = await runShellArgs("setting_api.sh", ["set"].concat(scalars));
+        if (err(setResult)) {
+            showToast("保存失败: " + err(setResult), 6000);
+            return;
+        }
+
+        for (let i = 0; i < arrays.length; i++) {
+            const item = arrays[i];
+            const arrResult = await runShellArgs("setting_api.sh", ["setarr", item.key].concat(item.values));
+            if (err(arrResult)) {
+                showToast("保存失败: " + err(arrResult), 6000);
+                return;
+            }
+        }
+
+        toast("正在应用配置，请稍等......");
+        const applyResult = await runShell("setting_api.sh", "apply");
+        await updateServiceStatus();
+        setSettingsDirty(false);
+        showToast(out(applyResult) || "已保存并应用", 4000);
+    } finally {
+        savingSettings = false;
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = saveBtnText || "保存并应用";
+        }
+    }
+}
 
 // 页面导航功能
 function pageNavigation() {
     const navItems = document.querySelectorAll('.nav-item');
     const pages = document.querySelectorAll('.page');
-    
+
     navItems.forEach(item => {
         item.addEventListener('click', function() {
             const targetPageId = this.getAttribute('data-page');
-            
+
             // 更新导航状态
             navItems.forEach(nav => nav.classList.remove('active'));
             this.classList.add('active');
-            
+
             // 更新页面显示
             pages.forEach(page => {
                 page.classList.remove('active');
@@ -94,6 +342,11 @@ function pageNavigation() {
                     page.classList.add('active');
                 }
             });
+
+            // 进入设置页时重新读取，反映当前真实配置
+            if (targetPageId === "setting-page") {
+                loadSettings(true);
+            }
         });
     });
 }
@@ -101,17 +354,17 @@ function pageNavigation() {
 // 服务控制功能
 async function serviceControls(text, cmd) {
     toast(`正在${text}，请稍等......`);
-    exec(`su -c "${scripts_path}/service.sh ${cmd}"`)
-    updateServiceStatus();
-    var outNumber = await exec(`su -c "${scripts_path}/webui.sh process"`);
-    var serNumber = await exec(`su -c "${scripts_path}/webui.sh service"`);
-    if ( outNumber.stdout < serNumber.stdout && ( cmd == "start" || cmd == "restart" )) {
-        showToast(text+"失败");
-    } else if ( outNumber.stdout == serNumber.stdout && ( cmd == "start" || cmd == "restart" )) {
+    await runShell("service.sh", cmd);
+    await updateServiceStatus();
+    var outNumber = parseInt(lastStatus.process, 10) || 0;
+    var serNumber = parseInt(lastStatus.service, 10) || 0;
+    if ( outNumber < serNumber && ( cmd == "start" || cmd == "restart" )) {
+        showToast(text+"失败(部分服务未起来)", 5000);
+    } else if ( outNumber == serNumber && ( cmd == "start" || cmd == "restart" )) {
         showToast(text+"成功");
-    } else if ( outNumber.stdout > 0 && cmd == "stop" ) {
-        showToast(text+"失败");
-    } else if ( outNumber.stdout == 0 && cmd == "stop" ) {
+    } else if ( outNumber > 0 && cmd == "stop" ) {
+        showToast(text+"失败(仍有进程在运行)", 5000);
+    } else if ( outNumber == 0 && cmd == "stop" ) {
         showToast(text+"成功");
     }
 }
@@ -119,97 +372,215 @@ async function serviceControls(text, cmd) {
 // 挂载控制
 async function mountControls(){
     const hostMountStatus = document.getElementById("host-mount-status");
-    var host_mount_status = await exec(`su -c "${scripts_path}/webui.sh mount"`);
-    if ( host_mount_status.stdout == "已挂载" ) {
+    var host_mount_status = await runShell("webui.sh", "mount");
+    if ( out(host_mount_status) == "已挂载" ) {
         // 切换到禁用
         hostMountStatus.classList.remove('status-active');
         hostMountStatus.classList.add('status-inactive');
-        exec('su -c "umount /system/etc/hosts"');
+        await runCommand("umount /system/etc/hosts");
         showToast(`Host 未挂载`);
     } else {
         // 切换到启用
         hostMountStatus.classList.remove('status-inactive');
         hostMountStatus.classList.add('status-active');
-        exec(`su -c "mount ${module_path}/etc/hosts /system/etc/hosts"`);
+        await runCommand(`mount ${module_path}/etc/hosts /system/etc/hosts`);
         showToast(`Host 已挂载`);
     }
-    updateServiceStatus();
+    await updateServiceStatus();
 }
 
 // 监控控制
 async function monitorControls(text) {
-    var pid_status = await exec(`su -c "${scripts_path}/webui.sh monitor ${text}"`);
-    if ( pid_status.stdout == "已运行" ) {
-        exec(`su -c "${scripts_path}/webui.sh kill ${text}"`);
+    var pid_status = await runShell("webui.sh", `monitor ${text}`);
+    if ( out(pid_status) == "已运行" ) {
+        await runShell("webui.sh", `kill ${text}`);
         showToast(text == "module" ? "模块未监控" : text == "wifi" ? "WIFI未监控" : "host未监控");
     } else {
-        exec(`su -c "${scripts_path}/webui.sh start ${text}"`);
+        await runShell("webui.sh", `start ${text}`);
         showToast(text == "module" ? "模块已监控" : text == "wifi" ? "WIFI已监控" : "host已监控");
     }
-    updateServiceStatus();
+    await updateServiceStatus();
+}
+
+// 软重启后恢复运行
+async function resumeModule() {
+    toast("正在恢复运行，请稍等......");
+    await runShell("manual.sh", "resume");
+    await updateServiceStatus();
+    showToast("恢复完成");
+}
+
+// 立即卸载
+// 不用 window.confirm: 部分 WebView 里 confirm 会被禁用或返回 false，
+// 表现为"点了没反应"。改为按钮二次确认(见绑定处)。
+async function uninstallModule() {
+    toast("正在卸载，请稍等......");
+    const result = await runShell("manual.sh", "uninstall");
+    const message = err(result);
+    if (message) {
+        showToast("卸载失败: " + message, 6000);
+        return;
+    }
+    showToast("已卸载，可关闭此页面", 6000);
 }
 
 (async () => {
-    // 全屏    
+    // 全屏
     fullScreen(true);
-    
+
     // 消息提示功能
-    const toast = document.getElementById('toast');
-    window.showToast = function(message) {
-        toast.textContent = message;
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 2000);
+    const toastBox = document.getElementById('toast');
+    let toastTimer = null;
+    window.showToast = function(message, duration) {
+        if (!toastBox) return;
+        toastBox.textContent = message;
+        toastBox.classList.add('show');
+        clearTimeout(toastTimer);
+        // 错误信息默认显示更久
+        toastTimer = setTimeout(() => toastBox.classList.remove('show'), duration || 2500);
     };
-    
-    // 更新服务状态
-    updateServiceStatus();
-    
-    // 更新监控状态
-    updateMonitorStatus();
-    
+
     // 页面导航
     pageNavigation();
-    
+
+    // 更新服务状态
+    await updateServiceStatus();
+
+    // 预填设置页(失败不影响其他功能)
+    await loadSettings(true).catch(() => {});
+
     // 启动点击事件
     const startBtn = document.querySelector('.start-service');
-    startBtn.addEventListener('click', () => {
-        serviceControls("启动","start");
-    });
-    
+    if (startBtn) {
+        startBtn.addEventListener('click', () => {
+            serviceControls("启动","start");
+        });
+    }
+
     // 停止点击事件
     const stopBtn = document.querySelector('.stop-service');
-    stopBtn.addEventListener('click', () => {
-        serviceControls("停止","stop");
-    });
-    
+    if (stopBtn) {
+        stopBtn.addEventListener('click', () => {
+            serviceControls("停止","stop");
+        });
+    }
+
     // 重启点击事件
     const restartBtn = document.querySelector('.restart-service');
-    restartBtn.addEventListener('click', () => {      
-        serviceControls("重启","restart");
-    });
-    
+    if (restartBtn) {
+        restartBtn.addEventListener('click', () => {
+            serviceControls("重启","restart");
+        });
+    }
+
+    // 软重启后恢复
+    const resumeBtn = document.querySelector('.resume-service');
+    if (resumeBtn) {
+        resumeBtn.addEventListener('click', () => {
+            resumeModule();
+        });
+    }
+
+    // 立即卸载: 二次确认，不依赖 window.confirm
+    const uninstallBtn = document.querySelector('.uninstall-service');
+    if (uninstallBtn) {
+        let uninstallArmed = false;
+        let uninstallTimer = null;
+
+        uninstallBtn.addEventListener('click', () => {
+            if (!uninstallArmed) {
+                uninstallArmed = true;
+                uninstallBtn.textContent = "再点一次确认卸载";
+                showToast("再次点击将立即删除模块目录", 4000);
+                uninstallTimer = setTimeout(() => {
+                    uninstallArmed = false;
+                    uninstallBtn.textContent = "立即卸载";
+                }, 4000);
+                return;
+            }
+
+            clearTimeout(uninstallTimer);
+            uninstallArmed = false;
+            uninstallBtn.textContent = "立即卸载";
+            uninstallModule();
+        });
+    }
+
+    // 设置页按钮
+    const saveSettingBtn = document.querySelector('.save-setting');
+    if (saveSettingBtn) {
+        saveSettingBtn.addEventListener('click', () => {
+            saveSettings();
+        });
+    }
+
+    const reloadSettingBtn = document.querySelector('.reload-setting');
+    if (reloadSettingBtn) {
+        reloadSettingBtn.addEventListener('click', () => {
+            loadSettings(false);
+        });
+    }
+
+    // 白名单开关联动: 关闭时把"白名单模式"置灰
+    const whitelistToggle = document.querySelector('[data-key="ENABLE_WHITELIST"]');
+    if (whitelistToggle) {
+        whitelistToggle.addEventListener('change', syncWhitelistMode);
+    }
+
+    // 设置页: 改动即标记未保存；分区可折叠
+    const settingPage = document.getElementById("setting-page");
+    if (settingPage) {
+        settingPage.addEventListener("input", () => setSettingsDirty(true));
+        settingPage.addEventListener("change", () => setSettingsDirty(true));
+
+        settingPage.querySelectorAll(".content-section h3").forEach(title => {
+            title.addEventListener("click", () => {
+                const section = title.parentElement;
+                if (section) section.classList.toggle("collapsed");
+            });
+        });
+    }
+
+    // 日志面板
+    const logRefreshBtn = document.getElementById("log-refresh");
+    if (logRefreshBtn) {
+        logRefreshBtn.addEventListener("click", refreshLog);
+    }
+    const logClearBtn = document.getElementById("log-clear");
+    if (logClearBtn) {
+        logClearBtn.addEventListener("click", clearLog);
+    }
+
     // host 挂载按钮点击事件
     const hostMountAction = document.getElementById("host-mount-action");
-    hostMountAction.addEventListener('click', () => {
-        mountControls();
-    });
-    
+    if (hostMountAction) {
+        hostMountAction.addEventListener('click', () => {
+            mountControls();
+        });
+    }
+
     // 模块目录监控点击事件
     const module_monitor_action = document.getElementById("module-monitor-action");
-    module_monitor_action.addEventListener('click', () => {
-        monitorControls("module");
-    });
-     
-    // hosts文件监控点击事件   
+    if (module_monitor_action) {
+        module_monitor_action.addEventListener('click', () => {
+            monitorControls("module");
+        });
+    }
+
+    // hosts文件监控点击事件
     const host_monitor_action = document.getElementById("host-monitor-action");
-    host_monitor_action.addEventListener('click', () => {
-        monitorControls("host");
-    });
-    
-    // wifi监控点击事件   
+    if (host_monitor_action) {
+        host_monitor_action.addEventListener('click', () => {
+            monitorControls("host");
+        });
+    }
+
+    // wifi监控点击事件
     const wifi_monitor_action = document.getElementById("wifi-monitor-action");
-    wifi_monitor_action.addEventListener('click', () => {
-        monitorControls("wifi");
-    });
-    
+    if (wifi_monitor_action) {
+        wifi_monitor_action.addEventListener('click', () => {
+            monitorControls("wifi");
+        });
+    }
+
 })().catch((err) => 'null')

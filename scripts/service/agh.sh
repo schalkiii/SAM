@@ -22,8 +22,12 @@ start(){
     busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update > "${TMP_PATH}/${AGH_BIN}.log" 2>&1 &
     #su -g $(id -g ${DNS_GROUP}) -- nohup ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update > "${TMP_PATH}/${AGH_BIN}.log" 2>&1 &
     
-    # 延时，并判断 AdGuardHome 是否启动成功
-    sleep 1
+    # 轮询等待就绪(最多 5 秒)
+    wait_ready=0
+    while [ ${wait_ready} -lt 10 ] && ! isRun ${AGH_BIN}; do
+        sleep 0.5 2>/dev/null || sleep 1
+        wait_ready=$((wait_ready + 1))
+    done
     isRun ${AGH_BIN} && log "i" "${AGH_BIN} 启动成功" || log "e" "${AGH_BIN} 启动失败"
 }
 

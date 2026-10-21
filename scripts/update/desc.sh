@@ -31,6 +31,9 @@ out_content+=" 📊监控: "
 isRun "${INOTIFY_PATH}/module.sh" && out_content+="[模块✅]" || out_content+="[模块❌]"
 isRun "${INOTIFY_PATH}/host.sh" && out_content+="[Hosts✅]" || out_content+="[Hosts❌]"
 
+out_content+=" 🚦直通: "
+[ "${BYPASS_ENABLE}" = "true" ] && out_content+="[已开启]" || out_content+="[已关闭]"
+
 out_content+=" 🌐Host: "
 [ ${HOST_ENABLE} = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
 out_content+=" ⏰定时: "

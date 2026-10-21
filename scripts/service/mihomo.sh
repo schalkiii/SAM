@@ -29,8 +29,12 @@ start(){
     busybox setuidgid "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} > "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1 &
     #su -g $(id -g ${TUN_GROUP}) -G $(id -g ${DNS_GROUP}) -- nohup ${MIHOMO_BIN} -d ${MIHOMO_PATH} > "${TMP_PATH}/mihomo.log" 2>&1 &
     
-    # 延时，并判断 Mihomo 是否启动成功
-    sleep 1
+    # 轮询等待就绪(最多 5 秒)
+    wait_ready=0
+    while [ ${wait_ready} -lt 10 ] && ! isRun ${MIHOMO_BIN}; do
+        sleep 0.5 2>/dev/null || sleep 1
+        wait_ready=$((wait_ready + 1))
+    done
     isRun ${MIHOMO_BIN} && {
         log "i" "${MIHOMO_BIN} 启动成功"
         # 添加 TUN 规则

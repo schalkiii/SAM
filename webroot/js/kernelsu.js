@@ -5,12 +5,23 @@ function getUniqueCallbackName(prefix) {
   return `${prefix}_callback_${Date.now()}_${callbackCounter++}`;
 }
 
+// 当前 WebView 是否提供了内核接口
+// 非 KernelSU 的模块管理器可能没有 ksu 对象，直接调用会让整个页面初始化抛异常
+function hasKernelInterface() {
+  return typeof ksu !== "undefined" && ksu !== null && typeof ksu.exec === "function";
+}
+
 export function exec(command, options) {
   if (typeof options === "undefined") {
     options = {};
   }
 
   return new Promise((resolve, reject) => {
+    if (!hasKernelInterface()) {
+      resolve({ errno: -1, stdout: "", stderr: "当前环境不支持内核接口，无法执行命令" });
+      return;
+    }
+
     // Generate a unique callback function name
     const callbackFuncName = getUniqueCallbackName("exec");
 
@@ -94,6 +105,11 @@ function Stdio() {
         cleanup(childCallbackName);
     });
 
+    if (!hasKernelInterface() || typeof ksu.spawn !== "function") {
+      child.emit("error", new Error("当前环境不支持内核接口，无法执行命令"));
+      return child;
+    }
+
     try {
       ksu.spawn(
         command,
@@ -109,9 +125,22 @@ function Stdio() {
   }
 
 export function fullScreen(isFullScreen) {
-  ksu.fullScreen(isFullScreen);
+  // 缺少接口时静默跳过，保证页面其余功能仍然可用
+  if (hasKernelInterface() && typeof ksu.fullScreen === "function") {
+    try {
+      ksu.fullScreen(isFullScreen);
+    } catch (error) {
+      /* 忽略：全屏失败不影响功能 */
+    }
+  }
 }
 
 export function toast(message) {
-  ksu.toast(message);
+  if (hasKernelInterface() && typeof ksu.toast === "function") {
+    try {
+      ksu.toast(message);
+    } catch (error) {
+      /* 忽略 */
+    }
+  }
 }

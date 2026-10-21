@@ -227,7 +227,7 @@ body {
     color: var(--text-tertiary);
     text-decoration: none;
     font-size: 12px;
-    width: 33.333%;
+    flex: 1;
     height: 100%;
 }
 
@@ -266,6 +266,11 @@ body {
     gap: 10px;
     padding: 0 15px 15px;
     margin-top: 30px;
+}
+
+/* 次要按钮区域(临时 root / 软重启专用) */
+.service-control-buttons.secondary {
+    margin-top: 0;
 }
 
 .service-btn {
@@ -324,4 +329,209 @@ body {
 .status-badge.restarting {
     background-color: rgba(243, 156, 18, 0.15);
     color: #f39c12;
+}
+
+/* 设置页 */
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.setting-row:last-child {
+    border-bottom: none;
+}
+
+.setting-block {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.setting-block:last-child {
+    border-bottom: none;
+}
+
+.setting-info h4,
+.setting-block h4 {
+    font-size: 14px;
+    margin-bottom: 3px;
+    color: var(--text-primary);
+}
+
+.setting-desc {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+}
+
+/* 开关 */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 46px;
+    height: 26px;
+    flex-shrink: 0;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switch .track {
+    position: absolute;
+    inset: 0;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 26px;
+    transition: background-color 0.2s ease;
+}
+
+.switch .track::before {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    left: 2px;
+    top: 2px;
+    background-color: #ffffff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.switch input:checked + .track {
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+}
+
+.switch input:checked + .track::before {
+    transform: translateX(20px);
+}
+
+/* 输入控件 */
+.setting-select,
+.setting-input,
+.setting-textarea {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.setting-select {
+    min-width: 110px;
+}
+
+.setting-input {
+    width: 110px;
+    text-align: right;
+}
+
+.setting-input-wide {
+    width: 100%;
+    text-align: left;
+}
+
+.setting-textarea {
+    width: 100%;
+    margin-top: 8px;
+    line-height: 1.6;
+    resize: vertical;
+}
+
+.setting-tip {
+    padding: 0 15px 24px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    line-height: 1.6;
+}
+
+/* 保存按钮 */
+.save-setting {
+    background-color: var(--success-color);
+}
+
+.reload-setting {
+    background-color: var(--accent-color);
+}
+
+/* 直通徽章 */
+.bypass-badge {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    margin-left: auto;
+}
+
+.bypass-off {
+    background-color: rgba(54, 123, 245, 0.15);
+    color: var(--accent-color);
+}
+
+.bypass-on {
+    background-color: rgba(243, 156, 18, 0.18);
+    color: #f39c12;
+}
+
+/* 未保存提示 */
+.dirty-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border: 1px solid #f39c12;
+    border-radius: 8px;
+    color: #f39c12;
+    margin-left: auto;
+}
+
+/* 设置页分区可折叠 */
+#setting-page .content-section h3 {
+    cursor: pointer;
+    position: relative;
+    padding-right: 18px;
+}
+
+#setting-page .content-section h3::after {
+    content: "▾";
+    position: absolute;
+    right: 0;
+    top: 0;
+    transition: transform 0.2s ease;
+}
+
+#setting-page .content-section.collapsed h3::after {
+    transform: rotate(-90deg);
+}
+
+#setting-page .content-section.collapsed > *:not(h3) {
+    display: none;
+}
+
+/* 日志面板 */
+.log-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.log-view {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--text-secondary);
+    font-family: ui-monospace, Menlo, Consolas, monospace;
 }
