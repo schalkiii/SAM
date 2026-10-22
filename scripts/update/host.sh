@@ -34,7 +34,21 @@ get_host(){
     get_content=$(echo -e "${get_content}" | sort | uniq | grep -Ev "^[[:space:]]*$")
     # 输出
     hosts_content+="\n# start > ${1}\n${get_content}\n# ${1} < end"
-    echo -e "${hosts_content}" | sed "s/^# .*start/\n# start/g" > ${HOSTS_FILE}
+    # 先写临时文件再替换: 原实现直接 > ${HOSTS_FILE} 覆盖写，
+    # 中途出错(磁盘满/被杀)就会把 hosts 写成半截文件，
+    # 而 hosts 是系统启动必需文件，损坏会直接导致开机异常。
+    echo -e "${hosts_content}" | sed "s/^# .*start/\n# start/g" > "${HOSTS_FILE}.tmp" 2>/dev/null || {
+        log "e" "写入 hosts 临时文件失败，保留原文件"
+        rm -f "${HOSTS_FILE}.tmp"
+        return 1
+    }
+    # 临时文件必须非空且包含 hosts 标记，否则视为失败
+    if [ ! -s "${HOSTS_FILE}.tmp" ] || ! grep -q "^# start" "${HOSTS_FILE}.tmp"; then
+        log "e" "hosts 临时文件校验失败，保留原文件"
+        rm -f "${HOSTS_FILE}.tmp"
+        return 1
+    fi
+    mv -f "${HOSTS_FILE}.tmp" "${HOSTS_FILE}"
     log "i" "写入 hosts 文件"
 }
 

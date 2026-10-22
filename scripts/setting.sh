@@ -24,7 +24,7 @@ setting_default(){
     SMARTDNS_RESPONSE_MODE=first-ping
     SMARTDNS_SPEED_CHECK=ping,tcp:80,tcp:443
     SMARTDNS_DUALSTACK=true
-    SMARTDNS_TTL_MIN=60
+    SMARTDNS_TTL_MIN=600
     NETWORK_REFRESH=true
     AD_BLOCK_ENABLE=true
     BACKUP_CONF=true
@@ -50,7 +50,12 @@ setting_sanitize(){
     fi
 
     # 去除行尾 CR
-    sed -i 's/\n$//' "${SETTING_CLEAN}" 2>/dev/null
+    # 原用 sed -i 's/\n$//'，但 \n 作为 sed 替换文本里的换行符只有 GNU sed 保证支持，
+    # busybox / toybox sed 的行为依版本而异 —— 一旦不生效，CRLF 残留会让
+    # 下面的 sh -n 预检直接失败，把好配置误判成坏配置。
+    # tr -d '\n' 去掉所有 CR，语义明确且各实现一致，还少一次进程(不需要 sed -i 的临时文件)。
+    tr -d '\n' < "${SETTING_CLEAN}" > "${SETTING_CLEAN}.lf" 2>/dev/null && \
+        mv -f "${SETTING_CLEAN}.lf" "${SETTING_CLEAN}"
 }
 
 # 逐行抢救
@@ -161,7 +166,7 @@ setting_validate(){
 
     setting_fix_number AGH_DNS_PORT 5300
     setting_fix_number MIHOMO_DNS_PORT 1053
-    setting_fix_number SMARTDNS_TTL_MIN 60
+    setting_fix_number SMARTDNS_TTL_MIN 600
 
     setting_fix_enum MODULE_DNS_MODE 2 1 2
     setting_fix_enum WHITELIST_MODE 1 1 2

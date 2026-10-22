@@ -41,6 +41,15 @@ out_content+=" ⏰定时: "
 
 out_content+=" 📢注意: 所有服务默认账号和密码都是root"
 
-sed -i "s/description=.*/description=${out_content}/g" "${MODULE_PATH}/module.prop"
+# 写回模块描述
+# 原实现用 sed "s/description=.*/description=${out_content}/g"，
+# 一旦描述里出现路径(含 /)或 & / \ 就会报 "unknown option to `s'"，
+# 导致描述更新失败、模块管理器里一直显示旧状态。
+# 这里用环境变量把描述传给 awk(避免 -v 的反斜杠转义)，整体重写该行。
+SAM_DESC="${out_content}" awk '
+    /^description=/ { print "description=" ENVIRON["SAM_DESC"]; next }
+    { print }
+' "${MODULE_PATH}/module.prop" > "${MODULE_PATH}/module.prop.tmp" 2>/dev/null && \
+    mv -f "${MODULE_PATH}/module.prop.tmp" "${MODULE_PATH}/module.prop"
 
 log "i" "更新模块描述"

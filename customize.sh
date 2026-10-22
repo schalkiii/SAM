@@ -31,9 +31,12 @@ out_content=$(cat "${MODPATH}/setting.conf")
 # 先清洗 BOM 与 CRLF，避免把坏格式原样迁移进新版本
 if [ -f "${MODULE_PATH}/setting.conf" ]; then
     if [ "$(head -c 3 "${MODULE_PATH}/setting.conf" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then
-        old_content=$(tail -c +4 "${MODULE_PATH}/setting.conf" | sed 's/\n$//')
+        old_content=$(tail -c +4 "${MODULE_PATH}/setting.conf" | tr -d '\n')
     else
-        old_content=$(sed 's/\n$//' "${MODULE_PATH}/setting.conf")
+        # 用 tr -d '\n' 去掉 CRLF 的回车。
+        # 原用 sed 's/\n$//'，但 \n 作为替换文本里的换行符只有 GNU sed 保证支持，
+        # busybox / toybox sed 的行为依版本而异，一旦不生效就会把 CRLF 带进新版本配置。
+        old_content=$(tr -d '\n' < "${MODULE_PATH}/setting.conf")
     fi
 else
     old_content=""

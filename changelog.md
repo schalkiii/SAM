@@ -1,3 +1,37 @@
+# 2026.10.21.8
+- 修正 `rr-ttl-min` 取值: 60 -> 600
+  - 官方 FAQ 明确建议「10~30 分钟」(600~1800 秒)，60 秒远低于下限
+  - 配合 `prefetch-domain`(到期前 5 秒预取) 与 `serve-expired`(过期仍返回并后台刷新)，
+    缓存条目实际不会真的过期，同时不会让 CDN 切换后的旧 IP 停留过久
+  - `SMARTDNS_TTL_MIN` 默认值同步为 600
+- 修复「定时任务备份能存进去但恢复不出来」
+  - 原因: 备份用 `cp -f src target_dir/`(存成目录里的同名文件)，
+    恢复时按同一相对路径拼回变成 `<备份>/etc/crontabs/etc/crontabs/root`，路径重复
+  - 改为保留完整相对路径: `cp -f src <备份>/<相对路径>`
+- 修复「模块描述更新可能整体失败」
+  - 原因: `sed "s/description=.*/description=${out_content}/g"` 用 `/` 作分隔符，
+    描述里一旦出现路径(含 `/`)就直接报 `unknown option to 's'`，描述停留在旧状态
+  - 改用 awk 整体重写该行，替换文本经环境变量传递，无需转义
+- 修复「hosts 文件可能被写成半截」
+  - 原因: `update/host.sh` 直接 `> ${HOSTS_FILE}` 覆盖写，中途出错(磁盘满/被杀)会留下残缺文件，
+    而 hosts 是系统启动必需文件
+  - 改为先写临时文件、校验非空且含 hosts 标记后再原子替换
+- 修复「CRLF 清洗在 busybox/toybox 上可能失效」
+  - 原因: `sed -i 's/
+$//'` 里的 `
+` 作为替换文本中的换行符只有 GNU sed 保证支持，
+    busybox / toybox sed 行为依版本而异；一旦不生效，CRLF 残留会让 `sh -n` 预检失败，
+    把好配置误判成坏配置
+  - 改用 `tr -d ''`，各实现语义一致，还少一次进程
+  - `customize.sh` 里同样的写法一并修正
+- 性能: `isRun` 去掉 `echo | grep` 判断
+  - 改成 shell 内建 `case`，每次调用少两个 fork
+  - 该函数全项目 50+ 处调用，守护循环每 5 秒调 6~8 次，省下的是每天几十万次进程创建
+- 性能: `webui.sh allstatus` 不再重复取进程状态
+  - 三个服务的运行状态取一次后复用，`process` 数值由它算出
+  - DNS 规则检查不再 fork 完整的 `dns.sh check`(那会重新 source 一遍 base.sh 并写临时文件)，
+    改为直接查 iptables；端口选择顺序与 `dns.sh` 的 `select_dns_port` 对齐，避免误报
+
 # 2026.10.21.7
 - 缓存职责归位: AdGuardHome 关闭 DNS 缓存，由 SmartDNS 独占缓存层
   - 原因: 上游 SmartDNS 本就带缓存(`prefetch-domain` / `serve-expired` / `cache-persist`)

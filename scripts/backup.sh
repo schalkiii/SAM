@@ -36,9 +36,13 @@ save_backup(){
         backup_src="${MODULE_PATH}/${backup_file}"
         [ -f "${backup_src}" ] || continue
 
-        backup_target_dir="${backup_dir}/$(dirname "${backup_file}")"
-        mkdir -p "${backup_target_dir}" 2>/dev/null
-        cp -f "${backup_src}" "${backup_target_dir}/" && backup_count=$((backup_count + 1))
+        # 保留完整相对路径(含文件名)，
+        # 不能用 cp 到目录的方式: 那样 "etc/crontabs/root" 会被存成
+        # "<备份>/etc/crontabs/root"，而恢复时按同一相对路径拼回来会变成
+        # "<备份>/etc/crontabs/etc/crontabs/root" —— 路径重复，定时任务恢复不出来。
+        backup_target="${backup_dir}/${backup_file}"
+        mkdir -p "$(dirname "${backup_target}")" 2>/dev/null
+        cp -f "${backup_src}" "${backup_target}" && backup_count=$((backup_count + 1))
     done
 
     # 兼容旧路径，避免老用户找不到

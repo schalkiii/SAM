@@ -97,9 +97,17 @@ start_monitor(){
 # 一次性输出全部状态
 # WebUI 首屏从 10 次 exec 降到 1 次(每次 exec 都要 source 一遍 base.sh，开销不小)
 get_all_status(){
-    isRun ${SMARTDNS_BIN} && echo "smartdns=已运行" || echo "smartdns=未运行"
-    isRun ${AGH_BIN} && echo "agh=已运行" || echo "agh=未运行"
-    isRun ${MIHOMO_BIN} && echo "mihomo=已运行" || echo "mihomo=未运行"
+    # 先取一次三个服务的运行状态，后面多处复用，避免重复 fork pidof
+    smartdns_running="未运行"
+    agh_running="未运行"
+    mihomo_running="未运行"
+    isRun ${SMARTDNS_BIN} && smartdns_running="已运行"
+    isRun ${AGH_BIN} && agh_running="已运行"
+    isRun ${MIHOMO_BIN} && mihomo_running="已运行"
+
+    echo "smartdns=${smartdns_running}"
+    echo "agh=${agh_running}"
+    echo "mihomo=${mihomo_running}"
     mount | grep -q "/system/etc/hosts" && echo "host=已挂载" || echo "host=未挂载"
 
     wifi_pid=$(get_monitor_pid wifi)
@@ -115,7 +123,8 @@ get_all_status(){
 
     echo "bypass=${BYPASS_ENABLE}"
     echo "service=$(get_service_number)"
-    echo "process=$(get_process_number)"
+    # 进程数直接由上面已取到的状态算出，不再重复调 isRun
+    echo "process=$(get_process_number_from "${smartdns_running}" "${agh_running}" "${mihomo_running}")"
 
     # 守护循环与 DNS 规则状态: 服务异常退出后这两项最能说明问题
     if pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then
@@ -126,9 +135,50 @@ get_all_status(){
     echo "dns_rule=$(check_dns_rule)"
 }
 
+# 用已取到的运行状态算进程数，避免再次 fork pidof
+get_process_number_from(){
+    number=0
+
+    [ "${SMARTDNS_ENABLE}" = "true" ] && [ "${1}" = "已运行" ] && number=$((number + 1))
+    [ "${AGH_ENABLE}" = "true" ] && [ "${2}" = "已运行" ] && number=$((number + 1))
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ]; then
+        [ "${3}" = "已运行" ] && number=$((number + 1))
+    fi
+
+    echo ${number}
+}
+
 # 检查 DNS 重定向规则是否完整
+# 不复用 dns.sh check: 那个子命令会重新 source 一遍 base.sh 并写临时文件，
+# WebUI 每次刷新都调它，开销与整轮 allstatus 相当。这里直接查 iptables。
 check_dns_rule(){
-    if ${IPTABLES_PATH}/dns.sh check > /dev/null 2>&1; then
+    # 端口选择顺序必须与 iptables/dns.sh 的 select_dns_port 保持一致，
+    # 否则会出现"规则其实正常但显示异常"的误报。
+    if [ "${MODULE_DNS_MODE}" = "2" ]; then
+        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
+        isRun ${MIHOMO_BIN} && check_port=${MIHOMO_DNS_PORT}
+        if [ -z "${check_port}" ] && isRun ${AGH_BIN}; then
+            check_port=${AGH_DNS_PORT}
+        fi
+    else
+        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
+        isRun ${AGH_BIN} && check_port=${AGH_DNS_PORT}
+        if [ -z "${check_port}" ] && isRun ${MIHOMO_BIN}; then
+            check_port=${MIHOMO_DNS_PORT}
+        fi
+    fi
+    if [ -z "${check_port}" ] && isRun ${SMARTDNS_BIN}; then
+        check_port=$(cat "${SMARTDNS_CONF}" 2>/dev/null | grep "bind" | sed -n "s/bind.*:\(.*\)/\1/p")
+    fi
+
+    # 没有服务在跑时谈不上规则是否正确
+    [ -z "${check_port}" ] && {
+        echo "无服务"
+        return 0
+    }
+
+    if ${iptables_w} -t nat -L REDIRECT_DNS > /dev/null 2>&1 && \
+       ${iptables_w} -t nat -C REDIRECT_DNS -p udp --dport 53 -j REDIRECT --to-ports ${check_port} > /dev/null 2>&1; then
         echo "正常"
     else
         echo "异常"

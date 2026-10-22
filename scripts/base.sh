@@ -131,14 +131,20 @@ log_file(){
 # 程序是否运行
 # 优先用 pidof 精确匹配进程名(路径参数才用 pgrep -f)；
 # pidof 缺失时回退 pgrep -x，避免在精简系统上永远判定为"未运行"
+# 性能: 用 case 代替 echo | grep，避免每次调用多 fork 两个进程。
+#       本函数全项目被调用 50+ 处，守护循环每 5 秒就要调 6~8 次，
+#       一次多两个 fork 相当于每天多出几十万次进程创建。
 isRun(){
     pid=""
-    if echo "${1}" | grep -q "/"; then
-        pid=$(pgrep -f "${1}" 2>/dev/null)
-    else
-        pid=$(pidof "${1}" 2>/dev/null)
-        [ -z "${pid}" ] && pid=$(pgrep -x "${1}" 2>/dev/null)
-    fi
+    case "${1}" in
+        */*)
+            pid=$(pgrep -f "${1}" 2>/dev/null)
+            ;;
+        *)
+            pid=$(pidof "${1}" 2>/dev/null)
+            [ -z "${pid}" ] && pid=$(pgrep -x "${1}" 2>/dev/null)
+            ;;
+    esac
     if [ "${pid}" ]; then
         [ "${2}" = "pid" ] && echo ${pid}
         return 0
