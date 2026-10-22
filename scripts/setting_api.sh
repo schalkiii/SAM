@@ -41,26 +41,11 @@ release_lock(){
 
 # 只写日志文件，不污染 WebUI 的返回值
 file_log(){
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${1}" >> "${LOG_FILE}" 2>/dev/null
-}
-
-# 设置飞行模式: Android 11+ 优先用 cmd connectivity，老系统回退 settings + broadcast
-airplane_set(){
-    if command -v cmd > /dev/null 2>&1 && cmd connectivity airplane-mode "${1}" > /dev/null 2>&1; then
-        return 0
-    fi
-    settings put global airplane_mode_on "${2}" 2>/dev/null
-    am broadcast -a android.intent.action.AIRPLANE_MODE > /dev/null 2>&1
+    log_file "${1}"
 }
 
 # 开关一次飞行模式，让系统与 App 立即重新发起 DNS 查询
-refresh_network(){
-    file_log "配置变更涉及 DNS 链路，刷新一次网络"
-    airplane_set enable 1
-    sleep 1
-    airplane_set disable 0
-    sleep 1
-}
+# airplane_set / refresh_network 已统一放在 base.sh，此处直接复用
 
 # 判断本次变更是否需要刷新网络
 need_refresh(){
@@ -256,6 +241,7 @@ apply_settings(){
     sh "${SCRIPTS_PATH}/service.sh" restart
 
     if [ ${refresh_needed} -eq 1 ]; then
+        file_log "配置变更涉及 DNS 链路，刷新一次网络"
         refresh_network
         echo "配置已应用，已刷新网络"
     else

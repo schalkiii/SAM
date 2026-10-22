@@ -142,7 +142,30 @@
                     </div>
                 </div>
             </div>
-            
+
+            <div class="content-section">
+                <h3>健康状态</h3>
+                <div class="monitor-item" data-id="1">
+                    <div class="monitor-info">
+                        <h4>守护循环</h4>
+                        <div class="monitor-desc">每 5 秒自检：拉起掉线服务、重建丢失的 DNS 规则</div>
+                        <span id="watchdog-status" class="monitor-status status-inactive">未运行</span>
+                    </div>
+                    <div class="monitor-actions"></div>
+                </div>
+
+                <div class="monitor-item" data-id="1">
+                    <div class="monitor-info">
+                        <h4>DNS 重定向规则</h4>
+                        <div class="monitor-desc">规则必须与当前实际运行的 DNS 端口一致，否则会指向没有进程监听的死端口</div>
+                        <span id="dns-rule-status" class="monitor-status status-inactive">未知</span>
+                    </div>
+                    <div class="monitor-actions">
+                        <button id="dns-rule-action" class="action-btn toggle-btn">重建</button>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
         <!-- 设置页面 -->
@@ -405,11 +428,14 @@
                 <h3>高级</h3>
                 <div class="tool-grid">
                     <button class="tool-btn" data-script="iptables/dns.sh" data-args="enable">重建 DNS 规则</button>
+                    <button class="tool-btn" data-script="iptables/dns.sh" data-args="check">检查 DNS 规则</button>
+                    <button class="tool-btn" data-script="service.sh" data-args="refresh">刷新网络</button>
                     <button class="tool-btn" data-script="update/agh.sh" data-args="">重新生成 AGH 配置</button>
                     <button class="tool-btn" data-script="update/mihomo.sh" data-args="">重新生成 Mihomo 配置</button>
                     <button class="tool-btn" data-script="update/proxy.sh" data-args="">重建 TUN 名单</button>
                     <button class="tool-btn" data-script="update/desc.sh" data-args="">刷新模块描述</button>
                 </div>
+                <div class="setting-desc">「刷新网络」等价于开关一次飞行模式，用于服务异常退出后手机仍然没网的情况。</div>
             </div>
 
             <div class="content-section">

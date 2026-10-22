@@ -116,6 +116,23 @@ get_all_status(){
     echo "bypass=${BYPASS_ENABLE}"
     echo "service=$(get_service_number)"
     echo "process=$(get_process_number)"
+
+    # 守护循环与 DNS 规则状态: 服务异常退出后这两项最能说明问题
+    if pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then
+        echo "watchdog=运行中"
+    else
+        echo "watchdog=未运行"
+    fi
+    echo "dns_rule=$(check_dns_rule)"
+}
+
+# 检查 DNS 重定向规则是否完整
+check_dns_rule(){
+    if ${IPTABLES_PATH}/dns.sh check > /dev/null 2>&1; then
+        echo "正常"
+    else
+        echo "异常"
+    fi
 }
 
 # 添加指令

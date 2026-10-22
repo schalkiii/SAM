@@ -102,6 +102,27 @@ async function updateServiceStatus() {
     updateMonitorStatus("wifi", status);
     updateMonitorStatus("host", status);
     updateMonitorStatus("module", status);
+
+    updateHealthStatus(status);
+}
+
+// 更新健康状态(守护循环 + DNS 规则)
+function updateHealthStatus(status) {
+    const watchdog_status = document.getElementById("watchdog-status");
+    if (watchdog_status) {
+        const running = status.watchdog === "运行中";
+        watchdog_status.innerHTML = running ? "运行中" : "未运行";
+        watchdog_status.classList.toggle("status-active", running);
+        watchdog_status.classList.toggle("status-inactive", !running);
+    }
+
+    const dns_status = document.getElementById("dns-rule-status");
+    if (dns_status) {
+        const ok = status.dns_rule === "正常";
+        dns_status.innerHTML = ok ? "正常" : "异常";
+        dns_status.classList.toggle("status-active", ok);
+        dns_status.classList.toggle("status-inactive", !ok);
+    }
 }
 
 // 更新监控状态(数据来自同一次 allstatus)
@@ -433,6 +454,25 @@ function initToolButtons() {
             runToolButton(button);
         });
     });
+
+    // 监控页的「重建 DNS 规则」按钮
+    const dns_rule_action = document.getElementById("dns-rule-action");
+    if (dns_rule_action) {
+        dns_rule_action.addEventListener("click", async () => {
+            dns_rule_action.disabled = true;
+            dns_rule_action.textContent = "重建中...";
+            try {
+                await runShellArgs("iptables/dns.sh", ["enable"]);
+                showToast("DNS 规则已重建", 3000);
+                await updateServiceStatus();
+            } catch (error) {
+                showToast("重建失败: " + error, 5000);
+            } finally {
+                dns_rule_action.disabled = false;
+                dns_rule_action.textContent = "重建";
+            }
+        });
+    }
 }
 
 // 页面导航功能

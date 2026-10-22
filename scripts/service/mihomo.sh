@@ -2,51 +2,58 @@
 source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 启动
-start(){ 
+start(){
     # 判断 Mihomo 未启用，则退出
     if [ "${MIHOMO_ENABLE}" = false ]; then
-        log "e" "${MIHOMO_BIN} 未启用"
+        log "i" "${MIHOMO_BIN} 未启用"
         return 1
     fi
-    
+
     if [ ${#SUB_URL[@]} = 0 ]; then
-        log "e" "未填写订阅地址，无法启动 ${MIHOMO_BIN}"
+        log "i" "未填写订阅地址，无法启动 ${MIHOMO_BIN}"
         return 1
-    fi        
-       
+    fi
+
     # 判断 Mihomo 已运行，则退出
     isRun ${MIHOMO_BIN} && {
-        log "e" "${MIHOMO_BIN} 已运行"
+        log "i" "${MIHOMO_BIN} 已运行"
         return 1
     }
-    
+
     # 更新 Mihomo 配置
     ${UPDATE_PATH}/mihomo.sh
     # 更新代理名单
     ${UPDATE_PATH}/proxy.sh
-    
+
     # 启动
-    busybox setuidgid "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} > "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1 &
-    #su -g $(id -g ${TUN_GROUP}) -G $(id -g ${DNS_GROUP}) -- nohup ${MIHOMO_BIN} -d ${MIHOMO_PATH} > "${TMP_PATH}/mihomo.log" 2>&1 &
-    
+    # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
+    detach_exec busybox setuidgid "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} > "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1
+
     # 轮询等待就绪(最多 5 秒)
     wait_ready=0
     while [ ${wait_ready} -lt 10 ] && ! isRun ${MIHOMO_BIN}; do
         sleep 0.5 2>/dev/null || sleep 1
         wait_ready=$((wait_ready + 1))
     done
-    isRun ${MIHOMO_BIN} && {
+    if isRun ${MIHOMO_BIN}; then
         log "i" "${MIHOMO_BIN} 启动成功"
+        # 免被系统 LMKD 回收
+        protect_process "$(isRun ${MIHOMO_BIN} "pid")"
         # 添加 TUN 规则
         ${IPTABLES_PATH}/mihomo.sh add
-    } || log "e" "${MIHOMO_BIN} 启动失败"
+    else
+        log "e" "${MIHOMO_BIN} 启动失败"
+        if [ -f "${TMP_PATH}/${MIHOMO_BIN}.log" ]; then
+            log "e" "${MIHOMO_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${MIHOMO_BIN}.log" 2>/dev/null)"
+        fi
+    fi
 }
 
 # 停止
 stop(){
     # 判断 Mihomo 未运行，则退出
     isRun ${MIHOMO_BIN} || {
-        log "e" "${MIHOMO_BIN} 已停止"
+        log "i" "${MIHOMO_BIN} 已停止"
         return 1
     }
     # 杀死 Mihomo 进程

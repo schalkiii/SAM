@@ -3,9 +3,25 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 服务状态文件(守护循环据此决定是否自动拉起)
 STATE_FILE="${TMP_PATH}/service.state"
+# 异常标记文件: 停止前发现"本该在跑的服务已经不在了"，说明它是被系统回收的
+ABNORMAL_FILE="${TMP_PATH}/service.abnormal"
 # 停止原因: stopped(用户手动) / stopped-by-wifi(WiFi 黑名单触发)
 # 两者都不该被守护循环拉起，但只有前者不该被 WiFi 监控重新拉起
 stop_reason="stopped"
+
+# 判断是否有"本该运行却已经消失"的服务
+# 用于识别: 服务不是被用户停的，而是被系统(LMKD/OOM/会话回收)杀掉的
+detect_abnormal(){
+    abnormal=0
+
+    [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && abnormal=1
+    [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && abnormal=1
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ]; then
+        ! isRun ${MIHOMO_BIN} && abnormal=1
+    fi
+
+    return ${abnormal}
+}
 
 # 启动
 start(){
@@ -30,6 +46,8 @@ start(){
     if [ "${BYPASS_ENABLE}" = "true" ]; then
         log "i" "直通模式已开启，跳过 DNS 劫持规则"
     else
+        # dns.sh enable 现在会校验链内规则与当前端口是否一致，
+        # 端口变了(服务掉过线)会自动重建，不会留下指向死端口的旧规则
         ${IPTABLES_PATH}/dns.sh enable
     fi
     # 添加屏蔽 IP 规则
@@ -40,7 +58,7 @@ start(){
     # 原先只在开机脚本里启动，导致在 WebUI 里新加黑名单后要重启才生效
     if [ "${#BLACKLIST_WIFI[@]}" -ne 0 ]; then
         if ! pgrep -f "${SCRIPTS_PATH}/wifi.monitor.sh" > /dev/null 2>&1; then
-            ${SCRIPTS_PATH}/wifi.monitor.sh > /dev/null 2>&1 &
+            detach_exec "${SCRIPTS_PATH}/wifi.monitor.sh" > /dev/null 2>&1
         fi
     else
         for wifi_monitor_pid in $(pgrep -f "${SCRIPTS_PATH}/wifi.monitor.sh" 2>/dev/null); do
@@ -50,13 +68,13 @@ start(){
     # 屏蔽 app 广告文件、更新 host 都依赖大量 IO 与网络，
     # 放后台执行，避免点"启动服务"要等几十秒才返回(离线时 curl 各自要等 10 秒超时)
     if [ "${AD_BLOCK_ENABLE}" = "true" ]; then
-        ${SCRIPTS_PATH}/ad.sh block > /dev/null 2>&1 &
+        detach_exec "${SCRIPTS_PATH}/ad.sh" block > /dev/null 2>&1
     fi
     if [ "${HOST_ENABLE}" = "true" ]; then
         # 只更新文件不挂载是不会生效的，这里补上挂载动作
         # (在 WebUI 里把「Hosts 挂载」从关改到开时，走的就是这条路径)
         mount | grep -q " /system/etc/hosts " || mount -o bind "${MODULE_PATH}/etc/hosts" /system/etc/hosts
-        ${UPDATE_PATH}/host.sh update > /dev/null 2>&1 &
+        detach_exec "${UPDATE_PATH}/host.sh" update > /dev/null 2>&1
     else
         # 关掉开关时要真正卸载，否则旧 hosts 会一直生效
         mount | grep -q " /system/etc/hosts " && umount /system/etc/hosts 2>/dev/null
@@ -67,11 +85,11 @@ start(){
     # 开机脚本只在真开机时执行，从 WebUI 启动时这两类监控可能根本不存在
     if has_cmd inotifyd; then
         if ! pgrep -f "${INOTIFY_PATH}/module.sh" > /dev/null 2>&1; then
-            inotifyd "${INOTIFY_PATH}/module.sh" "${MODULE_PATH}" > /dev/null 2>&1 &
+            detach_exec inotifyd "${INOTIFY_PATH}/module.sh" "${MODULE_PATH}" > /dev/null 2>&1
         fi
         if mount | grep -q " /system/etc/hosts "; then
             if ! pgrep -f "${INOTIFY_PATH}/host.sh" > /dev/null 2>&1; then
-                inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc/hosts" > /dev/null 2>&1 &
+                detach_exec inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc/hosts" > /dev/null 2>&1
             fi
         fi
     fi
@@ -81,14 +99,41 @@ start(){
 
     # 标记为运行中，并启动守护循环
     # 守护循环必须重定向输出，否则 WebUI 调用时会一直占用管道、等不到命令结束
+    # 同时用 setsid 让它脱离当前会话，避免调用方退出时守护循环被一起回收
     echo running > "${STATE_FILE}"
-    ${SCRIPTS_PATH}/watchdog.sh > /dev/null 2>&1 &
+    if ! pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then
+        detach_exec "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1
+    fi
+
+    # 上一次停止时发现服务已经异常消失(被系统回收)，
+    # 说明系统的网络状态可能已经被判成"无网络"，恢复后需要重新验证一次
+    if [ -f "${ABNORMAL_FILE}" ]; then
+        rm -f "${ABNORMAL_FILE}"
+        if [ "${NETWORK_REFRESH}" = "true" ]; then
+            log "i" "检测到上次服务曾异常退出，刷新一次网络"
+            refresh_network
+        fi
+    fi
 }
 
 # 停止
 stop(){
+    # 记录停止前的状态: 只有"本来在运行"的服务消失了，才算异常退出
+    prev_state="$(cat "${STATE_FILE}" 2>/dev/null)"
+
     # 先标记为已停止，避免守护循环在停止过程中把服务又拉起来
     echo "${stop_reason}" > "${STATE_FILE}"
+
+    # 停止前先看服务是否"本该在跑却已经没了"，
+    # 这种情况下记一笔异常，下次启动后自动刷一次网络
+    case "${prev_state}" in
+        running|"")
+            if detect_abnormal; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S')" > "${ABNORMAL_FILE}"
+                log "i" "检测到有服务已异常退出(非手动停止)"
+            fi
+            ;;
+    esac
 
     # 停止 SmartDNS
     ${SERVICE_PATH}/sd.sh stop
@@ -120,7 +165,13 @@ case "$1" in
         ;;
     # 停止
     stop)
-        > "${LOG_FILE}"
+        # 不再清空日志: 之前的实现直接截断 module.log，
+        # 恰好把"服务为什么掉线"的证据一起抹掉了(停止时正是最需要看日志的时候)。
+        # 改为保留上一份日志为 module.log.1，当前日志重新开始。
+        if [ -s "${LOG_FILE}" ]; then
+            mv -f "${LOG_FILE}" "${LOG_FILE}.1"
+        fi
+        : > "${LOG_FILE}"
         # 支持停止原因: sh service.sh stop stopped-by-wifi
         stop_reason="${2:-stopped}"
         log "i" "stop >>>"
@@ -133,5 +184,9 @@ case "$1" in
         stop
         start
         log "i" "<<< restart"
+        ;;
+    # 刷新网络(手动开关一次飞行模式)
+    refresh)
+        refresh_network
         ;;
 esac

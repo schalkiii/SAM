@@ -1,3 +1,29 @@
+# 2026.10.21.6
+- 修复「跑着一阵子后 AGH 与 SmartDNS 一起消失，看门狗也没记录」
+  - 原因 1: 服务进程挂在调用方会话上(经 WebUI 启动)，会话被回收时进程一起被杀
+    - 所有服务与守护循环改用 `setsid` 脱离会话启动
+  - 原因 2: AGH 与 SmartDNS 是内存大户，系统内存紧张时被 LMKD 优先回收
+    - 启动后把 `oom_score_adj` 设为 `-1000`，守护循环自身同样受保护
+  - 原因 3: SmartDNS `cache-size -1`(按内存自动放大) 占用可观内存
+    - 改为固定 `cache-size 4096`
+  - 守护循环启动时打一条日志，便于确认它是否存活
+- 修复「服务恢复了但手机还是没网，必须手动开关一次飞行模式」
+  - 原因: `dns.sh enable` 只判断链名是否存在，链在就直接返回；
+    服务掉线后回退到另一个端口时，旧链里的 REDIRECT 仍指向已经没有进程监听的死端口，整机 DNS 进黑洞
+  - 现在校验「链 + OUTPUT 跳转 + tcp/udp 53 重定向目标端口」，端口变了自动清链重建
+  - 新增 `dns.sh check` 子命令，WebUI 与守护循环都用它判断规则是否与当前端口一致
+  - 守护循环发现服务异常退出并拉起后，自动重新验证一次网络(开关一次飞行模式)
+  - `service.sh stop` 检测到「本该在跑的服务已经消失」时记一笔异常，下次启动后自动刷网络
+  - WebUI 工具页新增「刷新网络」按钮，监控页新增「守护循环」「DNS 重定向规则」健康状态
+- 修复「日志里查不到掉线原因」
+  - `service.sh stop` 不再清空 `module.log`，改为保留上一份为 `module.log.1`
+  - 守护循环日志轮转保留最后 200 行，不再整份清空
+- 性能: 开启 AdGuardHome DNS 缓存与乐观缓存
+  - 原因: `cache_enabled: false` + `cache_size: 0` 时每次查询都要转发上游，AGH 面板上看到的平均延迟高达 100ms
+  - 改为 `cache_enabled: true` / `cache_size: 4MB` / `cache_optimistic: true`，`update/agh.sh` 每次启动都会校正
+- 健壮性: `isRun` 在 `pidof` 缺失时回退 `pgrep -x`，避免精简系统上永远判定「未运行」
+- 降噪: 「已停止 / 未启用 / 已运行 / 链不存在」由 ERROR 降为 INFO
+
 # 2026.10.21.5
 - 新增 SmartDNS 调优项（设置页「SmartDNS 调优」）
   - `SMARTDNS_RESPONSE_MODE`: first-ping / fastest-ip / fastest-response

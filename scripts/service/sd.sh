@@ -5,13 +5,13 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 start(){
     # 判断 SmartDNS 未启用，则退出
     if [ "${SMARTDNS_ENABLE}" = false ]; then
-        log "e" "${SMARTDNS_BIN} 未启用"
+        log "i" "${SMARTDNS_BIN} 未启用"
         return 1
     fi
-    
+
     # 判断 SmartDNS 已运行，则退出
     isRun ${SMARTDNS_BIN} && {
-        log "e" "${SMARTDNS_BIN} 已运行"
+        log "i" "${SMARTDNS_BIN} 已运行"
         return 1
     }
     
@@ -67,7 +67,9 @@ start(){
 
     # 进入工作路径，并启动
     cd ${SMARTDNS_PATH}
-    SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1 &
+    export SMARTDNS_WORKDIR="${SMARTDNS_PATH}"
+    # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
+    detach_exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1
     #SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec su -g $(id -g ${DNS_GROUP}) -- nohup ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1 &
     
     # 轮询等待就绪(最多 5 秒)，比固定 sleep 1 更可靠
@@ -78,6 +80,8 @@ start(){
     done
     if isRun ${SMARTDNS_BIN}; then
         log "i" "${SMARTDNS_BIN} 启动成功"
+        # 免被系统 LMKD 回收
+        protect_process "$(isRun ${SMARTDNS_BIN} "pid")"
     else
         log "e" "${SMARTDNS_BIN} 启动失败"
         # 把最后一行日志带上，便于定位是缺 loader、配置错还是端口占用
@@ -91,7 +95,7 @@ start(){
 stop(){
     # 判断 SmartDNS 未运行，则退出
     isRun ${SMARTDNS_BIN} || {
-        log "e" "${SMARTDNS_BIN} 已停止"
+        log "i" "${SMARTDNS_BIN} 已停止"
         return 1
     }
     # 杀死 SmartDNS 进程

@@ -46,45 +46,105 @@ select_dns_port(){
 
 select_dns_port
 
+# check 模式只输出结论，避免污染 WebUI 的结果显示
+if [ "${1}" = "check" ]; then
+    log_quiet=1
+fi
+
 if [ -n "${DNS_PORT}" ]; then
-    log "i" "当前 DNS 转发端口 ${DNS_PORT}"
+    [ "${log_quiet}" = "1" ] || log "i" "当前 DNS 转发端口 ${DNS_PORT}"
 else
-    log "e" "没有可用的 DNS 服务在运行，跳过 DNS 重定向"
+    [ "${log_quiet}" = "1" ] || log "e" "没有可用的 DNS 服务在运行，跳过 DNS 重定向"
 fi
 
 itw=${iptables_w}
 
+# 按 v4 / v6 分发 iptables 命令
+# 注意: 不能把 ${iptables_w}(含 "iptables -w 100" 这样的多词命令串)当成单个参数传递，
+#       未加引号展开后会被拆成多个词，链名与规则参数全部错位。
+ipt_run(){
+    case "${1}" in
+        v4) shift; ${iptables_w} "$@" ;;
+        v6) shift; ${ip6tables_w} "$@" ;;
+    esac
+}
+
+# 判断某条规则是否存在
+rule_exists(){
+    rule_ver="${1}"
+    shift
+    ipt_run ${rule_ver} -t nat -C "$@" > /dev/null 2>&1
+}
+
+# 检查 REDIRECT 链是否完整且指向当前 DNS_PORT
+# 背景: 原实现只看"链名是否存在"，链在就直接返回。
+#       当某个服务被杀后回退到另一个端口(例如 AGH 挂了改用 SmartDNS 3721)，
+#       链里的 REDIRECT 仍指向旧端口 —— 那个端口已经没有进程监听，
+#       整机 DNS 全部进黑洞，表现为"服务恢复了但还是没网"。
+#       所以必须校验跳转与端口是否与当前实际服务一致。
+check_dns_chain(){
+    rule_ver="${1}"
+    target_chain="${2}"
+
+    # 链不存在
+    ipt_run ${rule_ver} -t nat -L ${target_chain} > /dev/null 2>&1 || return 1
+    # OUTPUT 未跳转到该链
+    rule_exists ${rule_ver} OUTPUT -j ${target_chain} || return 1
+    # tcp/udp 53 的重定向必须指向当前 DNS_PORT
+    rule_exists ${rule_ver} ${target_chain} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
+    rule_exists ${rule_ver} ${target_chain} -p udp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
+    return 0
+}
+
+# 清理链(含 OUTPUT 跳转)
+remove_dns_chain(){
+    rule_ver="${1}"
+    target_chain="${2}"
+    while rule_exists ${rule_ver} OUTPUT -j ${target_chain}; do
+        ipt_run ${rule_ver} -t nat -D OUTPUT -j ${target_chain} || break
+    done
+    ipt_run ${rule_ver} -t nat -F ${target_chain} 2>/dev/null
+    ipt_run ${rule_ver} -t nat -X ${target_chain} 2>/dev/null
+}
+
 # 启用 dns
 enable_dns(){
-    [ "${1}" = "ipv4" ] && itw=${iptables_w} || itw=${ip6tables_w}
-    if ${itw} -t nat -L ${2} > /dev/null 2>&1; then
-        log "e" "${2} 链已存在"
-        return 1
+    chain_ver="v4"
+    [ "${1}" = "ipv6" ] && chain_ver="v6"
+    target_chain="${2}"
+
+    # 已存在且规则与当前端口一致 -> 无需重建
+    if check_dns_chain ${chain_ver} ${target_chain}; then
+        log "i" "${target_chain} 链已存在且规则正确(端口 ${DNS_PORT})"
+        return 0
     fi
-    log "i" "创建 ${2} 链并添加规则"
-    ${itw} -t nat -N ${2} || return 1
-    ${itw} -t nat -A ${2} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
-    ${itw} -t nat -A ${2} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
-    ${itw} -t nat -A ${2} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
-    ${itw} -t nat -A ${2} -p udp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
-    ${itw} -t nat -A ${2} -d 127.0.0.0/8 -j ACCEPT || return 1
-    ${itw} -t nat -I OUTPUT -j ${2} || return 1
+
+    # 链在但规则不全(常见于服务换端口后) -> 先清干净再重建
+    if ipt_run ${chain_ver} -t nat -L ${target_chain} > /dev/null 2>&1; then
+        log "i" "${target_chain} 链规则不完整或端口已变化，重建"
+        remove_dns_chain ${chain_ver} ${target_chain}
+    fi
+
+    log "i" "创建 ${target_chain} 链并添加规则(端口 ${DNS_PORT})"
+    ipt_run ${chain_ver} -t nat -N ${target_chain} || return 1
+    ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
+    ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    ipt_run ${chain_ver} -t nat -A ${target_chain} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
+    ipt_run ${chain_ver} -t nat -A ${target_chain} -p udp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
+    ipt_run ${chain_ver} -t nat -A ${target_chain} -d 127.0.0.0/8 -j ACCEPT || return 1
+    ipt_run ${chain_ver} -t nat -I OUTPUT -j ${target_chain} || return 1
 }
 
 # 禁用 dns
 disable_dns(){
-    [ "${1}" = "ipv4" ] && itw=${iptables_w} || itw=${ip6tables_w}
-    if ! ${itw} -t nat -L ${2} > /dev/null 2>&1; then
-        log "e" "${2} 链不存在"
+    chain_ver="v4"
+    [ "${1}" = "ipv6" ] && chain_ver="v6"
+    if ! ipt_run ${chain_ver} -t nat -L ${2} > /dev/null 2>&1; then
+        log "i" "${2} 链不存在，无需删除"
         return 1
     fi
     log "i" "删除 ${2} 链及规则"
-    # 逐条删除，兼容历史上重复追加的跳转规则(单条 -D 只会删掉一条)
-    while ${itw} -t nat -C OUTPUT -j ${2} > /dev/null 2>&1; do
-        ${itw} -t nat -D OUTPUT -j ${2} || break
-    done
-    ${itw} -t nat -F ${2} 2>/dev/null
-    ${itw} -t nat -X ${2} 2>/dev/null
+    remove_dns_chain ${chain_ver} ${2}
 }
 
 # 启用 ipv6 阻断
@@ -118,7 +178,7 @@ enable_block_ipv6(){
 # 禁用 ipv6 阻断
 disable_block_ipv6(){
     if ! ${ip6tables_w} -t filter -L ${BLOCK_IPV6_CHAIN} > /dev/null 2>&1; then
-        log "e" "${BLOCK_IPV6_CHAIN} 链不存在"
+        log "i" "${BLOCK_IPV6_CHAIN} 链不存在，无需删除"
         return 1
     fi
     log "i" "删除 ${BLOCK_IPV6_CHAIN} 链及规则"
@@ -130,14 +190,9 @@ disable_block_ipv6(){
     ${ip6tables_w} -t filter -X ${BLOCK_IPV6_CHAIN} 2>/dev/null
 }
 
-# 是否支持 ipv6 nat
-is_ipv6_nat(){
-    if ${ip6tables_w} -t nat -L >/dev/null 2>&1; then
-        return 0
-    else
-        log "e" "不支持 ipv6 nat"
-        return 1
-    fi
+# 是否支持 ipv6 nat(静默版本，供内部判断用)
+has_ipv6_nat(){
+    ${ip6tables_w} -t nat -L >/dev/null 2>&1
 }
 
 # 判断端口是否等于 53
@@ -159,7 +214,7 @@ case "$1" in
         fi
         if [ "${BLOCK_IPV6_DNS}" = "true" ]; then
             enable_block_ipv6
-        elif is_ipv6_nat; then
+        elif has_ipv6_nat; then
             enable_dns "ipv6" ${IPV6_DNS_CHAIN}
         else
             # 内核没有 IPv6 nat 表: 既不能重定向、用户也没要求阻断，
@@ -170,7 +225,20 @@ case "$1" in
     # 禁用
     disable)
         disable_dns "ipv4" ${DNS_CHAIN}
-        is_ipv6_nat && disable_dns "ipv6" ${IPV6_DNS_CHAIN}
+        has_ipv6_nat && disable_dns "ipv6" ${IPV6_DNS_CHAIN}
         disable_block_ipv6
+        ;;
+    # 状态检查(供 WebUI/守护循环判断规则是否与当前端口一致)
+    check)
+        if [ -z "${DNS_PORT}" ]; then
+            echo "无 DNS 服务在运行"
+            exit 1
+        fi
+        if check_dns_chain v4 ${DNS_CHAIN}; then
+            echo "DNS 规则正常(端口 ${DNS_PORT})"
+            exit 0
+        fi
+        echo "DNS 规则缺失或端口不匹配(期望 ${DNS_PORT})"
+        exit 1
         ;;
 esac

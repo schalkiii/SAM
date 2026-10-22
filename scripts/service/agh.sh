@@ -5,37 +5,46 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 start(){
     # 判断 AdGuardHome 未启用，则退出
     if [ "${AGH_ENABLE}" = false ]; then
-        log "e" "${AGH_BIN} 未启用"
+        log "i" "${AGH_BIN} 未启用"
         return 1
     fi
-    
+
     # 判断 AdGuardHome 已运行，则退出
     isRun ${AGH_BIN} && {
-        log "e" "${AGH_BIN} 已运行"
+        log "i" "${AGH_BIN} 已运行"
         return 1
     }
-        
+
     # 更新 AdGuardHome 配置
     ${UPDATE_PATH}/agh.sh
-    
+
     # 启动
-    busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update > "${TMP_PATH}/${AGH_BIN}.log" 2>&1 &
-    #su -g $(id -g ${DNS_GROUP}) -- nohup ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update > "${TMP_PATH}/${AGH_BIN}.log" 2>&1 &
-    
+    # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
+    detach_exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update > "${TMP_PATH}/${AGH_BIN}.log" 2>&1
+
     # 轮询等待就绪(最多 5 秒)
     wait_ready=0
     while [ ${wait_ready} -lt 10 ] && ! isRun ${AGH_BIN}; do
         sleep 0.5 2>/dev/null || sleep 1
         wait_ready=$((wait_ready + 1))
     done
-    isRun ${AGH_BIN} && log "i" "${AGH_BIN} 启动成功" || log "e" "${AGH_BIN} 启动失败"
+    if isRun ${AGH_BIN}; then
+        log "i" "${AGH_BIN} 启动成功"
+        # 免被系统 LMKD 回收
+        protect_process "$(isRun ${AGH_BIN} "pid")"
+    else
+        log "e" "${AGH_BIN} 启动失败"
+        if [ -f "${TMP_PATH}/${AGH_BIN}.log" ]; then
+            log "e" "${AGH_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${AGH_BIN}.log" 2>/dev/null)"
+        fi
+    fi
 }
 
 # 停止
 stop(){
     # 判断 AdGuardHome 未运行，则退出
     isRun ${AGH_BIN} || {
-        log "e" "${AGH_BIN} 已停止"
+        log "i" "${AGH_BIN} 已停止"
         return 1
     }
     # 杀死 AdGuardHome 进程

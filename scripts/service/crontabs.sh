@@ -8,10 +8,10 @@ start(){
         log "i" "定时执行已禁用"
         return 1
     fi
-    
+
     # 判断 crontabs 已运行，则退出
     isRun "${MODULE_PATH}/etc/crontabs" && {
-        log "e" "crontabs 正在运行"
+        log "i" "crontabs 正在运行"
         return 1
     }
     # 启动
@@ -26,7 +26,7 @@ start(){
 stop(){
     # crontabs 没有运行则退出
     isRun "${MODULE_PATH}/etc/crontabs" || {
-        log "e" "crontabs 已停止"
+        log "i" "crontabs 已停止"
         return 1
     }
     # 杀死 crontabs 进程

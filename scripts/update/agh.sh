@@ -89,6 +89,32 @@ modify_web_addr(){
     fi
 }
 
+# 确保 DNS 缓存处于开启状态
+# 背景: 缓存被关掉(cache_enabled: false / cache_size: 0)时，
+#       每个查询都要转发到上游，AGH 面板上看到的平均延迟会明显偏高
+#       (实测 100ms 级别，而 SmartDNS 自身只有 1ms)。
+#       乐观缓存(cache_optimistic)先返回过期结果再后台刷新，进一步压低首包延迟。
+modify_cache(){
+    grep -q "^  cache_enabled:" "${AGH_CONF}" 2>/dev/null || return 0
+
+    if ! grep -q "^  cache_enabled: true" "${AGH_CONF}" 2>/dev/null; then
+        log "i" "开启 ${AGH_BIN} DNS 缓存"
+        sed -i "s|^  cache_enabled: .*|  cache_enabled: true|" "${AGH_CONF}"
+    fi
+
+    cache_size=$(grep -m1 "^  cache_size:" "${AGH_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ -z "${cache_size}" ] || [ "${cache_size}" = "0" ]; then
+        log "i" "设置 ${AGH_BIN} 缓存大小为 4MB"
+        sed -i "s|^  cache_size: .*|  cache_size: 4194304|" "${AGH_CONF}"
+    fi
+
+    if ! grep -q "^  cache_optimistic: true" "${AGH_CONF}" 2>/dev/null; then
+        log "i" "开启 ${AGH_BIN} 乐观缓存"
+        sed -i "s|^  cache_optimistic: .*|  cache_optimistic: true|" "${AGH_CONF}"
+    fi
+}
+
 modify_conf
 modify_dns_port
 modify_web_addr
+modify_cache

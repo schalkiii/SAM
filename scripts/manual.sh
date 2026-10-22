@@ -207,6 +207,13 @@ resume_module(){
 
     sh "${ACTIVE_DIR}/scripts/update/desc.sh" > /dev/null 2>&1
 
+    # 软重启后系统的网络状态可能仍停留在"无网络"，
+    # 这里主动重新验证一次，避免服务起来了手机还是没网
+    if [ "$(cat "${ACTIVE_DIR}/tmp/service.state" 2>/dev/null)" != "stopped"* ]; then
+        say "刷新网络"
+        sh "${ACTIVE_DIR}/scripts/service.sh" refresh > /dev/null 2>&1
+    fi
+
     show_status
 }
 
