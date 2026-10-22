@@ -1,3 +1,21 @@
+# 2026.10.21.7
+- 缓存职责归位: AdGuardHome 关闭 DNS 缓存，由 SmartDNS 独占缓存层
+  - 原因: 上游 SmartDNS 本就带缓存(`prefetch-domain` / `serve-expired` / `cache-persist`)
+    - AGH 再叠一层缓存有两个问题:
+      1. 双份缓存白白吃内存(本模块最怕的就是内存紧张被 LMKD 杀)
+      2. AGH 缓存会把 SmartDNS 选出的最优 IP 直接冻结，
+         后续查询命中 AGH 缓存，绕过 SmartDNS 的测速与选优逻辑
+  - SmartDNS 官方文档也明确: 开启缓存后不论用哪种 response-mode 都会把最佳结果存进缓存
+  - `update/agh.sh` 每次启动都会校正为缓存关闭
+- 修复「AGH 面板上 3721 上游延迟 100ms」: 根因在 SmartDNS 的 `rr-ttl-min`
+  - 原值 5 秒会把上游返回的 TTL 一律压到 5 秒，缓存形同虚设，
+    5 秒后每个域名都要重新解析 + 重新测速(`first-ping` 下每次冷查询都要等 ping 往返)
+  - 改为 60 秒(与官方默认一致)，缓存命中率上来后冷查询本身就不常发生
+  - `SMARTDNS_TTL_MIN` 默认值同步改为 60(设置页可继续调整)
+- 保持不变: `serve-expired-reply-ttl 5` 与 `speed-check-mode ping,tcp:80,tcp:443`
+  - 前者是「过期缓存返回给客户端的 TTL」，官方推荐 3~5 秒，调大会让客户端长时间拿着失效 IP
+  - 后者与 `response-mode first-ping` 耦合(去掉 ping 会让 first-ping 退化)，不单独改动
+
 # 2026.10.21.6
 - 修复「跑着一阵子后 AGH 与 SmartDNS 一起消失，看门狗也没记录」
   - 原因 1: 服务进程挂在调用方会话上(经 WebUI 启动)，会话被回收时进程一起被杀
@@ -18,9 +36,6 @@
 - 修复「日志里查不到掉线原因」
   - `service.sh stop` 不再清空 `module.log`，改为保留上一份为 `module.log.1`
   - 守护循环日志轮转保留最后 200 行，不再整份清空
-- 性能: 开启 AdGuardHome DNS 缓存与乐观缓存
-  - 原因: `cache_enabled: false` + `cache_size: 0` 时每次查询都要转发上游，AGH 面板上看到的平均延迟高达 100ms
-  - 改为 `cache_enabled: true` / `cache_size: 4MB` / `cache_optimistic: true`，`update/agh.sh` 每次启动都会校正
 - 健壮性: `isRun` 在 `pidof` 缺失时回退 `pgrep -x`，避免精简系统上永远判定「未运行」
 - 降噪: 「已停止 / 未启用 / 已运行 / 链不存在」由 ERROR 降为 INFO
 

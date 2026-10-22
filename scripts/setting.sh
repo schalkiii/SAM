@@ -24,7 +24,7 @@ setting_default(){
     SMARTDNS_RESPONSE_MODE=first-ping
     SMARTDNS_SPEED_CHECK=ping,tcp:80,tcp:443
     SMARTDNS_DUALSTACK=true
-    SMARTDNS_TTL_MIN=5
+    SMARTDNS_TTL_MIN=60
     NETWORK_REFRESH=true
     AD_BLOCK_ENABLE=true
     BACKUP_CONF=true
@@ -161,7 +161,7 @@ setting_validate(){
 
     setting_fix_number AGH_DNS_PORT 5300
     setting_fix_number MIHOMO_DNS_PORT 1053
-    setting_fix_number SMARTDNS_TTL_MIN 5
+    setting_fix_number SMARTDNS_TTL_MIN 60
 
     setting_fix_enum MODULE_DNS_MODE 2 1 2
     setting_fix_enum WHITELIST_MODE 1 1 2

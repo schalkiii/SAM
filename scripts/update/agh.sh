@@ -89,28 +89,31 @@ modify_web_addr(){
     fi
 }
 
-# 确保 DNS 缓存处于开启状态
-# 背景: 缓存被关掉(cache_enabled: false / cache_size: 0)时，
-#       每个查询都要转发到上游，AGH 面板上看到的平均延迟会明显偏高
-#       (实测 100ms 级别，而 SmartDNS 自身只有 1ms)。
-#       乐观缓存(cache_optimistic)先返回过期结果再后台刷新，进一步压低首包延迟。
+# 明确关闭 AGH 自己的 DNS 缓存
+# 理由: 上游 SmartDNS 已经带缓存(prefetch-domain / serve-expired / cache-persist)，
+#       缓存职责放在 SmartDNS 一侧即可。AGH 再开一层缓存有两个问题:
+#         1. 双份缓存白白吃掉内存(本模块最怕的就是内存紧张被 LMKD 杀)
+#         2. AGH 缓存会把 SmartDNS 精心选出的最优 IP 冻结住,
+#            后续查询直接命中 AGH 缓存, 绕过 SmartDNS 的测速与选优逻辑
+#       延迟优化应从 SmartDNS 侧做(rr-ttl / response-mode / speed-check-mode)，
+#       而不是在这里加一层缓存。
 modify_cache(){
     grep -q "^  cache_enabled:" "${AGH_CONF}" 2>/dev/null || return 0
 
-    if ! grep -q "^  cache_enabled: true" "${AGH_CONF}" 2>/dev/null; then
-        log "i" "开启 ${AGH_BIN} DNS 缓存"
-        sed -i "s|^  cache_enabled: .*|  cache_enabled: true|" "${AGH_CONF}"
+    if ! grep -q "^  cache_enabled: false" "${AGH_CONF}" 2>/dev/null; then
+        log "i" "关闭 ${AGH_BIN} DNS 缓存(缓存由上游 ${SMARTDNS_BIN} 负责)"
+        sed -i "s|^  cache_enabled: .*|  cache_enabled: false|" "${AGH_CONF}"
     fi
 
     cache_size=$(grep -m1 "^  cache_size:" "${AGH_CONF}" 2>/dev/null | awk '{print $2}')
-    if [ -z "${cache_size}" ] || [ "${cache_size}" = "0" ]; then
-        log "i" "设置 ${AGH_BIN} 缓存大小为 4MB"
-        sed -i "s|^  cache_size: .*|  cache_size: 4194304|" "${AGH_CONF}"
+    if [ -n "${cache_size}" ] && [ "${cache_size}" != "0" ]; then
+        log "i" "重置 ${AGH_BIN} 缓存大小为 0"
+        sed -i "s|^  cache_size: .*|  cache_size: 0|" "${AGH_CONF}"
     fi
 
-    if ! grep -q "^  cache_optimistic: true" "${AGH_CONF}" 2>/dev/null; then
-        log "i" "开启 ${AGH_BIN} 乐观缓存"
-        sed -i "s|^  cache_optimistic: .*|  cache_optimistic: true|" "${AGH_CONF}"
+    if ! grep -q "^  cache_optimistic: false" "${AGH_CONF}" 2>/dev/null; then
+        log "i" "关闭 ${AGH_BIN} 乐观缓存"
+        sed -i "s|^  cache_optimistic: .*|  cache_optimistic: false|" "${AGH_CONF}"
     fi
 }
 

@@ -276,7 +276,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>测速方式</h4>
-                        <div class="setting-desc">none / ping / tcp:443 / ping,tcp:80,tcp:443。移动网络下 ping 常被限制，先试 tcp:443</div>
+                        <div class="setting-desc">none / ping / tcp:443 / ping,tcp:80,tcp:443。移动网络下 ping 常被限速，默认只留 tcp:443</div>
                     </div>
                     <input class="setting-input setting-input-wide" type="text" data-key="SMARTDNS_SPEED_CHECK">
                 </div>
@@ -284,7 +284,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>缓存 TTL 下限</h4>
-                        <div class="setting-desc">秒。上游 TTL 低于该值时按该值缓存；提高到 60 可明显减少冷查询与测速次数</div>
+                        <div class="setting-desc">秒。上游 TTL 低于该值时按该值缓存。缓存由 SmartDNS 承担（AdGuardHome 不缓存），设太小会导致缓存形同虚设、每次都重新测速，默认 60</div>
                     </div>
                     <input class="setting-input" type="number" data-key="SMARTDNS_TTL_MIN">
                 </div>

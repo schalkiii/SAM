@@ -51,11 +51,14 @@ dns:
   trusted_proxies:
     - 127.0.0.0/8
     - ::1/128
-  cache_enabled: true
-  cache_size: 4194304
+  # 缓存保持关闭: 上游 SmartDNS 已经带缓存(prefetch-domain / serve-expired / cache-persist)，
+  # 再叠一层 AGH 缓存不仅浪费内存，还会让 SmartDNS 选出的最优 IP 被 AGH 直接缓存冻结，
+  # 绕过测速与选优逻辑
+  cache_enabled: false
+  cache_size: 0
   cache_ttl_min: 0
   cache_ttl_max: 0
-  cache_optimistic: true
+  cache_optimistic: false
   cache_optimistic_answer_ttl: 30s
   cache_optimistic_max_age: 12h
   bogus_nxdomain: []
