@@ -53,8 +53,10 @@ setting_sanitize(){
     # 原用 sed -i 's/\n$//'，但 \n 作为 sed 替换文本里的换行符只有 GNU sed 保证支持，
     # busybox / toybox sed 的行为依版本而异 —— 一旦不生效，CRLF 残留会让
     # 下面的 sh -n 预检直接失败，把好配置误判成坏配置。
-    # tr -d '\n' 去掉所有 CR，语义明确且各实现一致，还少一次进程(不需要 sed -i 的临时文件)。
-    tr -d '\n' < "${SETTING_CLEAN}" > "${SETTING_CLEAN}.lf" 2>/dev/null && \
+    # tr -d 八进制 CR 去掉所有回车，语义明确且各实现一致，还少一次进程(不需要 sed -i 的临时文件)。
+    # 注意: 必须用八进制写法，不要用反斜杠 r —— 那种转义经编辑器/脚本多层传递容易被破坏。
+    # 曾经被破坏成 tr -d 换行符，把整个配置文件的换行全删掉，导致设置全部读成默认值。
+    tr -d '\015' < "${SETTING_CLEAN}" > "${SETTING_CLEAN}.lf" 2>/dev/null && \
         mv -f "${SETTING_CLEAN}.lf" "${SETTING_CLEAN}"
 }
 

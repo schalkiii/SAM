@@ -237,13 +237,21 @@ apply_settings(){
     refresh_needed=0
     need_refresh && refresh_needed=1
 
-    echo "正在应用配置..."
-    sh "${SCRIPTS_PATH}/service.sh" restart
+    # 服务重启的详细过程全部由 log 函数写进 module.log，
+    # 这里只把结论返回给 WebUI —— 否则 toast 会变成几十行服务日志，没法读。
+    restart_out="${TMP_PATH}/apply_restart.$$"
+    sh "${SCRIPTS_PATH}/service.sh" restart > "${restart_out}" 2>&1
+    # 重启过程中出现的错误条数，用于给用户一个可操作的提示
+    restart_err=$(grep -c "ERROR" "${restart_out}" 2>/dev/null)
+    [ -z "${restart_err}" ] && restart_err=0
+    rm -f "${restart_out}"
 
     if [ ${refresh_needed} -eq 1 ]; then
         file_log "配置变更涉及 DNS 链路，刷新一次网络"
         refresh_network
         echo "配置已应用，已刷新网络"
+    elif [ "${restart_err}" -gt 0 ]; then
+        echo "配置已应用(重启过程有 ${restart_err} 条错误，请到日志页查看)"
     else
         echo "配置已应用"
     fi
