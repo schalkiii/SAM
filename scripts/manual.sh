@@ -254,8 +254,10 @@ uninstall_module(){
             umount "${SYSTEM_HOSTS}" 2>/dev/null && ok "已卸载 hosts" || warn "卸载 hosts 失败"
         fi
 
-        # 恢复被 chattr 锁住的广告目录/文件
+        # 恢复广告目录/文件(新方案是把内容改名保留, 这里改回原名)
         [ -f "${ACTIVE_DIR}/scripts/ad.sh" ] && sh "${ACTIVE_DIR}/scripts/ad.sh" recovery > /dev/null 2>&1
+        # 清理广告备份清单(在模块目录外, 卸载时不会自动消失)
+        rm -f "/data/adb/SAM-ad-hold.list" 2>/dev/null
 
         # 备份全部配置(setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时)
         if [ -f "${ACTIVE_DIR}/scripts/backup.sh" ]; then

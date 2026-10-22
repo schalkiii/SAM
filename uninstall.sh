@@ -35,8 +35,11 @@ fi
     # 备份全部配置(setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时)
     [ -f "$SCRIPTS_PATH/backup.sh" ] && sh "$SCRIPTS_PATH/backup.sh" save
 
-    # 解除 App 广告文件锁定
+    # 恢复 App 广告文件(新方案是把内容改名保留，这里改回原名)
     [ -f "$SCRIPTS_PATH/ad.sh" ] && "$SCRIPTS_PATH/ad.sh" recovery
+
+    # 清理广告备份清单(在模块目录外, 卸载时不会自动消失)
+    rm -f "/data/adb/SAM-ad-hold.list"
 
     # 卸载 hosts 绑定，避免残留挂载
     mount | grep -q " /system/etc/hosts " && umount "/system/etc/hosts" 2>/dev/null

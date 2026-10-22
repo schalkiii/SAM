@@ -267,8 +267,9 @@ async function showAdScope() {
         return;
     }
 
-    const counter = { "已锁定": 0, "存在未锁定": 0, "不存在": 0 };
+    const counter = {};
     const groups = {};
+    let hold_total = 0;
 
     lines.forEach(line => {
         const parts = line.split("|");
@@ -277,12 +278,25 @@ async function showAdScope() {
         const appName = parts[0];
         const itemPath = parts[1];
         const itemState = parts[2];
-        if (counter[itemState] !== undefined) counter[itemState]++;
+        const itemSize = parts.length > 3 ? parts[3] : "0";
+        if (counter[itemState] === undefined) counter[itemState] = 0;
+        counter[itemState]++;
+        const sizeNum = parseInt(itemSize, 10) || 0;
+        if (sizeNum > 0) hold_total += sizeNum;
         if (!groups[appName]) groups[appName] = [];
-        groups[appName].push(itemState + "  " + itemPath);
+        const sizeText = sizeNum > 0 ? "  [" + sizeNum + " KB]" : "";
+        groups[appName].push(itemState + sizeText + "  " + itemPath);
     });
 
-    let text = "已锁定 " + counter["已锁定"] + " 项 / 未锁定 " + counter["存在未锁定"] + " 项 / 不存在 " + counter["不存在"] + " 项" + newline;
+    // 汇总: 备份总量 + 各项状态计数
+    let text = "";
+    if (hold_total > 0) {
+        text += "已保留备份 " + hold_total + " KB(屏蔽时不再删除数据, 恢复后原样还原)" + newline;
+    }
+    Object.keys(counter).forEach(state => {
+        text += state + " " + counter[state] + " 项  ";
+    });
+    text += newline;
     Object.keys(groups).forEach(appName => {
         text += newline + "【" + appName + "】" + newline + groups[appName].join(newline) + newline;
     });
