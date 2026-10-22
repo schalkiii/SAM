@@ -24,7 +24,7 @@ fi
 
 | 项 | 数量 | 说明 |
 |---|---|---|
-| 路径总数 | 153 | 去重后 148 |
+| 路径总数 | 153 | 去重后 148；再移除 `/data/system/ifw` 后为 147 |
 | 重复条目 | 5 | 会被锁定守卫跳过，但影响范围列表里显示两遍 |
 | `shared_prefs/*.xml` | 11 | **App 的 SharedPreferences 配置**，清空后 App 丢失本地设置 |
 | `databases/*.db` | 1 | `com.tencent.map/databases/splash.db` |
@@ -263,14 +263,12 @@ hold)
 4. 本地 mock 测试：block→recovery 往返、老状态兼容、幂等、App 期间写入、exclude 跳过
 5. 升版本 + changelog + 打包发布
 
-## 11. 待确认
+## 11. 决策记录（2026-10-22 已确认并实施）
 
-1. `/data/system/ifw` 是否确认排除？（倾向排除）
-2. 2 条通配符路径：支持 glob 展开，还是删掉不做屏蔽？
-3. 11 条 `shared_prefs/*.xml` 是否保留在屏蔽列表里？
-   - 保留：App 每次启动都要重建这些配置，可能反复触发重建
-   - 移除：只屏蔽纯缓存目录，App 设置完全不动
-4. 备份用 in-place rename（推荐）还是集中备份目录？
+1. **`/data/system/ifw` 排除** —— 已从 `ad_path` 移除，并加进 `ad_exclude` 双保险
+2. **通配符路径支持 glob 展开** —— 改为 `"${ad_path[@]}"` + case 分支显式展开（见第 12 节的认知修正）
+3. **11 条 `shared_prefs/*.xml` 保留在屏蔽列表** —— 有了可逆方案后不必再删，改用改名保留屏蔽
+4. **备份用 in-place rename** —— 零额外空间、瞬时、随原路径生命周期
 
 ## 12. 实施过程中发现并修掉的问题
 
