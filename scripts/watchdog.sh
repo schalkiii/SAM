@@ -55,6 +55,18 @@ any_dns_service(){
     isRun ${SMARTDNS_BIN} || isRun ${AGH_BIN} || isRun ${MIHOMO_BIN}
 }
 
+# 所有启用的服务是否都健康
+# 刷新网络只对"服务恢复后系统仍认为无网络"有意义；
+# 如果还有服务起不来，刷新不会解决问题，反而会反复断开 WiFi。
+all_services_running(){
+    [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && return 1
+    [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && return 1
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+        isRun ${MIHOMO_BIN} || return 1
+    fi
+    return 0
+}
+
 # 日志轮转
 # 保留最后 200 行而不是整份清空: 整份清空会把"服务异常退出"前后的证据一起丢掉
 rotate_log(){
@@ -88,9 +100,11 @@ ensure_service(){
             log "i" "守护: ${SMARTDNS_BIN} 未运行，重新启动"
             ${SERVICE_PATH}/sd.sh start
             sd_backoff=${BACKOFF_ROUNDS}
-            # 拉起来就算一次异常恢复
-            recovered_abnormal=1
-            service_state_changed=1
+            # 只有真正起来才算异常恢复；起不来就不刷新网络
+            if isRun ${SMARTDNS_BIN}; then
+                recovered_abnormal=1
+                service_state_changed=1
+            fi
         else
             sd_backoff=$((sd_backoff - 1))
         fi
@@ -103,8 +117,10 @@ ensure_service(){
             log "i" "守护: ${AGH_BIN} 未运行，重新启动"
             ${SERVICE_PATH}/agh.sh start
             agh_backoff=${BACKOFF_ROUNDS}
-            recovered_abnormal=1
-            service_state_changed=1
+            if isRun ${AGH_BIN}; then
+                recovered_abnormal=1
+                service_state_changed=1
+            fi
         else
             agh_backoff=$((agh_backoff - 1))
         fi
@@ -118,8 +134,10 @@ ensure_service(){
             log "i" "守护: ${MIHOMO_BIN} 未运行，重新启动"
             ${SERVICE_PATH}/mihomo.sh start
             mihomo_backoff=${BACKOFF_ROUNDS}
-            recovered_abnormal=1
-            service_state_changed=1
+            if isRun ${MIHOMO_BIN}; then
+                recovered_abnormal=1
+                service_state_changed=1
+            fi
         else
             mihomo_backoff=$((mihomo_backoff - 1))
         fi
@@ -287,7 +305,10 @@ while true; do
     #       表现为"AGH 和 SmartDNS 都回来了，手机还是没网，必须手动开关一次飞行模式"。
     if [ ${recovered_abnormal} -eq 1 ]; then
         recovered_abnormal=0
-        if [ "${RECOVER_REFRESH_NETWORK}" = "true" ] && [ "${NETWORK_REFRESH}" = "true" ]; then
+        # 还有启用的服务没起来时，刷新网络解决不了问题，只会反复断开 WiFi
+        if ! all_services_running; then
+            log "e" "守护: 仍有服务未恢复，跳过网络刷新"
+        elif [ "${RECOVER_REFRESH_NETWORK}" = "true" ] && [ "${NETWORK_REFRESH}" = "true" ]; then
             log "i" "守护: 检测到服务异常退出并已恢复，刷新一次网络"
             refresh_network
         fi

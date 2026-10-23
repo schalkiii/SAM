@@ -301,7 +301,7 @@ apply_settings(){
 
     if [ ${refresh_needed} -eq 1 ]; then
         file_log "配置变更涉及 DNS 链路，刷新一次网络"
-        refresh_network
+        refresh_network force
         echo "配置已应用，已刷新网络"
     elif [ "${restart_err}" -gt 0 ]; then
         echo "配置已应用(重启过程有 ${restart_err} 条错误，请到日志页查看)"

@@ -121,10 +121,13 @@ start(){
     fi
 
     # 上一次停止时发现服务已经异常消失(被系统回收)，
-    # 说明系统的网络状态可能已经被判成"无网络"，恢复后需要重新验证一次
+    # 说明系统的网络状态可能已经被判成"无网络"，恢复后需要重新验证一次。
+    # 只有所有启用服务都真正起来了才刷新；还有服务失败时刷新只会反复断开 WiFi。
     if [ -f "${ABNORMAL_FILE}" ]; then
         rm -f "${ABNORMAL_FILE}"
-        if [ "${NETWORK_REFRESH}" = "true" ]; then
+        if detect_abnormal; then
+            log "e" "服务未全部恢复，跳过网络刷新"
+        elif [ "${NETWORK_REFRESH}" = "true" ]; then
             log "i" "检测到上次服务曾异常退出，刷新一次网络"
             refresh_network
         fi
@@ -140,10 +143,13 @@ stop(){
     echo "${stop_reason}" > "${STATE_FILE}"
 
     # 停止前先看服务是否"本该在跑却已经没了"，
-    # 这种情况下记一笔异常，下次启动后自动刷一次网络
+    # 这种情况下记一笔异常，下次启动后自动刷一次网络。
+    # WiFi 黑名单触发的停止是主动行为，不应写入异常标记：
+    # 否则下次从黑名单 WiFi 离开时启动会刷新网络，WiFi 断开又会让监控启动服务，
+    # 形成"刷新 -> WiFi 断开 -> 启动/停止"的循环。
     case "${prev_state}" in
         running|"")
-            if detect_abnormal; then
+            if [ "${stop_reason}" != "stopped-by-wifi" ] && detect_abnormal; then
                 echo "$(date '+%Y-%m-%d %H:%M:%S')" > "${ABNORMAL_FILE}"
                 log "i" "检测到有服务已异常退出(非手动停止)"
             fi
@@ -203,6 +209,6 @@ case "$1" in
         ;;
     # 刷新网络(手动开关一次飞行模式)
     refresh)
-        refresh_network
+        refresh_network force
         ;;
 esac

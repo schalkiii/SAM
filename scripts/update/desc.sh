@@ -59,10 +59,35 @@ out_content+=" 📢注意: 所有服务默认账号和密码都是root"
 # 一旦描述里出现路径(含 /)或 & / \ 就会报 "unknown option to `s'"，
 # 导致描述更新失败、模块管理器里一直显示旧状态。
 # 这里用环境变量把描述传给 awk(避免 -v 的反斜杠转义)，整体重写该行。
-SAM_DESC="${out_content}" awk '
-    /^description=/ { print "description=" ENVIRON["SAM_DESC"]; next }
-    { print }
-' "${MODULE_PATH}/module.prop" > "${MODULE_PATH}/module.prop.tmp" 2>/dev/null && \
-    mv -f "${MODULE_PATH}/module.prop.tmp" "${MODULE_PATH}/module.prop"
+write_description(){
+    desc_file="${1}"
+    desc_text="${2}"
+    [ -f "${desc_file}" ] || return 1
 
-log "i" "更新模块描述"
+    desc_tmp="${TMP_PATH}/module.prop.$$"
+    if SAM_DESC="${desc_text}" awk '
+        /^description=/ { print "description=" ENVIRON["SAM_DESC"]; next }
+        { print }
+    ' "${desc_file}" > "${desc_tmp}" 2>/dev/null && [ -s "${desc_tmp}" ]; then
+        mv -f "${desc_tmp}" "${desc_file}" && return 0
+    fi
+    rm -f "${desc_tmp}" 2>/dev/null
+    return 1
+}
+
+if write_description "${MODULE_PATH}/module.prop" "${out_content}"; then
+    log "i" "更新模块描述: ${out_content}"
+else
+    log "e" "更新模块描述失败: ${MODULE_PATH}/module.prop"
+fi
+
+# 刷入后尚未重启/激活时，管理器可能显示的是 modules_update 里的 module.prop。
+# 把待激活包描述改成明确状态，避免它一直显示"模块未启动"造成误判。
+UPDATE_MODULE_PROP="/data/adb/modules_update/SAM/module.prop"
+if [ -f "${UPDATE_MODULE_PROP}" ]; then
+    if write_description "${UPDATE_MODULE_PROP}" "已安装，待重启/激活生效"; then
+        log "i" "更新待激活模块描述"
+    else
+        log "e" "更新待激活模块描述失败: ${UPDATE_MODULE_PROP}"
+    fi
+fi

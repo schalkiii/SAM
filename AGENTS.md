@@ -18,9 +18,11 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 目录与约定
 - `service.sh` 开机入口；`scripts/service.sh` 负责 start / stop / restart
-- `scripts/watchdog.sh` 5 秒守护：拉起掉线服务；iptables/DNS 链与日志轮转每 10 秒检查；配置按 mtime 热加载；备份清单非空时每 5 分钟清理已卸载 App 的广告锁定
+- `scripts/watchdog.sh` 5 秒守护：拉起掉线服务；iptables/DNS 链与日志轮转每 10 秒检查；配置按 mtime 热加载；备份清单非空时每 5 分钟清理已卸载 App 的广告锁定；网络自动刷新有 10 分钟节流
 - `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换，临时文件放 `tmp/`）；`get` 必须覆盖 WebUI 所有 `data-key`
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
+- **网络刷新**：`base.sh` 的 `refresh_network` 自动刷新最多 10 分钟一次并用目录锁互斥，手动工具/保存配置传 `force`；只有所有启用服务真正恢复后才自动刷新，WiFi 黑名单触发的停止不写异常标记，避免“刷新→WiFi 断开→监控启动/停止”循环
+- **模块描述**：`scripts/update/desc.sh` 写 active 的 `module.prop` 状态，并把 `modules_update` 的待激活包标记为“已安装，待重启/激活生效”；写入失败会记 ERROR。刷入后未重启时 KernelSU 显示的是待激活包，WebUI 仍是旧 active 模块
 - 监听地址由 `LAN_ACCESS` 决定（默认 false = 只回环）：AGH 在 `update/agh.sh` 改写并开放面板/DNS，SmartDNS 在 `service/sd.sh` 启动前改写；Mihomo 控制台/mixed-port/DNS 始终只监听 127.0.0.1（无鉴权控制面与开放代理不能暴露到局域网）
 - `scripts/backup.sh` 把配置备份到 `/data/adb/SAM-backup/<时间>/`（root-only；不要放 `/sdcard`，备份含订阅链接与节点密码，且 restore 信任备份内容）
 - `scripts/ad.sh list` 输出广告屏蔽的影响范围（App|路径|状态|备份KB），WebUI「查看影响范围」用它；`scripts/ad.sh hold` 列出广告备份路径与占用总量
@@ -38,6 +40,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载
 - 广告屏蔽为可逆设计（改名保留而非删除），设计与踩坑记录见 `docs/ad-block-hold-design.md`
+- 模块描述由 `desc.sh` 动态更新；待激活包单独标记。管理器缓存旧列表时，返回/刷新模块页即可
 - 直通模式必须同时停 Mihomo，否则 TUN 的 `dns-hijack` 仍会接管 DNS
 - `LAN_ACCESS=true` 只开放 AGH 面板/DNS 与 SmartDNS DNS；Mihomo 控制台、mixed-port、内部 DNS 始终回环
 - 已知取舍：未做代码与数据分离（配置仍随模块目录，卸载靠备份找回；广告备份清单例外，刻意放在模块目录外）；

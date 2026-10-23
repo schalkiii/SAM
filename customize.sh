@@ -108,6 +108,16 @@ if [ -e "${MODULE_PATH}/setting.conf" ]; then
     cp -f "${MODULE_PATH}/etc/mihomo/cache.db" "${MODPATH}/etc/mihomo/cache.db"
 fi
 
+# 安装到 modules_update 时，模块管理器会先显示新包的 module.prop；
+# 不要让它显示"模块未启动"，否则用户会误以为已安装的模块没有运行。
+if [ -f "${MODPATH}/module.prop" ]; then
+    SAM_DESC="已安装，待重启/激活生效" awk '
+        /^description=/ { print "description=" ENVIRON["SAM_DESC"]; next }
+        { print }
+    ' "${MODPATH}/module.prop" > "${MODPATH}/module.prop.tmp" && \
+        mv -f "${MODPATH}/module.prop.tmp" "${MODPATH}/module.prop"
+fi
+
 ui_print "🌐 SmartDNS ( 账号: root | 密码: root )"
 ui_print "🌐 SmartDNS ( WebUI: 127.0.0.1:6080 )"
 ui_print "🔰 AdGuardHome ( 账号: root | 密码: root )"

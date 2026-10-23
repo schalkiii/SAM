@@ -31,8 +31,8 @@ if [ ! -e "${MODULE_PATH}/bin/smartdns" ] && [ ! -L "${MODULE_PATH}/bin/smartdns
     ln -s "${MODULE_PATH}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" "${MODULE_PATH}/etc/SmartDNS/lib/ld-linux.so"
 fi
 
-# 重置描述
-sed -i "s/^description=.*/description=模块未启动/" "${MODULE_PATH}/module.prop"
+# 重置描述: 开机阶段先标记正在启动，服务就绪后由 scripts/update/desc.sh 更新为实际状态
+sed -i "s/^description=.*/description=正在启动（等待服务就绪）/" "${MODULE_PATH}/module.prop"
 
 {
     # 等待10秒后启动

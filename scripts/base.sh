@@ -100,12 +100,57 @@ airplane_set(){
 # 开关一次飞行模式，让系统与 App 立即重新发起 DNS 查询
 # 场景: DNS 服务异常退出后，系统的网络状态已被判成"无网络"，
 #       即使服务恢复也需要重新验证一次网络，否则表现为"还是没网"。
+#
+# 节流: 服务反复掉线时，守护循环会反复恢复并刷新网络，表现成 WiFi 反复断开/重连。
+#       自动刷新 10 分钟内最多一次；手动工具/保存配置传 force 立即刷新。
+# 互斥: WebUI、守护循环和启动流程可能同时触发，用目录锁避免并发开关飞行模式。
 refresh_network(){
+    refresh_mode="${1:-auto}"
+    refresh_stamp="${TMP_PATH}/network.refresh.stamp"
+    refresh_lock="${TMP_PATH}/.network_refresh.lock"
+    refresh_window=600
+
+    # 自动刷新尊重设置；手动刷新(force)不受 NETWORK_REFRESH 限制
+    if [ "${refresh_mode}" != "force" ] && [ "${NETWORK_REFRESH}" != "true" ]; then
+        log_file "NETWORK_REFRESH=false，跳过网络刷新"
+        return 0
+    fi
+
+    if ! mkdir "${refresh_lock}" 2>/dev/null; then
+        refresh_lock_time=$(stat -c %Y "${refresh_lock}" 2>/dev/null)
+        refresh_now=$(date +%s)
+        if [ -z "${refresh_lock_time}" ] || [ $((refresh_now - refresh_lock_time)) -gt 60 ]; then
+            # 锁超过 60 秒视为崩溃残留
+            rm -rf "${refresh_lock}"
+            mkdir "${refresh_lock}" 2>/dev/null || {
+                log_file "网络刷新锁被占用，跳过"
+                return 0
+            }
+        else
+            log_file "网络刷新正在进行，跳过"
+            return 0
+        fi
+    fi
+
+    if [ "${refresh_mode}" != "force" ] && [ -f "${refresh_stamp}" ]; then
+        refresh_last=$(cat "${refresh_stamp}" 2>/dev/null)
+        refresh_now=$(date +%s)
+        if [ -n "${refresh_last}" ] && [ $((refresh_now - refresh_last)) -lt ${refresh_window} ]; then
+            log_file "10 分钟内已自动刷新过网络，跳过"
+            rmdir "${refresh_lock}" 2>/dev/null
+            return 0
+        fi
+    fi
+
+    # 先写时间戳再切换: 切换会让 WiFi 短暂断开，可能触发 WiFi 监控启动服务，
+    # 后续自动刷新必须看到时间戳而直接跳过，避免形成开关循环
+    date +%s > "${refresh_stamp}" 2>/dev/null
     log_file "刷新网络(开关一次飞行模式)"
     airplane_set enable 1
     sleep 1
     airplane_set disable 0
     sleep 1
+    rmdir "${refresh_lock}" 2>/dev/null
 }
 
 # 占位符

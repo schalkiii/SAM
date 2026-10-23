@@ -12,7 +12,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **WebUI 设置页**：直通开关、DNS 结构模式、服务开关、端口、TUN、订阅与黑白名单等可直接改
 - **直通模式**：临时撤销 DNS 劫持并暂停 Mihomo（TUN 仍会劫持 DNS），适合校园网、认证热点；改动 5 秒内由守护循环生效
 - **免重启运维**：临时 root / 只能软重启环境使用 `sh scripts/manual.sh activate|resume|uninstall`
-- **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）
+- **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）；只有服务全部恢复且距离上次自动刷新超过 10 分钟时才刷新网络，避免服务反复掉线时反复开关 WiFi
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
 - **全量配置备份**：卸载时备份到 `/data/adb/SAM-backup/<时间>/`（root-only，避免订阅链接/节点密码被普通应用读取）
 - **默认仅回环监听**：AGH 面板/DNS、SmartDNS、Mihomo 控制台与代理端口默认只听 127.0.0.1；需要局域网使用时打开「允许局域网访问」，仅开放 AGH 面板/DNS 与 SmartDNS DNS，Mihomo 控制台与代理端口始终保持本机
@@ -42,6 +42,8 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 ## 📢注意
 - 禁止和其它同类型模块使用
 - 模块所有服务的账号和密码都是 `root`，开启「允许局域网访问」前请先改密码
+- 刷入新版本后需重启或使用「工具 → 激活模块」；未激活时 KernelSU 模块列表显示的是待激活包，WebUI 仍由旧版本提供服务
+- 如果 KernelSU 模块描述仍是旧状态，先确认 `cat /data/adb/modules/SAM/module.prop` 的 `description`，再返回/刷新模块页；管理器会缓存上次读取的模块列表
 - 广告屏蔽会对目录设置 immutable（`chattr +i`），可能阻止系统卸载时清理 App 数据；卸载 App 前建议先在「工具」页执行「恢复广告文件」。如果直接卸载，模块会在启动和每 5 分钟自动解除已卸载 App 的锁定（默认保留 `.samhold` 备份）；系统卸载当下仍可能提示删除数据失败，可用工具页「清理已卸载 App 及备份」删除孤儿备份
 - hosts 更新默认 24 小时节流；工具页的「更新 hosts」与每周定时任务会强制刷新
 - 禁止该文件随意修改
