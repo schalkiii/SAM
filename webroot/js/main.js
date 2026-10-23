@@ -92,6 +92,23 @@ async function updateServiceStatus() {
         bypassBadge.classList.toggle("bypass-off", !bypassOn);
     }
 
+    // 待激活更新：出现这个标记时，KernelSU 模块页显示的是 modules_update 里的新包，
+    // WebUI 仍由旧 active 模块提供服务，需要完整重启或工具页「激活模块」
+    const pendingBadge = document.getElementById("pending-update-badge");
+    if (pendingBadge) {
+        pendingBadge.hidden = status.pending_update !== "yes";
+    }
+
+    // 显示 module.prop 里实际写入的描述，用来区分"没写成"和"管理器缓存"
+    const moduleDescStatus = document.getElementById("module-desc-status");
+    if (moduleDescStatus) {
+        const moduleDesc = String(status.module_desc || "").trim() || "未知";
+        const descRunning = moduleDesc.indexOf("已运行") >= 0;
+        moduleDescStatus.textContent = moduleDesc;
+        moduleDescStatus.classList.toggle("status-active", descRunning);
+        moduleDescStatus.classList.toggle("status-inactive", !descRunning);
+    }
+
     const host_mount_action = document.getElementById("host-mount-action");
     if (host_mount_action) {
         if ( status.host == "已挂载" ) {

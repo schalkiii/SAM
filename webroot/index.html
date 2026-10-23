@@ -18,6 +18,7 @@
             <div class="toolbar">
                 <h2>服务</h2>
                 <span id="bypass-badge" class="bypass-badge bypass-off">过滤模式</span>
+                <span id="pending-update-badge" class="pending-badge" hidden>待激活更新</span>
             </div>        
             <div class="content-section">
                 <h3>SmartDNS</h3>
@@ -163,6 +164,15 @@
                     <div class="monitor-actions">
                         <button id="dns-rule-action" class="action-btn toggle-btn">重建</button>
                     </div>
+                </div>
+
+                <div class="monitor-item" data-id="1">
+                    <div class="monitor-info">
+                        <h4>模块描述</h4>
+                        <div class="monitor-desc">KernelSU 模块页读取的值；如果这里已是运行中但模块页仍显示旧值，返回/刷新模块页即可</div>
+                        <span id="module-desc-status" class="monitor-status status-inactive">未知</span>
+                    </div>
+                    <div class="monitor-actions"></div>
                 </div>
             </div>
 

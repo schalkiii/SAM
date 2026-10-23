@@ -65,12 +65,20 @@ write_description(){
     [ -f "${desc_file}" ] || return 1
 
     desc_tmp="${TMP_PATH}/module.prop.$$"
-    if SAM_DESC="${desc_text}" awk '
-        /^description=/ { print "description=" ENVIRON["SAM_DESC"]; next }
-        { print }
-    ' "${desc_file}" > "${desc_tmp}" 2>/dev/null && [ -s "${desc_tmp}" ]; then
-        mv -f "${desc_tmp}" "${desc_file}" && return 0
+    : > "${desc_tmp}" 2>/dev/null || return 1
+    # 不依赖 awk 的 ENVIRON/sed 转义: 逐行重写，兼容描述里的 emoji、空格与特殊字符
+    while IFS= read -r desc_line || [ -n "${desc_line}" ]; do
+        case "${desc_line}" in
+            description=*) printf 'description=%s\n' "${desc_text}" >> "${desc_tmp}" ;;
+            *) printf '%s\n' "${desc_line}" >> "${desc_tmp}" ;;
+        esac
+    done < "${desc_file}"
+
+    if [ ! -s "${desc_tmp}" ] || ! grep -q "^description=" "${desc_tmp}" 2>/dev/null; then
+        rm -f "${desc_tmp}" 2>/dev/null
+        return 1
     fi
+    mv -f "${desc_tmp}" "${desc_file}" && return 0
     rm -f "${desc_tmp}" 2>/dev/null
     return 1
 }

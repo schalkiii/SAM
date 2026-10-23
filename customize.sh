@@ -111,11 +111,15 @@ fi
 # 安装到 modules_update 时，模块管理器会先显示新包的 module.prop；
 # 不要让它显示"模块未启动"，否则用户会误以为已安装的模块没有运行。
 if [ -f "${MODPATH}/module.prop" ]; then
-    SAM_DESC="已安装，待重启/激活生效" awk '
-        /^description=/ { print "description=" ENVIRON["SAM_DESC"]; next }
-        { print }
-    ' "${MODPATH}/module.prop" > "${MODPATH}/module.prop.tmp" && \
-        mv -f "${MODPATH}/module.prop.tmp" "${MODPATH}/module.prop"
+    pending_prop_tmp="${MODPATH}/module.prop.tmp"
+    : > "${pending_prop_tmp}" 2>/dev/null
+    while IFS= read -r pending_line || [ -n "${pending_line}" ]; do
+        case "${pending_line}" in
+            description=*) printf 'description=%s\n' "已安装，待重启/激活生效" >> "${pending_prop_tmp}" ;;
+            *) printf '%s\n' "${pending_line}" >> "${pending_prop_tmp}" ;;
+        esac
+    done < "${MODPATH}/module.prop"
+    mv -f "${pending_prop_tmp}" "${MODPATH}/module.prop" 2>/dev/null
 fi
 
 ui_print "🌐 SmartDNS ( 账号: root | 密码: root )"

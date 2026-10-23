@@ -129,6 +129,15 @@ get_all_status(){
     # 进程数直接由上面已取到的状态算出，不再重复调 isRun
     echo "process=$(get_process_number_from "${smartdns_running}" "${agh_running}" "${mihomo_running}")"
 
+    # 模块描述是 KernelSU 模块页读取的值；用来区分"描述没写成"和"管理器缓存/待激活"
+    module_desc=$(grep -m1 '^description=' "${MODULE_PATH}/module.prop" 2>/dev/null | cut -d= -f2-)
+    echo "module_desc=${module_desc}"
+    if [ -f "/data/adb/modules_update/SAM/module.prop" ]; then
+        echo "pending_update=yes"
+    else
+        echo "pending_update=no"
+    fi
+
     # 守护循环与 DNS 规则状态: 服务异常退出后这两项最能说明问题
     if pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then
         echo "watchdog=运行中"
