@@ -175,8 +175,18 @@ ensure_dns_rules(){
 # TUN 转发规则丢失则重建
 ensure_tun_rules(){
     isRun ${MIHOMO_BIN} || return 0
-    ${iptables_w} -C FORWARD -o ${TUN_DEVICE} -j ACCEPT > /dev/null 2>&1 && return 0
-    log "i" "守护: TUN 转发规则丢失，重新添加"
+
+    tun_rule_missing=0
+    ${iptables_w} -C FORWARD -o ${TUN_DEVICE} -j ACCEPT > /dev/null 2>&1 || tun_rule_missing=1
+    ${iptables_w} -C FORWARD -i ${TUN_DEVICE} -j ACCEPT > /dev/null 2>&1 || tun_rule_missing=1
+    # 只有内核确实支持 ip6tables 时才检查 v6，避免无 v6 的设备每轮都判定缺失
+    if ${ip6tables_w} -L FORWARD > /dev/null 2>&1; then
+        ${ip6tables_w} -C FORWARD -o ${TUN_DEVICE} -j ACCEPT > /dev/null 2>&1 || tun_rule_missing=1
+        ${ip6tables_w} -C FORWARD -i ${TUN_DEVICE} -j ACCEPT > /dev/null 2>&1 || tun_rule_missing=1
+    fi
+
+    [ ${tun_rule_missing} -eq 0 ] && return 0
+    log "i" "守护: TUN 转发规则缺失，重新添加"
     ${IPTABLES_PATH}/mihomo.sh add
 }
 
@@ -191,6 +201,8 @@ no_dns_cleaned=""
 service_state_changed=1
 # 规则检查降频: 服务存活每 5 秒查，iptables/DNS 链每 10 秒查一次
 loop_count=0
+# 已卸载 App 的锁定清理: 有备份清单时每 5 分钟检查一次
+ad_cleanup_counter=0
 # 配置文件修改时间戳: 没变就不重复解析，减少每 5 秒一次的磁盘写入
 setting_file="/data/adb/modules/SAM/setting.conf"
 setting_stamp=""
@@ -211,6 +223,18 @@ while true; do
     # 日志轮转与 iptables 检查一起降频到 10 秒，减少空闲时的 fork 与磁盘写入
     if [ $((loop_count % 2)) -eq 0 ]; then
         rotate_all_logs
+    fi
+
+    # 已卸载 App 的 immutable 空壳会阻止系统清理数据；
+    # 每 5 分钟（60 轮）后台解除一次，避免常驻 pm 查询开销
+    if [ -s "${AD_HOLD_LIST}" ]; then
+        ad_cleanup_counter=$((ad_cleanup_counter + 1))
+        if [ ${ad_cleanup_counter} -ge 60 ]; then
+            ad_cleanup_counter=0
+            detach_exec "${SCRIPTS_PATH}/ad.sh" cleanup > /dev/null 2>&1
+        fi
+    else
+        ad_cleanup_counter=0
     fi
 
     # 每轮检查设置是否变化，变了才重新解析(load_setting 会写临时文件，不宜每 5 秒跑一次)

@@ -116,8 +116,8 @@ prepare_conf(){
         return 1
     fi
 
-    cp -f "${SETTING_CLEAN}" "${CONF_FILE}.prepare.$$" || return 1
-    mv -f "${CONF_FILE}.prepare.$$" "${CONF_FILE}"
+    cp -f "${SETTING_CLEAN}" "${TMP_PATH}/setting.prepare.$$" || return 1
+    mv -f "${TMP_PATH}/setting.prepare.$$" "${CONF_FILE}"
 }
 
 # 替换单个键所在的行；键不存在则追加
@@ -127,7 +127,7 @@ replace_line(){
     target_line="${2}"
 
     line_file="${TMP_PATH}/.setting_line.$$"
-    tmp_file="${CONF_FILE}.tmp.$$"
+    tmp_file="${TMP_PATH}/.setting_tmp.$$"
 
     printf '%s\n' "${target_line}" > "${line_file}"
 

@@ -20,7 +20,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
 - **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC、`mksh -n` 校验；`.gitattributes` 保证 Windows 检出也是 LF
 - 广告过滤加入 GOODBYEADS 规则集与其放行列表（AdGuardHome 侧）
-- **广告屏蔽可逆**：屏蔽时把 App 广告缓存目录改名保留并锁定，屏蔽效果与清空相同但数据不丢，随时可原样还原；关闭开关会自动恢复
+- **广告屏蔽可逆**：屏蔽时把 App 广告缓存目录改名保留并锁定，屏蔽效果与清空相同但数据不丢，随时可原样还原；关闭开关会自动恢复；已卸载 App 的锁定会在启动/每 5 分钟自动解除
 - **缓存只留一层**：AdGuardHome 自身不缓存，缓存由上游 SmartDNS 独占，避免双份内存并保留其测速选优能力
 
 > 本 fork 的 `updateJson` 指向本仓库，不再跟随上游自动更新。
@@ -42,7 +42,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 ## 📢注意
 - 禁止和其它同类型模块使用
 - 模块所有服务的账号和密码都是 `root`，开启「允许局域网访问」前请先改密码
-- 广告屏蔽会对目录设置 immutable（`chattr +i`）；卸载 App 前请先在「工具」页执行「恢复广告文件」，否则可能出现清理数据失败
+- 广告屏蔽会对目录设置 immutable（`chattr +i`），可能阻止系统卸载时清理 App 数据；卸载 App 前建议先在「工具」页执行「恢复广告文件」。如果直接卸载，模块会在启动和每 5 分钟自动解除已卸载 App 的锁定（默认保留 `.samhold` 备份）；系统卸载当下仍可能提示删除数据失败，可用工具页「清理已卸载 App 及备份」删除孤儿备份
 - hosts 更新默认 24 小时节流；工具页的「更新 hosts」与每周定时任务会强制刷新
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml

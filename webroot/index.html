@@ -319,7 +319,7 @@
                     <label class="switch"><input type="checkbox" data-key="IP_IPTABLES"><span class="track"></span></label>
                 </div>
                 <div class="setting-row">
-                    <div class="setting-info"><h4>屏蔽 App 广告文件</h4><div class="setting-desc">把部分 App 的广告缓存目录改名保留并锁定(chattr +i)：屏蔽效果与清空相同，但数据不丢，随时可原样还原。关闭后会立即恢复已屏蔽的文件；App 启动异常时先关闭此项</div></div>
+                    <div class="setting-info"><h4>屏蔽 App 广告文件</h4><div class="setting-desc">把部分 App 的广告缓存目录改名保留并锁定(chattr +i)：屏蔽效果与清空相同，但数据不丢，随时可原样还原。关闭后会立即恢复已屏蔽的文件；已卸载 App 的锁定会在启动/每 5 分钟自动解除。App 启动异常时先关闭此项</div></div>
                     <label class="switch"><input type="checkbox" data-key="AD_BLOCK_ENABLE"><span class="track"></span></label>
                 </div>
 
@@ -421,8 +421,11 @@
                     <button class="tool-btn" data-script="ad.sh" data-args="recovery">恢复广告文件</button>
                     <button class="tool-btn" data-script="ad.sh" data-args="list">影响范围</button>
                     <button class="tool-btn" data-script="ad.sh" data-args="hold">备份占用</button>
+                    <button class="tool-btn" data-script="ad.sh" data-args="cleanup">清理已卸载 App 的锁定</button>
+                    <button class="tool-btn danger" data-script="ad.sh" data-args="cleanup purge" data-confirm="1">清理已卸载 App 及备份</button>
                     <button class="tool-btn" data-script="update/host.sh" data-args="update force">更新 hosts</button>
                 </div>
+                <div class="setting-desc">「清理已卸载 App 的锁定」只解除 immutable 并删除空壳；带「及备份」会同时删除孤儿 .samhold 备份，不可恢复。</div>
             </div>
 
             <div class="content-section">

@@ -544,6 +544,116 @@ recovery_all(){
     done
 }
 
+# 从 App 数据路径解析包名；共享存储等无法确定包名的路径返回 1
+path_package(){
+    case "${1}" in
+        /data/data/*)
+            path_tail="${1#/data/data/}"
+            pkg_name="${path_tail%%/*}"
+            ;;
+        /data/media/0/Android/data/*)
+            path_tail="${1#/data/media/0/Android/data/}"
+            pkg_name="${path_tail%%/*}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    case "${pkg_name}" in
+        ''|*[!A-Za-z0-9._]*) return 1 ;;
+    esac
+    printf '%s\n' "${pkg_name}"
+}
+
+# 清理已卸载 App 留下的 immutable 空壳
+# chattr +i 会阻止系统卸载时删除 App 数据；这里在包已经不存在后解除锁定并删掉空壳。
+# 默认保留 .samhold 备份，避免把数据误删；需要连备份一起清时传 purge。
+cleanup_removed(){
+    cleanup_mode="${1:-safe}"
+    if [ ! -f "${HOLD_LIST}" ]; then
+        echo "当前没有广告备份"
+        return 0
+    fi
+    if ! has_cmd pm; then
+        log "e" "缺少 pm，无法清理已卸载 App"
+        return 1
+    fi
+
+    installed_packages=$(pm list packages 2>/dev/null)
+    case "${installed_packages}" in
+        *"package:"*) ;;
+        *)
+            log "e" "无法获取已安装包列表，跳过清理"
+            return 1
+            ;;
+    esac
+
+    # 遍历副本: cleanup 内部会修改清单
+    hold_copy="${TMP_PATH}/ad_cleanup_copy.$$"
+    cp -f "${HOLD_LIST}" "${hold_copy}" 2>/dev/null
+    clean_number=0
+    skip_number=0
+    while IFS= read -r hold_line; do
+        [ -n "${hold_line}" ] || continue
+        if ! package_name=$(path_package "${hold_line}"); then
+            # 共享存储路径无法确定包名，留给用户手动恢复
+            skip_number=$((skip_number + 1))
+            continue
+        fi
+        if echo "${installed_packages}" | grep -qxF "package:${package_name}"; then
+            continue
+        fi
+
+        if [ ! -e "${hold_line}" ]; then
+            # 目标已随 App 数据一起消失
+            if [ -e "${hold_line}${HOLD_SUFFIX}" ]; then
+                if [ "${cleanup_mode}" = "purge" ]; then
+                    rm -rf "${hold_line}${HOLD_SUFFIX}" 2>/dev/null
+                    for orphan_prev in "${hold_line}${HOLD_SUFFIX}".prev.*; do
+                        [ -e "${orphan_prev}" ] && rm -rf "${orphan_prev}" 2>/dev/null
+                    done
+                    hold_forget "${hold_line}"
+                    clean_number=$((clean_number + 1))
+                    log "i" "已清理孤儿备份: ${hold_line}${HOLD_SUFFIX}"
+                fi
+            else
+                hold_forget "${hold_line}"
+            fi
+            continue
+        fi
+
+        # 包已卸载: 先解除 immutable，再删除我们创建的空壳
+        chattr -i "${hold_line}" 2>/dev/null
+        if [ -d "${hold_line}" ]; then
+            if ! rmdir "${hold_line}" 2>/dev/null; then
+                log "e" "已解除锁定但目录非空，保留: ${hold_line}"
+                if [ "${cleanup_mode}" = "purge" ]; then
+                    rm -rf "${hold_line}${HOLD_SUFFIX}" 2>/dev/null
+                    for orphan_prev in "${hold_line}${HOLD_SUFFIX}".prev.*; do
+                        [ -e "${orphan_prev}" ] && rm -rf "${orphan_prev}" 2>/dev/null
+                    done
+                    hold_forget "${hold_line}"
+                    log "i" "已清理该路径的备份: ${hold_line}${HOLD_SUFFIX}"
+                fi
+                skip_number=$((skip_number + 1))
+                continue
+            fi
+        else
+            rm -f "${hold_line}" 2>/dev/null
+        fi
+        clean_number=$((clean_number + 1))
+        log "i" "已解除已卸载 App 的锁定: ${hold_line}"
+
+        if [ "${cleanup_mode}" = "purge" ]; then
+            rm -rf "${hold_line}${HOLD_SUFFIX}" 2>/dev/null
+            hold_forget "${hold_line}"
+        fi
+    done < "${hold_copy}"
+    rm -f "${hold_copy}"
+
+    echo "已清理 ${clean_number} 个已卸载 App 的锁定，跳过 ${skip_number} 个"
+}
+
 # 列出会被处理(或已处理)的 App 与路径
 # 输出格式: APP|路径|状态|备份大小(KB), 供 WebUI 展示"影响范围"
 list_ad(){
@@ -718,6 +828,30 @@ list_hold(){
     echo "合计 ${hold_count} 条, ${total_size} KB"
 }
 
+# 添加指令前先加锁: block/recovery/cleanup 可能由启动、守护循环和 WebUI 并发触发，
+# 清单是「读-改-写」，不加锁会互相覆盖
+AD_LOCK="${TMP_PATH}/.ad.lock"
+acquire_ad_lock(){
+    ad_lock_try=0
+    while ! mkdir "${AD_LOCK}" 2>/dev/null; do
+        ad_lock_try=$((ad_lock_try + 1))
+        # 超过 10 秒视为崩溃残留锁
+        if [ ${ad_lock_try} -gt 100 ]; then
+            rm -rf "${AD_LOCK}"
+            mkdir "${AD_LOCK}" 2>/dev/null
+            break
+        fi
+        sleep 0.1 2>/dev/null || sleep 1
+    done
+}
+
+release_ad_lock(){
+    rmdir "${AD_LOCK}" 2>/dev/null
+}
+
+trap release_ad_lock EXIT HUP INT TERM
+acquire_ad_lock
+
 # 添加指令
 case "$1" in
     block)
@@ -729,6 +863,9 @@ case "$1" in
         recovery_all
         log "i" "已恢复 ${recovery_number} 个"
         ;;
+    cleanup)
+        cleanup_removed "${2:-safe}"
+        ;;
     list)
         list_ad
         ;;
@@ -736,7 +873,7 @@ case "$1" in
         list_hold
         ;;
     *)
-        echo "使用: block(屏蔽) | recovery(恢复) | list(列出影响范围) | hold(列出备份占用)"
+        echo "使用: block(屏蔽) | recovery(恢复) | cleanup [purge](清理已卸载 App) | list(列出影响范围) | hold(列出备份占用)"
         exit 1
         ;;
 esac

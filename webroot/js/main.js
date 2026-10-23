@@ -5,6 +5,10 @@ const scripts_path = "/data/adb/modules/SAM/scripts"
 
 // 保存中标记，避免连点产生并发重启
 let savingSettings = false;
+// 服务/挂载/监控操作互斥，避免连点造成并发 start 或重复 bind
+let serviceActionBusy = false;
+let mountActionBusy = false;
+let monitorActionBusy = false;
 
 // 单引号转义，保证参数原样传给 shell
 function shellQuote(value) {
@@ -520,58 +524,85 @@ function pageNavigation() {
 
 // 服务控制功能
 async function serviceControls(text, cmd) {
-    toast(`正在${text}，请稍等......`);
-    await runShell("service.sh", cmd);
-    await updateServiceStatus();
-    var outNumber = parseInt(lastStatus.process, 10) || 0;
-    var serNumber = parseInt(lastStatus.service, 10) || 0;
-    if ( outNumber < serNumber && ( cmd == "start" || cmd == "restart" )) {
-        showToast(text+"失败(部分服务未起来)", 5000);
-    } else if ( outNumber == serNumber && ( cmd == "start" || cmd == "restart" )) {
-        showToast(text+"成功");
-    } else if ( outNumber > 0 && cmd == "stop" ) {
-        showToast(text+"失败(仍有进程在运行)", 5000);
-    } else if ( outNumber == 0 && cmd == "stop" ) {
-        showToast(text+"成功");
+    if (serviceActionBusy) {
+        showToast("服务操作进行中，请稍候", 2000);
+        return;
+    }
+    serviceActionBusy = true;
+    try {
+        toast(`正在${text}，请稍等......`);
+        await runShell("service.sh", cmd);
+        await updateServiceStatus();
+        var outNumber = parseInt(lastStatus.process, 10) || 0;
+        var serNumber = parseInt(lastStatus.service, 10) || 0;
+        if ( outNumber < serNumber && ( cmd == "start" || cmd == "restart" )) {
+            showToast(text+"失败(部分服务未起来)", 5000);
+        } else if ( outNumber == serNumber && ( cmd == "start" || cmd == "restart" )) {
+            showToast(text+"成功");
+        } else if ( outNumber > 0 && cmd == "stop" ) {
+            showToast(text+"失败(仍有进程在运行)", 5000);
+        } else if ( outNumber == 0 && cmd == "stop" ) {
+            showToast(text+"成功");
+        }
+    } finally {
+        serviceActionBusy = false;
     }
 }
 
 // 挂载控制
 // 挂载状态必须与 HOST_ENABLE 保持一致，否则下次启动服务会被设置重新挂回去
 async function mountControls(){
-    const hostMountStatus = document.getElementById("host-mount-status");
-    var host_mount_status = await runShell("webui.sh", "mount");
-    if ( out(host_mount_status) == "已挂载" ) {
-        const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=false"]);
-        if (err(saved)) {
-            showToast("保存设置失败: " + err(saved), 6000);
-            return;
-        }
-        await runCommand("umount /system/etc/hosts");
-        showToast(`Host 未挂载`);
-    } else {
-        const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=true"]);
-        if (err(saved)) {
-            showToast("保存设置失败: " + err(saved), 6000);
-            return;
-        }
-        await runCommand(`mount -o bind ${module_path}/etc/hosts /system/etc/hosts`);
-        showToast(`Host 已挂载`);
+    if (mountActionBusy) {
+        showToast("挂载操作进行中，请稍候", 2000);
+        return;
     }
-    await updateServiceStatus();
+    mountActionBusy = true;
+    try {
+        const hostMountStatus = document.getElementById("host-mount-status");
+        var host_mount_status = await runShell("webui.sh", "mount");
+        if ( out(host_mount_status) == "已挂载" ) {
+            const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=false"]);
+            if (err(saved)) {
+                showToast("保存设置失败: " + err(saved), 6000);
+                return;
+            }
+            await runCommand("umount /system/etc/hosts");
+            showToast(`Host 未挂载`);
+        } else {
+            const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=true"]);
+            if (err(saved)) {
+                showToast("保存设置失败: " + err(saved), 6000);
+                return;
+            }
+            await runCommand(`mount -o bind ${module_path}/etc/hosts /system/etc/hosts`);
+            showToast(`Host 已挂载`);
+        }
+        await updateServiceStatus();
+    } finally {
+        mountActionBusy = false;
+    }
 }
 
 // 监控控制
 async function monitorControls(text) {
-    var pid_status = await runShell("webui.sh", `monitor ${text}`);
-    if ( out(pid_status) == "已运行" ) {
-        await runShell("webui.sh", `kill ${text}`);
-        showToast(text == "module" ? "模块未监控" : text == "wifi" ? "WIFI未监控" : "host未监控");
-    } else {
-        await runShell("webui.sh", `start ${text}`);
-        showToast(text == "module" ? "模块已监控" : text == "wifi" ? "WIFI已监控" : "host已监控");
+    if (monitorActionBusy) {
+        showToast("监控操作进行中，请稍候", 2000);
+        return;
     }
-    await updateServiceStatus();
+    monitorActionBusy = true;
+    try {
+        var pid_status = await runShell("webui.sh", `monitor ${text}`);
+        if ( out(pid_status) == "已运行" ) {
+            await runShell("webui.sh", `kill ${text}`);
+            showToast(text == "module" ? "模块未监控" : text == "wifi" ? "WIFI未监控" : "host未监控");
+        } else {
+            await runShell("webui.sh", `start ${text}`);
+            showToast(text == "module" ? "模块已监控" : text == "wifi" ? "WIFI已监控" : "host已监控");
+        }
+        await updateServiceStatus();
+    } finally {
+        monitorActionBusy = false;
+    }
 }
 
 // 软重启后恢复运行

@@ -18,13 +18,14 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 目录与约定
 - `service.sh` 开机入口；`scripts/service.sh` 负责 start / stop / restart
-- `scripts/watchdog.sh` 5 秒守护：拉起掉线服务；iptables/DNS 链与日志轮转每 10 秒检查；配置按 mtime 热加载
-- `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换）；`get` 必须覆盖 WebUI 所有 `data-key`
+- `scripts/watchdog.sh` 5 秒守护：拉起掉线服务；iptables/DNS 链与日志轮转每 10 秒检查；配置按 mtime 热加载；备份清单非空时每 5 分钟清理已卸载 App 的广告锁定
+- `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换，临时文件放 `tmp/`）；`get` 必须覆盖 WebUI 所有 `data-key`
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
 - 监听地址由 `LAN_ACCESS` 决定（默认 false = 只回环）：AGH 在 `update/agh.sh` 改写并开放面板/DNS，SmartDNS 在 `service/sd.sh` 启动前改写；Mihomo 控制台/mixed-port/DNS 始终只监听 127.0.0.1（无鉴权控制面与开放代理不能暴露到局域网）
 - `scripts/backup.sh` 把配置备份到 `/data/adb/SAM-backup/<时间>/`（root-only；不要放 `/sdcard`，备份含订阅链接与节点密码，且 restore 信任备份内容）
 - `scripts/ad.sh list` 输出广告屏蔽的影响范围（App|路径|状态|备份KB），WebUI「查看影响范围」用它；`scripts/ad.sh hold` 列出广告备份路径与占用总量
 - 广告屏蔽是**改名保留**不是删除：屏蔽时把内容 `mv` 到 `<路径>.samhold`，原位置重建空目录并 `chattr +i`；恢复时改回原名。备份清单在 `/data/adb/SAM-ad-hold.list`（模块目录外，重装不丢）；二次屏蔽会把旧备份保留为 `.samhold.prev.<时间戳>`，rename 失败则跳过而不是删数据
+- `chattr +i` 会阻止系统卸载时删除 App 数据：`ad.sh cleanup` 在包已不存在时解除 immutable 并删除空壳（默认保留 `.samhold`），`cleanup purge` 才删孤儿备份；由启动、守护循环与 WebUI 工具触发，`ad.sh` 有进程锁
 - hosts 监控监听 `etc/` 目录而不是单个文件：`update/host.sh` 用 mv 原子替换后 inode 会变，必须重挂 bind mount；`inotify/host.sh` 处理 moved_to/close_write
 - `scripts/update.sh` 先检查版本并下载，替换当前组件前停服务，替换后做 `-v` 自检并自动回滚；不要在服务运行时直接 `cp` 二进制
 - WebUI「工具」页是各脚本命令的图形入口：新增带子命令的脚本时，同步在 `webroot/index.html` 加 `data-script` / `data-args` 按钮

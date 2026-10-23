@@ -1,3 +1,23 @@
+# 2026.10.23.13
+- 自动清理已卸载 App 的广告锁定，缓解 `chattr +i` 阻止系统卸载清数据
+  - 新增 `ad.sh cleanup`：包已不存在时解除 immutable、删除我们建的空壳；
+    默认保留 `.samhold` 备份，`cleanup purge` 才删除孤儿备份
+  - 服务启动时执行一次；守护循环在备份清单非空时每 5 分钟后台执行一次
+  - `ad.sh block/recovery/cleanup` 增加进程锁，避免启动、守护循环与 WebUI 并发改写清单
+  - WebUI 工具页新增「清理已卸载 App 的锁定」与「清理已卸载 App 及备份」
+  - 说明: immutable 与系统卸载删除数据本质冲突，shell 层无法在卸载前拦截；
+    系统卸载当下仍可能提示删除数据失败，但不会再永久留下锁定空壳
+- TUN 规则自愈补全
+  - 现在同时校验 v4 的 `-o`/`-i`；内核支持 ip6tables 时也校验 v6 两个方向，
+    任一规则丢失都会重新调用 `mihomo.sh add`，不再只检查 v4 `-o`
+- 设置写入临时文件移出模块根目录
+  - `setting_api.sh` 的 `setting.conf.prepare.$$` / `.tmp.$$` 改放 `tmp/`，
+    极端崩溃时不会在模块目录留下配置残片
+- WebUI 操作防连点
+  - 服务启动/停止/重启、挂载切换、监控启停增加互斥标记，
+    避免快速双击造成并发 start 或重复 bind mount
+- 文档补充: 广告屏蔽与 App 卸载的关系、`cleanup` 的两种模式与孤儿备份处理
+
 # 2026.10.23.12
 - 修复 WebUI 设置保存链路
   - `setting_api.sh get` 漏掉 `SMARTDNS_RESPONSE_MODE`，设置页读不到当前值；保存时还会提交空值导致整次保存失败/或静默重置为 first-ping

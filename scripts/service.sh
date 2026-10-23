@@ -81,6 +81,10 @@ start(){
         # 关闭开关必须真正解除屏蔽，否则"App 异常时关掉此项"的提示就是无效的
         detach_exec "${SCRIPTS_PATH}/ad.sh" recovery > /dev/null 2>&1
     fi
+    # 已卸载 App 的 immutable 空壳会阻止系统清理数据，启动时自动解除
+    if [ -s "${AD_HOLD_LIST}" ]; then
+        detach_exec "${SCRIPTS_PATH}/ad.sh" cleanup > /dev/null 2>&1
+    fi
     if [ "${HOST_ENABLE}" = "true" ]; then
         # 只更新文件不挂载是不会生效的，这里补上挂载动作
         # (在 WebUI 里把「Hosts 挂载」从关改到开时，走的就是这条路径)
