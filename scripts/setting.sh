@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 设置安全加载
 # 背景: setting.conf 是被 source 的 shell 片段，一旦被编辑器改出 BOM、CRLF 换行
 #       或括号/引号不配对，Android 的 mksh 会在 source 时直接终止整个脚本，
@@ -101,9 +102,25 @@ setting_fix_number(){
             if [ "${#check_value}" -gt 5 ]; then
                 log "e" "设置项 ${1} 取值越界(${check_value})，已回退为 ${2}"
                 eval "${1}=${2}"
+            else
+                # 去掉前导 0，避免 test/算术把它当八进制(NT 下 08 会直接报错)
+                while [ "${#check_value}" -gt 1 ] && [ "${check_value#0}" != "${check_value}" ]; do
+                    check_value="${check_value#0}"
+                done
+                eval "${1}=${check_value}"
             fi
             ;;
     esac
+}
+
+# 端口项纠错: 数字、1-65535
+setting_fix_port(){
+    setting_fix_number "${1}" "${2}"
+    eval "check_value=\${${1}}"
+    if [ "${check_value}" -lt 1 ] || [ "${check_value}" -gt 65535 ]; then
+        log "e" "设置项 ${1} 取值越界(${check_value})，已回退为 ${2}"
+        eval "${1}=${2}"
+    fi
 }
 
 # 枚举项纠错
@@ -148,6 +165,42 @@ setting_normalize(){
     BLACKLIST_WIFI=("${blacklist_wifi_clean[@]}")
 }
 
+# 测速方式校验: none 单独使用；ping/tcp:端口 可组合
+setting_speed_check_valid(){
+    case "${1}" in
+        ''|*[!a-z0-9:,]*) return 1 ;;
+    esac
+    # none 不能和其他项混用
+    case ",${1}," in
+        *,none,*)
+            [ "${1}" = "none" ] || return 1
+            ;;
+    esac
+
+    saved_ifs="${IFS}"
+    IFS=','
+    check_result=0
+    for speed_item in ${1}; do
+        case "${speed_item}" in
+            none|ping) ;;
+            tcp:*)
+                speed_tcp_port="${speed_item#tcp:}"
+                case "${speed_tcp_port}" in
+                    ''|*[!0-9]*) check_result=1 ;;
+                    *)
+                        if [ "${speed_tcp_port}" -lt 1 ] || [ "${speed_tcp_port}" -gt 65535 ]; then
+                            check_result=1
+                        fi
+                        ;;
+                esac
+                ;;
+            *) check_result=1 ;;
+        esac
+    done
+    IFS="${saved_ifs}"
+    return ${check_result}
+}
+
 # 取值校验
 setting_validate(){
     setting_fix_bool SMARTDNS_ENABLE true
@@ -166,9 +219,32 @@ setting_validate(){
     setting_fix_bool NETWORK_REFRESH true
     setting_fix_bool AD_BLOCK_ENABLE true
 
-    setting_fix_number AGH_DNS_PORT 5300
-    setting_fix_number MIHOMO_DNS_PORT 1053
+    setting_fix_port AGH_DNS_PORT 5300
+    setting_fix_port MIHOMO_DNS_PORT 1053
     setting_fix_number SMARTDNS_TTL_MIN 600
+
+    # SmartDNS 固定监听 3721，三个 DNS 端口不能互相冲突
+    if [ "${AGH_DNS_PORT}" = "3721" ]; then
+        log "e" "设置项 AGH_DNS_PORT 与 SmartDNS 端口冲突，已回退为 5300"
+        AGH_DNS_PORT=5300
+    fi
+    if [ "${MIHOMO_DNS_PORT}" = "3721" ]; then
+        log "e" "设置项 MIHOMO_DNS_PORT 与 SmartDNS 端口冲突，已回退为 1053"
+        MIHOMO_DNS_PORT=1053
+    fi
+    if [ "${AGH_DNS_PORT}" = "${MIHOMO_DNS_PORT}" ]; then
+        log "e" "设置项 AGH_DNS_PORT 与 MIHOMO_DNS_PORT 冲突，MIHOMO_DNS_PORT 已回退为 1053"
+        MIHOMO_DNS_PORT=1053
+        # 极端情况: AGH 本身设成了 1053，再把 AGH 退回默认
+        if [ "${AGH_DNS_PORT}" = "${MIHOMO_DNS_PORT}" ]; then
+            AGH_DNS_PORT=5300
+        fi
+    fi
+
+    if [ "${SMARTDNS_TTL_MIN}" -gt 86400 ]; then
+        log "e" "设置项 SMARTDNS_TTL_MIN 取值越界，已回退为 600"
+        SMARTDNS_TTL_MIN=600
+    fi
 
     setting_fix_enum MODULE_DNS_MODE 2 1 2
     setting_fix_enum WHITELIST_MODE 1 1 2
@@ -176,18 +252,17 @@ setting_validate(){
     setting_fix_enum SMARTDNS_RESPONSE_MODE first-ping first-ping fastest-ip fastest-response
 
     # 测速方式只允许 none / ping / tcp:端口 的组合
-    case "${SMARTDNS_SPEED_CHECK}" in
-        none|ping|tcp:*|ping,tcp:*|tcp:*,tcp:*|ping,tcp:*,tcp:*) ;;
-        *)
-            log "e" "设置项 SMARTDNS_SPEED_CHECK 取值非法(${SMARTDNS_SPEED_CHECK})，已回退为默认"
-            SMARTDNS_SPEED_CHECK="ping,tcp:80,tcp:443"
+    if ! setting_speed_check_valid "${SMARTDNS_SPEED_CHECK}"; then
+        log "e" "设置项 SMARTDNS_SPEED_CHECK 取值非法(${SMARTDNS_SPEED_CHECK})，已回退为默认"
+        SMARTDNS_SPEED_CHECK="ping,tcp:80,tcp:443"
+    fi
+
+    case "${TUN_DEVICE}" in
+        ''|*[!A-Za-z0-9_]*)
+            log "e" "设置项 TUN_DEVICE 非法(${TUN_DEVICE})，已回退为 Meta"
+            TUN_DEVICE="Meta"
             ;;
     esac
-
-    if [ -z "${TUN_DEVICE}" ]; then
-        log "e" "设置项 TUN_DEVICE 为空，已回退为 Meta"
-        TUN_DEVICE=Meta
-    fi
 }
 
 # 加载设置

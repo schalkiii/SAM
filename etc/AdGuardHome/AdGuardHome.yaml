@@ -9,7 +9,7 @@ http:
       - GET /dns-query/{ClientID}
       - POST /dns-query/{ClientID}
     insecure_enabled: false
-  address: 0.0.0.0:3000
+  address: 127.0.0.1:3000
   session_ttl: 30d
 users:
   - name: root
@@ -106,7 +106,8 @@ querylog:
   size_memory: 1000
   enabled: true
   ignored_enabled: false
-  file_enabled: true
+  # 只保留内存查询日志，避免每次查询都落盘；重启后历史清空
+  file_enabled: false
 statistics:
   dir_path: ""
   ignored: []

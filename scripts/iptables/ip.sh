@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -196,7 +197,7 @@ REJECT_IP_LIST="
 211.103.220.221
 203.34.106.144
 202.127.0.105
-127.0.0.2
+# 注意: 127.0.0.2 属于回环网段，不能拦截(会破坏本机代理/工具)；原列表中的该项已移除
 42.202.155.142
 116.211.128.111
 59.63.226.15
@@ -238,16 +239,23 @@ REJECT_IP_LIST="
 "
 
 # 拦截 ip
+# 代表性规则: 用来快速判断整组规则是否存在(名单调整时不要删除这个 IP)
+IP_RULE_PROBE="116.205.193.167"
+
+ip_rule_exists(){
+    ${iptables_w} -C OUTPUT -d "${IP_RULE_PROBE}" -j DROP > /dev/null 2>&1
+}
+
 reject_ip(){
-    # 循环打印ip列表
-    for i in ${REJECT_IP_LIST}
+    action="${1}"
+    for ip in ${REJECT_IP_LIST}
     do
-        # 获取ip
-        ip=$(echo ${i} | grep -Eo '([0-9]{1,3}\.){1,3}[0-9]{1,3}')
-        # 判断不为空则执行
-        if [ ${ip} ]; then
-            ${iptables_w} ${1} OUTPUT -d "${ip}" -j DROP >/dev/null 2>&1
-        fi
+        # 跳过注释/空行；保留 CIDR 完整写法，不能再用 grep 截成单个 IP
+        case "${ip}" in
+            ''|\#*) continue ;;
+            *[!0-9./]*) continue ;;
+        esac
+        ${iptables_w} ${action} OUTPUT -d "${ip}" -j DROP > /dev/null 2>&1
     done
 }
 
@@ -255,10 +263,23 @@ reject_ip(){
 case "${1}" in
     # 添加
     enable)
+        # 幂等: 先清掉上一次留下的规则，避免重复 start 叠加成多份
+        if ip_rule_exists; then
+            reject_ip "-D"
+        fi
         reject_ip "-A"
+        log "i" "已添加屏蔽 IP 规则"
         ;;
     # 删除
     disable)
-        reject_ip "-D"
+        # 没有规则时直接返回，避免每次 stop 都空跑 200 次 iptables
+        ip_rule_exists || exit 0
+        # 最多清 3 轮，兼容历史版本重复添加留下的多份规则
+        clean_round=0
+        while ip_rule_exists && [ ${clean_round} -lt 3 ]; do
+            reject_ip "-D"
+            clean_round=$((clean_round + 1))
+        done
+        log "i" "已删除屏蔽 IP 规则"
         ;;
 esac

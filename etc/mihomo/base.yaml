@@ -5,9 +5,11 @@ redir-port: 7891
 # Linux的透明代理服务器端口（TCP和UDP）
 tproxy-port: 1536
 # 允许局域网连接
-allow-lan: true
+# 始终关闭：mixed-port 没有鉴权，开放到局域网等于开放代理；
+# LAN_ACCESS 只开放 AGH 面板/DNS 与 SmartDNS，不会打开 Mihomo 代理端口
+allow-lan: false
 # 绑定 IP 地址，仅作用于 allow-lan 为 true，'*'表示所有地址
-bind-address: "*"
+bind-address: "127.0.0.1"
 # 代理模式 rule(规则匹配)、 global(全局代理)、 direct(全局直连)
 mode: rule
 # 日志级别 silent(静默)/error(仅输出发生错误至无法使用的日志)/warning(输出发生错误但不影响运行的日志)/info(输出一般运行的内容)/debug(尽可能的输出运行中所有的信息)
@@ -19,11 +21,12 @@ disable-keep-alive: true
 # 进程匹配模式: always/strict/off
 # 本配置没有 PROCESS-NAME 规则，设为 off 可省掉每个连接的进程查找开销
 find-process-mode: off
-# 更新时间
-updatetime: &Time 10800
+# 更新时间（rule-provider 刷新间隔）
+# 原为 3 小时，40 多个 provider 每天会产生上百次请求；规则本身变化不频繁，改为 24 小时
+updatetime: &Time 86400
 
 # API 监听地址
-external-controller: 0.0.0.0:9090
+external-controller: 127.0.0.1:9090
 # API 访问密钥
 secret: ""
 # 配置 WEB UI 目录
@@ -51,7 +54,8 @@ geodata-loader: standard
 geox-url:
   asn: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb"
 # 自动更新 GEO
-geo-auto-update: true
+# ASN.mmdb 已随模块提供，且规则里没有 GEOIP 规则；关闭自动更新可省掉每天一次下载
+geo-auto-update: false
 # 更新间隔，单位：小时
 geo-update-interval: 24
 
@@ -84,7 +88,7 @@ dns:
   # 解析 IPV6
   ipv6: true
   # DNS 服务监听
-  listen: 0.0.0.0:1053
+  listen: 127.0.0.1:1053
   # DOH 优先使用 http/3
   prefer-h3: false
   #  IP 段设置

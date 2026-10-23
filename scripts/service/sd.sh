@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -69,7 +70,8 @@ start(){
     cd ${SMARTDNS_PATH}
     export SMARTDNS_WORKDIR="${SMARTDNS_PATH}"
     # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
-    detach_exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1
+    # stdout/stderr 单独落一个文件，避免和 SmartDNS 自己的日志文件互相截断
+    detach_exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - >> "${TMP_PATH}/${SMARTDNS_BIN}.out" 2>&1
     #SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec su -g $(id -g ${DNS_GROUP}) -- nohup ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1 &
     
     # 轮询等待就绪(最多 5 秒)，比固定 sleep 1 更可靠
@@ -79,14 +81,19 @@ start(){
         wait_ready=$((wait_ready + 1))
     done
     if isRun ${SMARTDNS_BIN}; then
-        log "i" "${SMARTDNS_BIN} 启动成功"
+        # 进程在不代表端口已经 bind，DNS 规则依赖端口真正可用来选上游
+        if wait_port "$(smartdns_port)"; then
+            log "i" "${SMARTDNS_BIN} 启动成功"
+        else
+            log "e" "${SMARTDNS_BIN} 进程已启动但端口 $(smartdns_port) 未监听"
+        fi
         # 免被系统 LMKD 回收
         protect_process "$(isRun ${SMARTDNS_BIN} "pid")"
     else
         log "e" "${SMARTDNS_BIN} 启动失败"
         # 把最后一行日志带上，便于定位是缺 loader、配置错还是端口占用
-        if [ -f "${TMP_PATH}/${SMARTDNS_BIN}.log" ]; then
-            log "e" "${SMARTDNS_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>/dev/null)"
+        if [ -f "${TMP_PATH}/${SMARTDNS_BIN}.out" ]; then
+            log "e" "${SMARTDNS_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${SMARTDNS_BIN}.out" 2>/dev/null)"
         fi
     fi
 }

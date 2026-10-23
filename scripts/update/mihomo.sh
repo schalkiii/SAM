@@ -1,25 +1,43 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
+
+# 先生成到临时文件，全部改完后原子替换；
+# 中途被系统杀掉时不会留下半截 config.yaml 让 mihomo 起不来
+MIHOMO_CONF_REAL="${MIHOMO_CONF}"
+MIHOMO_CONF="${TMP_PATH}/mihomo.yaml.$$"
+mihomo_cleanup(){
+    rm -f "${MIHOMO_CONF}"
+}
+trap mihomo_cleanup EXIT HUP INT TERM
 
 # 读取配置内容
 content=$(cat "${MIHOMO_PATH}/base.yaml")
 
 # 获取 SmartDNS 端口
-SMARTDNS_PORT=$(cat ${SMARTDNS_CONF} | grep "bind" | sed -n "s/bind.*:\(.*\)/\1/p")
+SMARTDNS_PORT=$(smartdns_port)
 
 # DNS 端口
-if [ "${MODULE_DNS_MODE}" = 1 ] && [ "${SMARTDNS_ENABLE}" = true ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
+if [ "${MODULE_DNS_MODE}" = 1 ] && [ "${SMARTDNS_ENABLE}" = true ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
     DNS_PORT=${SMARTDNS_PORT}
-elif [ "${MODULE_DNS_MODE}" = 2 ] && [ "${AGH_ENABLE}" = true ] && [ $(isRun ${AGH_BIN} "pid") ]; then
+elif [ "${MODULE_DNS_MODE}" = 2 ] && [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
     DNS_PORT=${AGH_DNS_PORT}
-elif [ "${SMARTDNS_ENABLE}" = true ] && [ "${AGH_ENABLE}" = false ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
+elif [ "${SMARTDNS_ENABLE}" = true ] && [ "${AGH_ENABLE}" = false ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
     DNS_PORT=${SMARTDNS_PORT}
-elif [ "${SMARTDNS_ENABLE}" = false ] && [ "${AGH_ENABLE}" = true ] && [ $(isRun ${AGH_BIN} "pid") ]; then
+elif [ "${SMARTDNS_ENABLE}" = false ] && [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
     DNS_PORT=${AGH_DNS_PORT}
 fi
 
 # 修改订阅配置
 modify_sub(){
+    # 订阅地址/排除节点最终会被写进 YAML 双引号字符串，含引号或反斜杠会破坏配置
+    case "${EXCLUDE_NODE}" in
+        *\"*|*\\*)
+            log "e" "EXCLUDE_NODE 含双引号或反斜杠，跳过本次配置生成"
+            return 1
+            ;;
+    esac
+
     # 订阅名称
     sub_name=""
     # 订阅内容
@@ -35,10 +53,16 @@ modify_sub(){
     while(( index < ${#SUB_URL[@]} ))
     do
         number=`expr ${index} + 1`
+        case "${SUB_URL[${index}]}" in
+            *\"*|*\\*)
+                log "e" "订阅地址含双引号或反斜杠，跳过本次配置生成"
+                return 1
+                ;;
+        esac
         log "i" "${SUB_URL[${index}]}"
         # 订阅名称
         sub_name+="    - provider${number}"
-        [ ${index} -lt ${#SUB_URL[@]} ] && sub_name+="\n"
+        [ ${index} -lt $((${#SUB_URL[@]} - 1)) ] && sub_name+="\n"
         # 订阅内容
         sub_content+="  provider${number}:\n"
         sub_content+="    <<: *p\n"
@@ -94,25 +118,19 @@ modify_dns(){
     fi
 }
 
-# 修改 Mihomo DNS 端口
+# Mihomo 的监听地址
+# 控制端(external-controller)没有鉴权、mixed-port 是开放代理，二者绝不能监听局域网；
+# LAN_ACCESS 只控制 AdGuardHome 面板/DNS 与 SmartDNS DNS。
+# TUN 仍在工作，只要本机 DNS 可用即可，不需要把内部 DNS 端口暴露出去。
 modify_lan_access(){
-    # 关闭 LAN_ACCESS 时全部只监听回环:
-    # 0.0.0.0 会让同一 WiFi 下的设备直接访问控制端口/借用代理/当成 DNS
-    if [ "${LAN_ACCESS}" = "true" ]; then
-        lan_value="true"
-        bind_value="*"
-        controller_value="0.0.0.0:9090"
-        listen_value="0.0.0.0:${MIHOMO_DNS_PORT}"
-    else
-        lan_value="false"
-        bind_value="127.0.0.1"
-        controller_value="127.0.0.1:9090"
-        listen_value="127.0.0.1:${MIHOMO_DNS_PORT}"
-    fi
+    sed -i \
+        -e "s|^allow-lan:.*|allow-lan: false|" \
+        -e "s|^bind-address:.*|bind-address: \"127.0.0.1\"|" \
+        -e "s|^external-controller:.*|external-controller: 127.0.0.1:9090|" \
+        -e "s|^  listen: .*|  listen: 127.0.0.1:${MIHOMO_DNS_PORT}|" \
+        "${MIHOMO_CONF}"
 
-    sed -i         -e "s|^allow-lan:.*|allow-lan: ${lan_value}|"         -e "s|^bind-address:.*|bind-address: \"${bind_value}\"|"         -e "s|^external-controller:.*|external-controller: ${controller_value}|"         -e "s|^  listen: .*|  listen: ${listen_value}|"         "${MIHOMO_CONF}"
-
-    log "i" "局域网访问: ${lan_value} | 控制端口 ${controller_value} | DNS ${listen_value}"
+    log "i" "Mihomo 控制端/代理/DNS 仅监听回环"
 }
 
 # 修改 DNS 模式
@@ -332,7 +350,7 @@ add_smart_conf(){
     echo "${content}" | sed "${line}i ${smart_conf}" | sed "s/$(placeholder 1)/ /g" > ${MIHOMO_CONF}
 }
 
-modify_sub
+modify_sub || exit 1
 modify_dns
 modify_lan_access
 modify_dns_mode
@@ -341,3 +359,11 @@ modify_ipv6_proxy
 add_zerotier_conf
 add_easytier_conf
 add_smart_conf
+
+# 全部修改完成后一次性写回，避免运行中的 mihomo 读到半截配置
+if [ -s "${MIHOMO_CONF}" ] && mv -f "${MIHOMO_CONF}" "${MIHOMO_CONF_REAL}"; then
+    log "i" "Mihomo 配置已更新"
+else
+    log "e" "写入 ${MIHOMO_CONF_REAL} 失败"
+    exit 1
+fi

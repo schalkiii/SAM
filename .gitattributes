@@ -1,0 +1,16 @@
+# 设备端与 Windows 共用同一份仓库，强制文本文件以 LF 入库/检出，
+# 避免 core.autocrlf=true 的 Windows 环境把 CRLF 打进模块包。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.woff2 binary
+*.mmdb binary
+*.mrs binary
+*.db binary
+*.so binary
+*.zip binary

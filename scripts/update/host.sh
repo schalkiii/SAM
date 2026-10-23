@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -41,6 +42,11 @@ get_host(){
             log "e" "源不可用或内容无效: ${i}"
             continue
         fi
+        # 至少要有"IP 域名"行，避免代理返回 JSON/纯文本错误信息被写进 hosts
+        if ! echo "${source_content}" | awk 'NF >= 2 && $1 ~ /^[0-9A-Fa-f:.]+$/ { ok = 1 } END { exit !ok }'; then
+            log "e" "源内容不是 hosts 格式: ${i}"
+            continue
+        fi
         get_content="${source_content}"
         get_source="${i}"
         break
@@ -81,6 +87,8 @@ get_host(){
         return 1
     fi
     mv -f "${HOSTS_FILE}.tmp" "${HOSTS_FILE}"
+    # update 用 mv 换掉了 inode，系统里的 bind 挂载仍指向旧文件，必须重挂才生效
+    remount_hosts || log "e" "hosts 重挂载失败，新规则将在下次启动后生效"
     log "i" "写入 hosts 文件"
 }
 
@@ -102,14 +110,29 @@ https://cdn.jsdelivr.net/gh/Mice-Tailor-Infra/fcm-hosts-next@master/fcm_dual.hos
 
 case "$1" in
     update)
+        # 服务每次启动都会调用 update；24 小时内只更新一次，避免重复下载。
+        # 手动更新/定时任务用 "update force" 强制刷新。
+        host_stamp="${TMP_PATH}/hosts.updated"
+        if [ "$2" != "force" ] && [ -f "${host_stamp}" ] && has_cmd stat; then
+            host_stamp_mtime=$(stat -c "%Y" "${host_stamp}" 2>/dev/null)
+            now_time=$(date +%s)
+            if [ -n "${host_stamp_mtime}" ] && [ $((now_time - host_stamp_mtime)) -lt 86400 ]; then
+                log "i" "hosts 24 小时内已更新，跳过(强制更新请用 update force)"
+                exit 0
+            fi
+        fi
+
         log "i" "更新 host 规则"
+        update_ok=0
         # GitHub
-        get_host "GitHub" ${GITHUB_HOST_SOURCES}
+        get_host "GitHub" ${GITHUB_HOST_SOURCES} && update_ok=1
         # FCM
-        get_host "FCM" ${FCM_HOST_SOURCES}
+        get_host "FCM" ${FCM_HOST_SOURCES} && update_ok=1
+        # 至少成功一个才记录时间，失败时下次启动还会重试
+        [ ${update_ok} -eq 1 ] && touch "${host_stamp}" 2>/dev/null
         ;;
     *)
-        echo "使用: update(更新)"
+        echo "使用: update [force](更新)"
         exit 1
         ;;
 esac

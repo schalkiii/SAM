@@ -10,16 +10,17 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 在原作者 [5MayRain/SAM](https://github.com/5MayRain/SAM) 基础上增加：
 
 - **WebUI 设置页**：直通开关、DNS 结构模式、服务开关、端口、TUN、订阅与黑白名单等可直接改
-- **直通模式**：临时撤销 DNS 劫持但保留服务与 WebUI，适合校园网、认证热点；改动 5 秒内由守护循环生效
+- **直通模式**：临时撤销 DNS 劫持并暂停 Mihomo（TUN 仍会劫持 DNS），适合校园网、认证热点；改动 5 秒内由守护循环生效
 - **免重启运维**：临时 root / 只能软重启环境使用 `sh scripts/manual.sh activate|resume|uninstall`
-- **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转
+- **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
-- **全量配置备份**：卸载时备份到 `/sdcard/SAM-backup/<时间>/`（setting、AGH、SmartDNS、Mihomo、名单、hosts、定时）
-- **默认仅回环监听**：AGH WebUI / Mihomo 控制台 / 各 DNS 默认只听 127.0.0.1，需要电脑管理时在设置里打开「允许局域网访问」
+- **全量配置备份**：卸载时备份到 `/data/adb/SAM-backup/<时间>/`（root-only，避免订阅链接/节点密码被普通应用读取）
+- **默认仅回环监听**：AGH 面板/DNS、SmartDNS、Mihomo 控制台与代理端口默认只听 127.0.0.1；需要局域网使用时打开「允许局域网访问」，仅开放 AGH 面板/DNS 与 SmartDNS DNS，Mihomo 控制台与代理端口始终保持本机
+- **内核安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
-- **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC 与 `mksh -n` 校验
+- **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC、`mksh -n` 校验；`.gitattributes` 保证 Windows 检出也是 LF
 - 广告过滤加入 GOODBYEADS 规则集与其放行列表（AdGuardHome 侧）
-- **广告屏蔽可逆**：屏蔽时把 App 广告缓存目录改名保留并锁定，屏蔽效果与清空相同但数据不丢，随时可原样还原
+- **广告屏蔽可逆**：屏蔽时把 App 广告缓存目录改名保留并锁定，屏蔽效果与清空相同但数据不丢，随时可原样还原；关闭开关会自动恢复
 - **缓存只留一层**：AdGuardHome 自身不缓存，缓存由上游 SmartDNS 独占，避免双份内存并保留其测速选优能力
 
 > 本 fork 的 `updateJson` 指向本仓库，不再跟随上游自动更新。
@@ -40,7 +41,9 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## 📢注意
 - 禁止和其它同类型模块使用
-- 模块所有服务的账号和密码都是 `root`
+- 模块所有服务的账号和密码都是 `root`，开启「允许局域网访问」前请先改密码
+- 广告屏蔽会对目录设置 immutable（`chattr +i`）；卸载 App 前请先在「工具」页执行「恢复广告文件」，否则可能出现清理数据失败
+- hosts 更新默认 24 小时节流；工具页的「更新 hosts」与每周定时任务会强制刷新
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml
 

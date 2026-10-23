@@ -1,10 +1,11 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 处理黑白名单的app包名
 app_package(){    
     # 读取内容
-    list_content=$(cat ${1} | grep -v '^#' | grep -v '^[[:space:]]*$')
+    list_content=$(cat "${1}" | grep -Ev '^[[:space:]]*#|^[[:space:]]*$')
     if [ -z "${list_content}" ]; then
         log "i" "${2}无内容，请在 ${1} 文件添加 APP 包名"
     fi
@@ -41,7 +42,8 @@ whitelist_mode(){
     # 排除白名单
     for i in ${white_content}
     do
-        user_app=$(echo "${user_app}" | grep -v "${i}")
+        # 精确匹配包名，避免 com.foo 把 com.foobar 也一起排除
+        user_app=$(echo "${user_app}" | grep -vxF "${i}")
     done
     # 保存文件
     echo "${user_app}" > "${TMP_PATH}/blacklist.prop" 

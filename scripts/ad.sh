@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -335,7 +336,7 @@ ad_exclude=(
 )
 
 # 备份清单(记录被屏蔽的原路径, 放在模块目录外, 模块重装不会丢)
-HOLD_LIST="/data/adb/SAM-ad-hold.list"
+HOLD_LIST="${AD_HOLD_LIST}"
 
 # 判断路径是否带 immutable 锁定
 # 优先用 lsattr -d 精确取目录自身属性; 某些 busybox 不支持 -d, 回退到不带 -d 的写法
@@ -366,8 +367,7 @@ hold_forget(){
 # 通配符展开时会连带命中这些, 必须排除
 is_hold_item(){
     case "${1}" in
-        *"${HOLD_SUFFIX}") return 0 ;;
-        *"${HOLD_SUFFIX}.samnew") return 0 ;;
+        *"${HOLD_SUFFIX}"|*"${HOLD_SUFFIX}".*|*".samnew"|*".samnew".*) return 0 ;;
     esac
     return 1
 }
@@ -397,31 +397,37 @@ block_ad(){
 
     ad_hold="${ad_target}${HOLD_SUFFIX}"
 
+    # 历史备份不能直接删除：保留为 .prev.<时间戳>，避免二次屏蔽把唯一副本吃掉
+    if [ -e "${ad_hold}" ]; then
+        hold_prev="${ad_hold}.prev.$(date '+%s')"
+        if mv "${ad_hold}" "${hold_prev}" 2>/dev/null; then
+            log "e" "发现旧备份，已保留到 ${hold_prev}"
+        else
+            log "e" "旧备份无法移开，跳过屏蔽: ${ad_target}"
+            return 0
+        fi
+    fi
+
     if [ -d "${ad_target}" ]; then
         # 目录: 改名保留原内容, 原位置重建空目录并锁定
-        rm -rf "${ad_hold}" 2>/dev/null
         if mv "${ad_target}" "${ad_hold}" 2>/dev/null; then
             mkdir -p "${ad_target}" 2>/dev/null
             chattr +i "${ad_target}" 2>/dev/null
             hold_record "${ad_target}"
         else
-            # 改名失败(跨文件系统等)则退回旧行为
-            log "e" "改名保留失败, 退回直接清空: ${ad_target}"
-            rm -rf "${ad_target}" 2>/dev/null
-            mkdir -p "${ad_target}" 2>/dev/null
-            chattr +i "${ad_target}" 2>/dev/null
+            # 改名失败时宁可跳过，也不能退回到删除数据
+            log "e" "改名保留失败，跳过屏蔽: ${ad_target}"
+            return 0
         fi
     elif [ -f "${ad_target}" ]; then
         # 文件: 改名保留原内容, 原位置建空文件并锁定
-        rm -f "${ad_hold}" 2>/dev/null
         if mv "${ad_target}" "${ad_hold}" 2>/dev/null; then
             : > "${ad_target}"
             chattr +i "${ad_target}" 2>/dev/null
             hold_record "${ad_target}"
         else
-            log "e" "改名保留失败, 退回直接清空: ${ad_target}"
-            : > "${ad_target}"
-            chattr +i "${ad_target}" 2>/dev/null
+            log "e" "改名保留失败，跳过屏蔽: ${ad_target}"
+            return 0
         fi
     fi
     let "block_number++"
@@ -505,6 +511,11 @@ recovery_all(){
     if [ -s "${hold_copy}" ]; then
         while IFS= read -r hold_line; do
             [ -n "${hold_line}" ] || continue
+            # App 已卸载/清理：原路径和备份都不在，清掉清单里的孤儿记录
+            if [ ! -e "${hold_line}" ] && [ ! -e "${hold_line}${HOLD_SUFFIX}" ]; then
+                hold_forget "${hold_line}"
+                continue
+            fi
             recovery_ad "${hold_line}"
         done < "${hold_copy}"
     fi

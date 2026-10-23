@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -18,7 +19,19 @@ done
 [ ${#stop_service} -gt 15 ] && out_content+=" ${stop_service}"
 
 out_content+=" 🤖Smart内核: "
-mihomo -v | grep -q "smart" && out_content+="[✅]" || out_content+="[❌]"
+# 缓存探测结果: mihomo 是 60MB+ 的二进制，每次启停都执行 -v 代价偏高
+core_cache="${TMP_PATH}/mihomo_core"
+if [ -f "${core_cache}" ]; then
+    core_type=$(cat "${core_cache}" 2>/dev/null)
+else
+    if mihomo -v 2>/dev/null | grep -q "smart"; then
+        core_type="smart"
+    else
+        core_type="standard"
+    fi
+    echo "${core_type}" > "${core_cache}" 2>/dev/null
+fi
+[ "${core_type}" = "smart" ] && out_content+="[✅]" || out_content+="[❌]"
 
 out_content+=" ⚙️模式: "
 if [ "${ENABLE_WHITELIST}" = true ]; then

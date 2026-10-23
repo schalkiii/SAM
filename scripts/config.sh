@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 模块路径
 MODULE_PATH="/data/adb/modules/SAM"
 # 程序路径
@@ -51,6 +52,9 @@ MIHOMO_CONF="${MIHOMO_PATH}/config.yaml"
 BLACKLIST_FILE="${MODULE_PATH}/etc/app_blacklist.prop"
 # 白名单文件
 WHITELIST_FILE="${MODULE_PATH}/etc/app_whitelist.prop"
+
+# 广告屏蔽备份清单(放在模块目录外，模块重装不丢)
+AD_HOLD_LIST="/data/adb/SAM-ad-hold.list"
 
 # DNS 列表 ( 字节跳动 | 腾讯 | 阿里 )
 DNS_LIST="

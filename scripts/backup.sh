@@ -2,9 +2,14 @@
 # 配置备份 / 恢复
 #
 # 原先只备份 Mihomo 配置，其余配置在卸载时直接随模块目录被删掉。
-# 这里把用户真正会调的东西一起备份到 /sdcard/SAM-backup/<时间戳>/：
+# 这里把用户真正会调的东西一起备份到 /data/adb/SAM-backup/<时间戳>/：
 #   setting.conf、AdGuardHome.yaml、smartdns.conf、mihomo config.yaml、
 #   黑白名单、hosts、定时任务
+#
+# 备份目录放在 /data/adb 而不是 /sdcard:
+#   1. 含订阅链接/节点密码，/sdcard 对其他有存储权限的应用可见
+#   2. restore 直接信任备份内容(含 crontabs/root)，放 /sdcard 会被篡改成 root 命令入口
+#   3. /data/adb 在卸载后仍保留，且 root-only
 #
 # 用法:
 #   sh backup.sh save      备份一份(最多保留 5 份)
@@ -13,7 +18,7 @@
 
 source "/data/adb/modules/SAM/scripts/base.sh"
 
-BACKUP_ROOT="/sdcard/SAM-backup"
+BACKUP_ROOT="/data/adb/SAM-backup"
 BACKUP_FILES="setting.conf etc/AdGuardHome/AdGuardHome.yaml etc/SmartDNS/smartdns.conf etc/mihomo/config.yaml etc/app_blacklist.prop etc/app_whitelist.prop etc/hosts etc/crontabs/root"
 KEEP_BACKUP=5
 
@@ -30,6 +35,8 @@ save_backup(){
         echo "无法创建备份目录 ${backup_dir}"
         return 1
     }
+    # 备份含订阅链接与节点密码，只允许 root 读取
+    chmod 700 "${BACKUP_ROOT}" 2>/dev/null
 
     backup_count=0
     for backup_file in ${BACKUP_FILES}; do
@@ -45,9 +52,9 @@ save_backup(){
         cp -f "${backup_src}" "${backup_target}" && backup_count=$((backup_count + 1))
     done
 
-    # 兼容旧路径，避免老用户找不到
+    # 兼容旧路径的便捷副本，同样放在 root-only 目录
     if [ -f "${MODULE_PATH}/etc/mihomo/config.yaml" ]; then
-        cp -f "${MODULE_PATH}/etc/mihomo/config.yaml" "/sdcard/Mihomo配置.yaml" 2>/dev/null
+        cp -f "${MODULE_PATH}/etc/mihomo/config.yaml" "${BACKUP_ROOT}/Mihomo配置.yaml" 2>/dev/null
     fi
 
     # 只保留最近 5 份
@@ -87,6 +94,19 @@ restore_backup(){
     done
 
     echo "已从 ${latest_backup} 恢复 ${restore_count} 个文件"
+
+    # 恢复后让新配置生效；用户主动停止服务时不要擅自拉起
+    case "$(cat "${TMP_PATH}/service.state" 2>/dev/null)" in
+        stopped*)
+            echo "服务当前处于停止状态，未自动启动"
+            ;;
+        *)
+            if [ -f "${SCRIPTS_PATH}/service.sh" ]; then
+                echo "重启服务使配置生效..."
+                sh "${SCRIPTS_PATH}/service.sh" restart
+            fi
+            ;;
+    esac
 }
 
 case "${1}" in

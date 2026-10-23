@@ -1,3 +1,53 @@
+# 2026.10.23.12
+- 修复 WebUI 设置保存链路
+  - `setting_api.sh get` 漏掉 `SMARTDNS_RESPONSE_MODE`，设置页读不到当前值；保存时还会提交空值导致整次保存失败/或静默重置为 first-ping
+  - 保存时逐个比较新旧值，只写真正变化的项；`apply` 无变化时不再重启服务
+  - 服务处于停止状态时清空待应用标记，避免后续无关的 apply 突然开关飞行模式
+  - `prepare_conf` 改为临时文件 + mv 原子替换，避免守护循环读到写了一半的配置
+  - 挂载页改用 `mount -o bind`，并同步写 `HOST_ENABLE`；修正页面里的源路径
+- 修复打包与 CI
+  - `normalize_bytes` 里的 `b"\\r\\n"` 是字面量反斜杠，不是 CR/LF，导致工具从未真正做 LF 规范化；本机（core.autocrlf=true）打出的 zip 会带 CRLF，设备端脚本全部无法解析
+  - 新增 `.gitattributes` 强制文本文件以 LF 入库/检出；工作区已统一为 LF
+  - 语法检查改为 stdin 传入，规避 Windows/MSYS 路径反斜杠被吞
+  - `--check --no-write` 也检查 CR；CI 增加广告屏蔽回归测试
+  - `test_ad_sh.py` 显式 UTF-8 解码，Windows 下可直接运行
+- 修复 hosts 不生效
+  - `update/host.sh` 用 mv 原子替换后 inode 变了，bind 挂载仍指向旧文件；
+    现在写入后显式重挂，并把 host 监控改为监听 `etc/` 目录、处理 moved_to/close_write 事件
+  - 服务启动时更新 hosts 会做 24 小时节流；手动/定时更新用 `update force` 强制刷新
+  - 增加 hosts 内容格式校验，拒绝代理返回的 JSON/纯文本错误页
+- 修复直通模式
+  - Mihomo 的 TUN `auto-route + dns-hijack` 会在路由层继续劫持 DNS；
+    直通开启时暂停 Mihomo，关闭后由守护循环自动恢复
+- 修复开关副作用
+  - 关闭「屏蔽 App 广告文件」会真正执行恢复，不再留下锁定空目录
+  - 关闭「屏蔽 IP 规则」会清理历史规则；`ip.sh` 改为幂等、保留 CIDR、移除 127.0.0.2
+  - 停止服务改为先删 DNS/TUN/IP 规则再停进程，避免 DNS 短暂进黑洞
+  - 模块被禁用/移除时同步卸载 hosts、停止监控；`uninstall.sh` 改为同步执行，避免 Magisk 删除目录后备份/广告恢复才跑
+  - 手动安装升级会先备份并保留旧 setting/AGH/名单/hosts/提供商缓存
+- 安全加固
+  - 配置备份从 `/sdcard` 移到 `/data/adb/SAM-backup`（root-only），避免订阅链接/节点密码被普通应用读取，也避免 restore 被篡改成 root 命令入口
+  - Mihomo 控制端、mixed-port 与 DNS 始终只监听 127.0.0.1；LAN_ACCESS 只开放 AGH 面板/DNS 与 SmartDNS DNS，不再暴露无鉴权控制面和开放代理
+  - 订阅地址/排除节点提前拒绝会破坏 YAML 的引号/反斜杠
+- 配置健壮性
+  - AGH 的端口、upstream、bind_hosts 改为锚定解析；`cache_enabled` 缺失时主动补 false
+  - AGH 升级时保留 `AdGuardHome.yaml` 与 `data/filters`，不再重置用户过滤器
+  - 端口范围/冲突、测速方式、TUN 网卡名、TTL 做严格校验
+  - `customize.sh` 找不到目标键时不再让 sed 覆盖整个配置
+- 内核更新
+  - 下载加连接/总时长超时；替换前停服务，避免 ETXTBSY/SIGBUS
+  - 替换后做 `-v` 自检，失败自动回滚并保留/清理 .bak
+  - 修复 Mihomo 压缩包重命名逻辑：版本号里的点会被当成扩展名截断，实际文件总是找不到
+- 性能
+  - watchdog：服务存活仍 5 秒检查，iptables/DNS 链与日志轮转降为 10 秒；服务刚拉起时立即重建
+  - WiFi 监控每轮只取一次 SSID，优先 `cmd wifi status`；手动停止后不再轮询
+  - rule-provider 刷新从 3 小时改为 24 小时，关闭 ASN 每日自动更新
+  - SmartDNS 日志级别 info -> notice；AGH 查询日志只保留内存；服务 stdout 日志统一轮转
+  - 描述更新缓存 Mihomo 内核类型，避免每次启停都执行 60MB+ 二进制
+- 其他
+  - 所有 `.sh` 补齐 shebang；移除未使用的 `update_smart.json`
+  - 新增端口监听校验：进程活着但端口没监听时不再把 DNS 重定向到死端口
+
 # 2026.10.21.11
 - 修复「host 规则获取失败」: 改为多源逐个降级
   - 原因: `raw.githubusercontent.com` 在国内移动网络下经常超时或被限速,

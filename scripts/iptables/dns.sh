@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -8,7 +9,7 @@ IPV6_DNS_CHAIN="REDIRECT_IPV6_DNS"
 BLOCK_IPV6_CHAIN="BLOCK_IPV6_DNS"
 
 # 获取 SmartDNS 端口
-SMARTDNS_PORT=$(cat "${SMARTDNS_CONF}" | grep "bind" | sed -n "s/bind.*:\(.*\)/\1/p")
+SMARTDNS_PORT=$(smartdns_port)
 
 # 选择实际可用的 DNS 转发端口
 # 说明: 原实现按"模式 + 启用开关"选端口，一旦被选中的服务没起来
@@ -21,9 +22,9 @@ select_dns_port(){
     mihomo_port=""
     smartdns_port=""
 
-    isRun ${AGH_BIN} && agh_port=${AGH_DNS_PORT}
-    isRun ${MIHOMO_BIN} && mihomo_port=${MIHOMO_DNS_PORT}
-    isRun ${SMARTDNS_BIN} && smartdns_port=${SMARTDNS_PORT}
+    isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && agh_port=${AGH_DNS_PORT}
+    isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && mihomo_port=${MIHOMO_DNS_PORT}
+    isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}" && smartdns_port=${SMARTDNS_PORT}
 
     if [ "${MODULE_DNS_MODE}" = "2" ]; then
         # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
@@ -56,8 +57,6 @@ if [ -n "${DNS_PORT}" ]; then
 else
     [ "${log_quiet}" = "1" ] || log "e" "没有可用的 DNS 服务在运行，跳过 DNS 重定向"
 fi
-
-itw=${iptables_w}
 
 # 按 v4 / v6 分发 iptables 命令
 # 注意: 不能把 ${iptables_w}(含 "iptables -w 100" 这样的多词命令串)当成单个参数传递，
@@ -129,9 +128,10 @@ enable_dns(){
     ipt_run ${chain_ver} -t nat -N ${target_chain} || return 1
     ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
     ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    # 回环地址必须在 REDIRECT 之前放行，否则本机自建 DNS/代理会被一起劫持
+    ipt_run ${chain_ver} -t nat -A ${target_chain} -d 127.0.0.0/8 -j ACCEPT || return 1
     ipt_run ${chain_ver} -t nat -A ${target_chain} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
     ipt_run ${chain_ver} -t nat -A ${target_chain} -p udp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
-    ipt_run ${chain_ver} -t nat -A ${target_chain} -d 127.0.0.0/8 -j ACCEPT || return 1
     ipt_run ${chain_ver} -t nat -I OUTPUT -j ${target_chain} || return 1
 }
 
@@ -195,44 +195,45 @@ has_ipv6_nat(){
     ${ip6tables_w} -t nat -L >/dev/null 2>&1
 }
 
-# 判断端口是否等于 53
-is_dns_port(){
-    if [ "${DNS_PORT}" = "53" ]; then
-        log "i" "端口等于 53，跳过添加规则"
-        return 0
-    else
-        return 1
-    fi
-}
-
 # 添加指令
 case "$1" in
     # 启用
     enable)
         if [ -n "${DNS_PORT}" ]; then
-            is_dns_port || enable_dns "ipv4" ${DNS_CHAIN}
-        fi
-        if [ "${BLOCK_IPV6_DNS}" = "true" ]; then
-            enable_block_ipv6
-        elif has_ipv6_nat; then
-            enable_dns "ipv6" ${IPV6_DNS_CHAIN}
+            if [ "${DNS_PORT}" = "53" ]; then
+                log "i" "端口等于 53，移除旧重定向规则"
+                disable_dns "ipv4" ${DNS_CHAIN}
+            else
+                enable_dns "ipv4" ${DNS_CHAIN}
+            fi
+            if [ "${BLOCK_IPV6_DNS}" = "true" ]; then
+                # v6 阻断优先于重定向，清掉历史版本可能残留的 v6 重定向链
+                has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
+                enable_block_ipv6
+            else
+                has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
+                log "i" "未阻断 IPv6 DNS，v6 查询将绕过本模块"
+            fi
         else
-            # 内核没有 IPv6 nat 表: 既不能重定向、用户也没要求阻断，
-            # 此时 v6 DNS 会整块绕过本模块，这里显式留痕，避免"过滤悄悄失效"
-            log "e" "内核无 IPv6 nat 表且未开启 IPv6 阻断，IPv6 DNS 将绕过本模块"
+            # 进程在但端口没在监听时，保留旧规则会把整机 DNS 指向死端口；
+            # 这里清掉重定向与 v6 阻断，让系统回退到网络下发的 DNS
+            log "e" "没有正在监听的 DNS 服务，移除重定向规则避免 DNS 进黑洞"
+            disable_dns "ipv4" ${DNS_CHAIN}
+            has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
+            disable_block_ipv6
         fi
         ;;
     # 禁用
     disable)
         disable_dns "ipv4" ${DNS_CHAIN}
-        has_ipv6_nat && disable_dns "ipv6" ${IPV6_DNS_CHAIN}
+        has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
         disable_block_ipv6
         ;;
     # 状态检查(供 WebUI/守护循环判断规则是否与当前端口一致)
     check)
         if [ -z "${DNS_PORT}" ]; then
             echo "无 DNS 服务在运行"
-            exit 1
+            exit 2
         fi
         if check_dns_chain v4 ${DNS_CHAIN}; then
             echo "DNS 规则正常(端口 ${DNS_PORT})"

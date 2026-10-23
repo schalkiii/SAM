@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 防止重复启动
 if [ $(pgrep -f "$0" | wc -l) -gt 1 ]; then
     exit 0
@@ -7,8 +8,16 @@ fi
 source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 获取当前连接 WIFI 的 SSID
+# cmd wifi status 的输出比 dumpsys connectivity 小一个数量级，优先使用
 get_WIFI_SSID(){
-    dumpsys connectivity | grep "WIFI CONNECTED" | sed -n 's/.*SSID: "\(.*\)".*/\1/p'
+    wifi_ssid=""
+    if has_cmd cmd; then
+        wifi_ssid=$(cmd wifi status 2>/dev/null | sed -n 's/.*SSID: "\(.*\)".*/\1/p' | head -n 1)
+    fi
+    if [ -z "${wifi_ssid}" ]; then
+        wifi_ssid=$(dumpsys connectivity 2>/dev/null | grep "WIFI CONNECTED" | sed -n 's/.*SSID: "\(.*\)".*/\1/p' | head -n 1)
+    fi
+    echo "${wifi_ssid}"
 }
 
 # 统计正在运行的服务数量
@@ -20,11 +29,22 @@ count_running_service(){
     echo ${running_number}
 }
 
+setting_file="/data/adb/modules/SAM/setting.conf"
+setting_stamp=""
+
 # 无限循环
 while true
 do
-    # 重新加载设置(自动容错，改坏 setting.conf 也不会让监控退出)
-    load_setting "/data/adb/modules/SAM/setting.conf"
+    # 设置没变就不重复解析，避免每 10 秒生成一批临时文件
+    if has_cmd stat; then
+        new_stamp=$(stat -c "%Y" "${setting_file}" 2>/dev/null)
+    else
+        new_stamp=""
+    fi
+    if [ -z "${new_stamp}" ] || [ "${new_stamp}" != "${setting_stamp}" ]; then
+        load_setting "${setting_file}"
+        setting_stamp="${new_stamp}"
+    fi
 
     # 用户在界面上手动停止服务后，监控只负责"保持在黑名单里停止"，
     # 不再自动拉起；否则手动停止会被监控反复推翻。
@@ -38,25 +58,33 @@ do
         exit 0
     fi
 
+    # 手动停止时不会再自动拉起，没必要每 10 秒读一次 WiFi 状态
+    if [ ${manual_stopped} -eq 1 ]; then
+        sleep 10
+        continue
+    fi
+
+    # 每轮只取一次 SSID；原来在遍历黑名单时逐项调用 dumpsys，N 个 SSID 就是 N 次
+    current_ssid=$(get_WIFI_SSID)
+
     # 状态值
-    state=0
+    state=1
     # 索引
     i=0
     # 循环遍历黑名单 WIFI
     while(($i < ${#BLACKLIST_WIFI[@]}))
     do
         # 判断当前所连接WIFI是否在黑名单
-        if [ "$(get_WIFI_SSID)" = "${BLACKLIST_WIFI[$i]}" ]; then
+        if [ "${current_ssid}" = "${BLACKLIST_WIFI[$i]}" ]; then
             state=0
             break
         fi
-        state=1
         let "i++"
     done
 
     if [ $state -eq 1 ]; then
-        # 不在黑名单且服务未启动，则启动(用户手动停止过就不启动)
-        [ ${manual_stopped} -eq 0 ] && [ $(count_running_service) -le 0 ] && $SCRIPTS_PATH/service.sh start
+        # 不在黑名单且服务未启动，则启动
+        [ $(count_running_service) -le 0 ] && $SCRIPTS_PATH/service.sh start
     else
         # 在黑名单且服务正在运行，则停止，并标记停止原因是 WiFi 黑名单
         [ $(count_running_service) -gt 0 ] && $SCRIPTS_PATH/service.sh stop stopped-by-wifi

@@ -18,6 +18,9 @@ jobs:
       - name: 安装 mksh
         run: sudo apt-get update && sudo apt-get install -y mksh
 
-      # --no-write: 只校验，不改仓库里的文件
+      # --no-write: 只校验，不改仓库里的文件；CRLF 现在也会让 --check 失败
       - name: 检查模块
         run: python tools/pack_module.py --check --no-write
+
+      - name: 广告屏蔽回归测试
+        run: python tools/test_ad_sh.py

@@ -147,7 +147,7 @@ def build_env(base):
     p = mod / 'scripts' / 'ad.sh'
     d = p.read_text(encoding='utf-8')
     d = d.replace('source "/data/adb/modules/SAM/scripts/base.sh"', f'source "{mod_posix}/scripts/base.sh"')
-    d = d.replace('HOLD_LIST="/data/adb/SAM-ad-hold.list"', f'HOLD_LIST="{base_posix}/SAM-ad-hold.list"')
+    d = d.replace('HOLD_LIST="${AD_HOLD_LIST}"', f'HOLD_LIST="{base_posix}/SAM-ad-hold.list"')
     d = d.replace('"/data/system/ifw"', f'"{(test_root / EXCLUDE_CASE).as_posix()}"')
     d = re.sub(r'ad_path=\(.*?\n\)\n', lambda m: newarray, d, count=1, flags=re.S)
     p.write_text(d, encoding='utf-8', newline='\n')
@@ -158,9 +158,12 @@ def build_env(base):
 def run_ad(mod, base, args, stub_dir):
     env = dict(os.environ)
     env['PATH'] = f'{stub_dir.as_posix()}{os.pathsep}{env.get("PATH", "")}'
+    # 设备上是 mksh；Linux 的 sh 可能是 dash，不支持 ad.sh 里用到的 let
+    shell = shutil.which('mksh') or shutil.which('sh') or 'sh'
     result = subprocess.run(
-        ['sh', (mod / 'scripts' / 'ad.sh').as_posix()] + args,
-        capture_output=True, text=True, env=env, cwd=base.as_posix(),
+        [shell, (mod / 'scripts' / 'ad.sh').as_posix()] + args,
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        env=env, cwd=base.as_posix(),
     )
     return result
 

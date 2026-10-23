@@ -1,76 +1,136 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
-# 读取配置内容
-content=$(cat ${AGH_CONF})
+SMARTDNS_PORT=$(smartdns_port)
+# 全文件改写的临时文件；每个修改函数写它再原子替换
+# 放在 TMP_PATH 而不是配置目录，进程被杀时不会在 AGH 目录里留垃圾
+AGH_TMP="${TMP_PATH}/agh.yaml.$$"
 
-# 获取 SmartDNS 端口
-SMARTDNS_PORT=$(cat ${SMARTDNS_CONF} | grep "bind" | sed -n "s/bind.*:\(.*\)/\1/p")
+# 取 dns 段的 port
+# 必须锚定在 dns: 段内：AGH 的 pprof/tls 段也有 port 字段，按"第 N 个 port:"取会随
+# AGH 版本变化而错位，改端口时看起来成功、实际 DNS 还监听旧端口。
+get_dns_port(){
+    awk '
+        /^dns:/ { in_dns = 1; next }
+        in_dns && /^[^[:space:]]/ { in_dns = 0 }
+        in_dns && /^  port:[[:space:]]/ { print $2; exit }
+    ' "${AGH_CONF}" 2>/dev/null
+}
 
-# 修改配置
+# 原子替换配置；空文件或缺少关键段时放弃，避免把 AGH 配置写坏
+commit_conf(){
+    if [ ! -s "${AGH_TMP}" ] || ! grep -q "^dns:" "${AGH_TMP}" 2>/dev/null; then
+        log "e" "${AGH_BIN} 配置生成结果异常，保留原文件"
+        rm -f "${AGH_TMP}"
+        return 1
+    fi
+    mv -f "${AGH_TMP}" "${AGH_CONF}"
+}
+
+# 生成 upstream_dns 列表行(4 空格缩进)
+write_upstream_file(){
+    : > "${AGH_TMP}.upstream"
+    for upstream_item in "$@"; do
+        printf '    - %s\n' "${upstream_item}" >> "${AGH_TMP}.upstream"
+    done
+}
+
+# 替换 upstream_dns 列表，保留其后的 upstream_dns_file 等配置
+replace_upstream(){
+    write_upstream_file "$@"
+    awk -v repl_file="${AGH_TMP}.upstream" '
+        /^  upstream_dns:/ {
+            # 统一写成块列表，兼容 AGH 把 upstream_dns 写成 [] 内联形式
+            print "  upstream_dns:"
+            while ((getline line < repl_file) > 0) print line
+            skip = 1
+            next
+        }
+        skip && /^    - / { next }
+        skip { skip = 0 }
+        { print }
+    ' "${AGH_CONF}" > "${AGH_TMP}"
+    rm -f "${AGH_TMP}.upstream"
+    commit_conf
+}
+
+# 兜底: 配置里没有 upstream_dns 段时补一个，避免 AGH 退回默认公共 DNS
+insert_upstream(){
+    write_upstream_file "$@"
+    awk -v repl_file="${AGH_TMP}.upstream" '
+        { print }
+        /^dns:$/ {
+            print "  upstream_dns:"
+            while ((getline line < repl_file) > 0) print line
+        }
+    ' "${AGH_CONF}" > "${AGH_TMP}"
+    rm -f "${AGH_TMP}.upstream"
+    commit_conf
+}
+
 modify_conf(){
-    # 获取开始行
-    start_line=$(echo "${content}" | sed -n "/upstream_dns:/=")
-    let "start_line++"
-    # 获取结束行
-    end_line=$(echo "${content}" | sed -n "/upstream_dns_file:/=")
-    let "end_line--"
-    # 获取项的前缀
-    prefix=$(echo "${content}" | sed -n "${start_line}p" | sed -e "s/-.*/- /g" -e "s/ /$(placeholder 1)/g")
-    # 获取默认DNS
-    default_dns=$(echo "${DNS_LIST}" | grep -Ev "^[[:space:]]*$" | sed "s/^/${prefix}/g")
-    default_dns=$(echo ${default_dns} | sed "s/ /∷/g")
-    # 判断 SmartDNS 启用，则使用 SmartDNS，未启用则使用默认DNS
-    if [ "${SMARTDNS_ENABLE}" = true ] && [ "${MODULE_DNS_MODE}" = 2 ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
+    if ! grep -q "^  upstream_dns:" "${AGH_CONF}" 2>/dev/null; then
+        log "e" "${AGH_BIN} 配置缺少 upstream_dns，已插入默认上游"
+        insert_upstream $(echo "${DNS_LIST}")
+        return $?
+    fi
+
+    # 判断 SmartDNS 启用且端口确实在监听，才把它作为上游
+    if [ "${SMARTDNS_ENABLE}" = "true" ] && [ "${MODULE_DNS_MODE}" = "2" ] && \
+       isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
         log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
-        modify_dns "${prefix}127.0.0.1:${SMARTDNS_PORT}"
-    elif [ "${MIHOMO_ENABLE}" = true ] && [ "${MODULE_DNS_MODE}" = 1 ] && [ $(isRun ${MIHOMO_BIN} "pid") ]; then
+        replace_upstream "127.0.0.1:${SMARTDNS_PORT}"
+    elif [ "${MIHOMO_ENABLE}" = "true" ] && [ "${MODULE_DNS_MODE}" = "1" ] && \
+         isRun "${MIHOMO_BIN}" && is_port_listening "${MIHOMO_DNS_PORT}"; then
         log "i" "${AGH_BIN} 上游DNS使用 ${MIHOMO_BIN}"
-        modify_dns "${prefix}127.0.0.1:${MIHOMO_DNS_PORT}"
-    elif [ "${MIHOMO_ENABLE}" = false ] && [ "${SMARTDNS_ENABLE}" = true ] && [ $(isRun ${SMARTDNS_BIN} "pid") ]; then
+        replace_upstream "127.0.0.1:${MIHOMO_DNS_PORT}"
+    elif [ "${MIHOMO_ENABLE}" = "false" ] && [ "${SMARTDNS_ENABLE}" = "true" ] && \
+         isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
         log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
-        modify_dns "${prefix}127.0.0.1:${SMARTDNS_PORT}"
+        replace_upstream "127.0.0.1:${SMARTDNS_PORT}"
     else
         log "i" "${AGH_BIN} 上游DNS使用默认DNS"
-        modify_dns "${default_dns}"
+        replace_upstream $(echo "${DNS_LIST}")
     fi
 }
 
-# 修改DNS
-modify_dns(){
-    echo "${content}" | sed "${start_line},${end_line}d" | sed "${start_line}i ${1}" | sed -e "s/$(placeholder 1)/ /g" -e "s/∷/\n/g" > ${AGH_CONF}
-}
-
-# 修改 DNS 端口
+# 修改 DNS 端口（只匹配 dns 段的两空格缩进 port:）
 modify_dns_port(){
-    # 获取 AdGuardHome DNS 端口
-    port_value=$(cat ${AGH_CONF} | sed -n '/port:/p' | grep "port" | awk 'NR==2{print $2}' | tr -d "[:space:]")
-    # 判断 AdGuardHome DNS 端口与设置的端口不一致则修改
-    # port_value 读不到时不要做数值比较，否则 [ 会直接报错
-    [ -z "${port_value}" ] && return 0
-
-    if ! [ "${AGH_DNS_PORT}" -eq "${port_value}" ]; then
+    port_value=$(get_dns_port)
+    [ -z "${port_value}" ] && {
+        log "e" "读取 ${AGH_BIN} DNS 端口失败，跳过端口修改"
+        return 0
+    }
+    if [ "${AGH_DNS_PORT}" != "${port_value}" ]; then
         log "i" "修改 AdGuardHome DNS 端口 ${port_value} 为 ${AGH_DNS_PORT}"
-        cat ${AGH_CONF} | sed -i "s/port: ${port_value}/port: ${AGH_DNS_PORT}/g" ${AGH_CONF}
+        sed "s|^  port: .*|  port: ${AGH_DNS_PORT}|" "${AGH_CONF}" > "${AGH_TMP}" && commit_conf
     fi
 }
 
-# 获取结束行数
-get_end_line(){
-    line=${1}
-    # 获取当前行数的内容
-    item=$(echo "${content}" | sed -n "${line}p" | grep "-")
-    # 判断当前内容是否还在项内
-    if [ "${item}" ]; then
-        # 自增，并重新调用当前函数
-        let "line++"
-        get_end_line ${line}
+# 修改 dns.bind_hosts
+# LAN_ACCESS=true 时 AGH DNS 对局域网开放；Mihomo 的代理/控制端不在此开放(见 update/mihomo.sh)
+modify_dns_bind(){
+    if [ "${LAN_ACCESS}" = "true" ]; then
+        bind_value="0.0.0.0"
     else
-        # 自减，并返回行数
-        let "line--"
-        echo ${line}
-        return 0
+        bind_value="127.0.0.1"
     fi
+
+    if grep -q "^  bind_hosts:" "${AGH_CONF}" 2>/dev/null; then
+        awk -v addr="${bind_value}" '
+            /^  bind_hosts:/ { print "  bind_hosts:"; print "    - " addr; skip = 1; next }
+            skip && /^    - / { next }
+            skip { skip = 0 }
+            { print }
+        ' "${AGH_CONF}" > "${AGH_TMP}"
+    else
+        awk -v addr="${bind_value}" '
+            { print }
+            /^dns:$/ { print "  bind_hosts:"; print "    - " addr }
+        ' "${AGH_CONF}" > "${AGH_TMP}"
+    fi
+    commit_conf
 }
 
 # 修改 WebUI 监听地址
@@ -85,7 +145,7 @@ modify_web_addr(){
     current_addr=$(grep -m1 "^  address:" "${AGH_CONF}" 2>/dev/null | awk '{print $2}')
     if [ -n "${current_addr}" ] && [ "${current_addr}" != "${web_addr}" ]; then
         log "i" "修改 ${AGH_BIN} WebUI 监听 ${current_addr} 为 ${web_addr}"
-        sed -i "s|^  address: .*|  address: ${web_addr}|" "${AGH_CONF}"
+        sed "s|^  address: .*|  address: ${web_addr}|" "${AGH_CONF}" > "${AGH_TMP}" && commit_conf
     fi
 }
 
@@ -98,26 +158,34 @@ modify_web_addr(){
 #       延迟优化应从 SmartDNS 侧做(rr-ttl / response-mode / speed-check-mode)，
 #       而不是在这里加一层缓存。
 modify_cache(){
-    grep -q "^  cache_enabled:" "${AGH_CONF}" 2>/dev/null || return 0
+    # 新版 AGH 可能省略 cache_enabled，缺省值会重新打开缓存，必须补上 false
+    if ! grep -q "^  cache_enabled:" "${AGH_CONF}" 2>/dev/null; then
+        awk '{ print } /^dns:$/ { print "  cache_enabled: false" }' "${AGH_CONF}" > "${AGH_TMP}" && \
+            commit_conf || return 1
+    fi
 
     if ! grep -q "^  cache_enabled: false" "${AGH_CONF}" 2>/dev/null; then
         log "i" "关闭 ${AGH_BIN} DNS 缓存(缓存由上游 ${SMARTDNS_BIN} 负责)"
-        sed -i "s|^  cache_enabled: .*|  cache_enabled: false|" "${AGH_CONF}"
+        sed "s|^  cache_enabled: .*|  cache_enabled: false|" "${AGH_CONF}" > "${AGH_TMP}" && commit_conf || return 1
     fi
 
     cache_size=$(grep -m1 "^  cache_size:" "${AGH_CONF}" 2>/dev/null | awk '{print $2}')
     if [ -n "${cache_size}" ] && [ "${cache_size}" != "0" ]; then
         log "i" "重置 ${AGH_BIN} 缓存大小为 0"
-        sed -i "s|^  cache_size: .*|  cache_size: 0|" "${AGH_CONF}"
+        sed "s|^  cache_size: .*|  cache_size: 0|" "${AGH_CONF}" > "${AGH_TMP}" && commit_conf || return 1
     fi
 
     if ! grep -q "^  cache_optimistic: false" "${AGH_CONF}" 2>/dev/null; then
         log "i" "关闭 ${AGH_BIN} 乐观缓存"
-        sed -i "s|^  cache_optimistic: .*|  cache_optimistic: false|" "${AGH_CONF}"
+        sed "s|^  cache_optimistic: .*|  cache_optimistic: false|" "${AGH_CONF}" > "${AGH_TMP}" && commit_conf || return 1
     fi
 }
 
-modify_conf
-modify_dns_port
-modify_web_addr
-modify_cache
+agh_failed=0
+modify_conf || agh_failed=1
+modify_dns_port || agh_failed=1
+modify_dns_bind || agh_failed=1
+modify_web_addr || agh_failed=1
+modify_cache || agh_failed=1
+rm -f "${AGH_TMP}"
+[ ${agh_failed} -eq 0 ] || exit 1

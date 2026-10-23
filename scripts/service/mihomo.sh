@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -21,13 +22,19 @@ start(){
     }
 
     # 更新 Mihomo 配置
-    ${UPDATE_PATH}/mihomo.sh
+    if ! ${UPDATE_PATH}/mihomo.sh; then
+        log "e" "${MIHOMO_BIN} 配置生成失败，取消启动"
+        return 1
+    fi
     # 更新代理名单
-    ${UPDATE_PATH}/proxy.sh
+    if ! ${UPDATE_PATH}/proxy.sh; then
+        log "e" "${MIHOMO_BIN} 代理名单生成失败，取消启动"
+        return 1
+    fi
 
     # 启动
     # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
-    detach_exec busybox setuidgid "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} > "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1
+    detach_exec busybox setuidgid "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} >> "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1
 
     # 轮询等待就绪(最多 5 秒)
     wait_ready=0
@@ -36,7 +43,11 @@ start(){
         wait_ready=$((wait_ready + 1))
     done
     if isRun ${MIHOMO_BIN}; then
-        log "i" "${MIHOMO_BIN} 启动成功"
+        if wait_port "${MIHOMO_DNS_PORT}"; then
+            log "i" "${MIHOMO_BIN} 启动成功"
+        else
+            log "e" "${MIHOMO_BIN} 进程已启动但 DNS 端口 ${MIHOMO_DNS_PORT} 未监听"
+        fi
         # 免被系统 LMKD 回收
         protect_process "$(isRun ${MIHOMO_BIN} "pid")"
         # 添加 TUN 规则

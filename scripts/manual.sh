@@ -57,6 +57,17 @@ has_busybox(){
     command -v busybox > /dev/null 2>&1
 }
 
+# 从 WebUI 调用时让子进程脱离调用会话，避免会话结束把监控一起收走
+detach_start(){
+    if command -v setsid > /dev/null 2>&1; then
+        setsid "$@" > /dev/null 2>&1 &
+    elif command -v nohup > /dev/null 2>&1; then
+        nohup "$@" > /dev/null 2>&1 &
+    else
+        "$@" > /dev/null 2>&1 &
+    fi
+}
+
 # 临时 root 环境下 PATH 可能不完整，尽量把 busybox 找回来
 ensure_busybox(){
     if ! has_busybox; then
@@ -173,10 +184,10 @@ start_monitor(){
     fi
 
     pgrep -f "${target_dir}/scripts/inotify/module.sh" > /dev/null 2>&1 || \
-        inotifyd "${target_dir}/scripts/inotify/module.sh" "${target_dir}" > /dev/null 2>&1 &
+        detach_start inotifyd "${target_dir}/scripts/inotify/module.sh" "${target_dir}"
     if mount | grep -q " ${SYSTEM_HOSTS} "; then
         pgrep -f "${target_dir}/scripts/inotify/host.sh" > /dev/null 2>&1 || \
-            inotifyd "${target_dir}/scripts/inotify/host.sh" "${target_dir}/etc/hosts" > /dev/null 2>&1 &
+            detach_start inotifyd "${target_dir}/scripts/inotify/host.sh" "${target_dir}/etc"
     fi
 
     ok "监控已启动"
@@ -207,12 +218,17 @@ resume_module(){
 
     sh "${ACTIVE_DIR}/scripts/update/desc.sh" > /dev/null 2>&1
 
-    # 软重启后系统的网络状态可能仍停留在"无网络"，
-    # 这里主动重新验证一次，避免服务起来了手机还是没网
-    if [ "$(cat "${ACTIVE_DIR}/tmp/service.state" 2>/dev/null)" != "stopped"* ]; then
-        say "刷新网络"
-        sh "${ACTIVE_DIR}/scripts/service.sh" refresh > /dev/null 2>&1
-    fi
+    # 软重启后系统的网络状态可能仍停留在"无网络"，主动重新验证一次；
+    # 但用户主动停止服务时不要擅自刷新网络(会开关飞行模式)
+    case "$(cat "${ACTIVE_DIR}/tmp/service.state" 2>/dev/null)" in
+        stopped*)
+            say "服务处于停止状态，跳过网络刷新"
+            ;;
+        *)
+            say "刷新网络"
+            sh "${ACTIVE_DIR}/scripts/service.sh" refresh > /dev/null 2>&1
+            ;;
+    esac
 
     show_status
 }
@@ -300,6 +316,24 @@ install_zip(){
     say "解压到 ${UPDATE_DIR}"
     unzip -o "${zip_file}" -x "META-INF/*" -d "${UPDATE_DIR}" > /dev/null 2>&1 || die "解压失败"
     [ -f "${UPDATE_DIR}/module.prop" ] || die "压缩包内缺少 module.prop，可能不是模块包"
+
+    # manual 安装不会经过 customize.sh 的升级迁移；
+    # 先备份并保留旧配置，否则激活时删除旧目录会把订阅/设置一起丢掉
+    if [ -d "${ACTIVE_DIR}" ]; then
+        [ -f "${ACTIVE_DIR}/scripts/backup.sh" ] && sh "${ACTIVE_DIR}/scripts/backup.sh" save > /dev/null 2>&1
+        for preserve_file in setting.conf etc/app_blacklist.prop etc/app_whitelist.prop etc/hosts etc/AdGuardHome/AdGuardHome.yaml; do
+            [ -f "${ACTIVE_DIR}/${preserve_file}" ] || continue
+            mkdir -p "$(dirname "${UPDATE_DIR}/${preserve_file}")" 2>/dev/null
+            cp -f "${ACTIVE_DIR}/${preserve_file}" "${UPDATE_DIR}/${preserve_file}" 2>/dev/null
+        done
+        for preserve_dir in etc/AdGuardHome/data etc/SmartDNS/data etc/mihomo/proxy_provider; do
+            [ -d "${ACTIVE_DIR}/${preserve_dir}" ] || continue
+            mkdir -p "${UPDATE_DIR}/${preserve_dir}" 2>/dev/null
+            cp -R -f "${ACTIVE_DIR}/${preserve_dir}/." "${UPDATE_DIR}/${preserve_dir}" 2>/dev/null
+        done
+        [ -f "${ACTIVE_DIR}/etc/mihomo/cache.db" ] && \
+            cp -f "${ACTIVE_DIR}/etc/mihomo/cache.db" "${UPDATE_DIR}/etc/mihomo/cache.db" 2>/dev/null
+    fi
 
     activate_module
 }

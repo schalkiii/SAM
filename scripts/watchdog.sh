@@ -63,6 +63,24 @@ rotate_log(){
     tail -n 200 "${LOG_FILE}" > "${LOG_FILE}.rot" 2>/dev/null && mv -f "${LOG_FILE}.rot" "${LOG_FILE}"
 }
 
+# 服务 stdout 是用 O_APPEND 打开的，不能 mv(进程仍写旧 inode)；
+# 先取尾部再原地截断重写，进程后续写入会继续追加到新内容之后
+rotate_append_log(){
+    rotate_target="${1}"
+    [ -f "${rotate_target}" ] || return 0
+    [ "$(wc -c < "${rotate_target}")" -ge ${LOG_MAX_SIZE} ] || return 0
+    tail -n 200 "${rotate_target}" > "${rotate_target}.rot" 2>/dev/null && \
+        cat "${rotate_target}.rot" > "${rotate_target}" 2>/dev/null
+    rm -f "${rotate_target}.rot"
+}
+
+rotate_all_logs(){
+    rotate_log
+    rotate_append_log "${TMP_PATH}/${AGH_BIN}.log"
+    rotate_append_log "${TMP_PATH}/${MIHOMO_BIN}.log"
+    rotate_append_log "${TMP_PATH}/${SMARTDNS_BIN}.out"
+}
+
 # 服务掉线则拉起(只处理已启用的服务)
 ensure_service(){
     if [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN}; then
@@ -72,6 +90,7 @@ ensure_service(){
             sd_backoff=${BACKOFF_ROUNDS}
             # 拉起来就算一次异常恢复
             recovered_abnormal=1
+            service_state_changed=1
         else
             sd_backoff=$((sd_backoff - 1))
         fi
@@ -85,6 +104,7 @@ ensure_service(){
             ${SERVICE_PATH}/agh.sh start
             agh_backoff=${BACKOFF_ROUNDS}
             recovered_abnormal=1
+            service_state_changed=1
         else
             agh_backoff=$((agh_backoff - 1))
         fi
@@ -92,13 +112,14 @@ ensure_service(){
         agh_backoff=0
     fi
 
-    # Mihomo 没有订阅时本身起不来，不反复重试刷日志
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && ! isRun ${MIHOMO_BIN}; then
+    # Mihomo 没有订阅时本身起不来，不反复重试刷日志；直通模式下停用
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ] && ! isRun ${MIHOMO_BIN}; then
         if [ ${mihomo_backoff} -le 0 ]; then
             log "i" "守护: ${MIHOMO_BIN} 未运行，重新启动"
             ${SERVICE_PATH}/mihomo.sh start
             mihomo_backoff=${BACKOFF_ROUNDS}
             recovered_abnormal=1
+            service_state_changed=1
         else
             mihomo_backoff=$((mihomo_backoff - 1))
         fi
@@ -111,13 +132,37 @@ ensure_service(){
 # 关键: 不能只判断链是否存在。服务换端口后(例如 AGH 被杀、回退到 SmartDNS)，
 #       旧链里的 REDIRECT 仍指向已经没有进程监听的端口，整机 DNS 进黑洞。
 ensure_dns_rules(){
-    # 一个 DNS 服务都没跑时重建没有意义，只会刷日志
-    any_dns_service || return 0
-
-    if ! ${IPTABLES_PATH}/dns.sh check > /dev/null 2>&1; then
-        log "i" "守护: DNS 重定向链缺失或端口不匹配，重新添加"
-        ${IPTABLES_PATH}/dns.sh enable
+    # 没有 DNS 服务在跑时不能保留劫持/阻断规则，否则 DNS 会指向死端口、
+    # IPv6 也会被无谓阻断。清理一次后由 no_dns_cleaned 去重，避免刷日志。
+    if ! any_dns_service; then
+        if [ "${no_dns_cleaned}" != "1" ]; then
+            log "e" "守护: 没有 DNS 服务在运行，移除重定向与 IPv6 阻断规则"
+            ${IPTABLES_PATH}/dns.sh disable
+            no_dns_cleaned=1
+        fi
+        return 0
     fi
+
+    ${IPTABLES_PATH}/dns.sh check > /dev/null 2>&1
+    dns_check_rc=$?
+    case ${dns_check_rc} in
+        0)
+            no_dns_cleaned=""
+            ;;
+        2)
+            # 有进程但端口没在监听: 旧规则可能还指向死端口，清理一次避免 DNS 黑洞
+            if [ "${no_dns_cleaned}" != "1" ]; then
+                log "e" "守护: 有 DNS 进程但端口未监听，移除重定向避免黑洞"
+                ${IPTABLES_PATH}/dns.sh enable
+                no_dns_cleaned=1
+            fi
+            ;;
+        *)
+            log "i" "守护: DNS 重定向链缺失或端口不匹配，重新添加"
+            ${IPTABLES_PATH}/dns.sh enable
+            no_dns_cleaned=""
+            ;;
+    esac
 
     if [ "${BLOCK_IPV6_DNS}" = "true" ]; then
         ${ip6tables_w} -t filter -C OUTPUT -j BLOCK_IPV6_DNS > /dev/null 2>&1 || {
@@ -140,6 +185,12 @@ ensure_tun_rules(){
 
 # 直通模式切换标记，避免每轮都重复撤销规则
 bypass_switched=""
+# 端口未监听时的清理标记，避免每轮重复清理刷日志
+no_dns_cleaned=""
+# 服务是否在本轮被拉起/切换模式，决定是否需要立即重建规则
+service_state_changed=1
+# 规则检查降频: 服务存活每 5 秒查，iptables/DNS 链每 10 秒查一次
+loop_count=0
 # 配置文件修改时间戳: 没变就不重复解析，减少每 5 秒一次的磁盘写入
 setting_file="/data/adb/modules/SAM/setting.conf"
 setting_stamp=""
@@ -147,7 +198,7 @@ setting_stamp=""
 log "i" "守护循环已启动(每 5 秒自检)"
 
 while true; do
-    rotate_log
+    loop_count=$((loop_count + 1))
 
     # 手动停止 / WiFi 黑名单触发的停止，都不自动拉起
     case "$(cat "${STATE_FILE}" 2>/dev/null)" in
@@ -156,6 +207,11 @@ while true; do
             continue
             ;;
     esac
+
+    # 日志轮转与 iptables 检查一起降频到 10 秒，减少空闲时的 fork 与磁盘写入
+    if [ $((loop_count % 2)) -eq 0 ]; then
+        rotate_all_logs
+    fi
 
     # 每轮检查设置是否变化，变了才重新解析(load_setting 会写临时文件，不宜每 5 秒跑一次)
     if has_cmd stat; then
@@ -168,12 +224,17 @@ while true; do
         setting_stamp="${new_stamp}"
     fi
 
-    # 直通模式: 撤销 DNS 劫持，但服务进程与 WebUI 保持运行
+    # 直通模式: 撤销 DNS 劫持，停掉 Mihomo，服务进程与 WebUI 保持运行
     if [ "${BYPASS_ENABLE}" = "true" ]; then
         if [ "${bypass_switched}" != "on" ]; then
-            log "i" "守护: 直通模式开启，撤销 DNS 劫持规则"
+            log "i" "守护: 直通模式开启，撤销 DNS 劫持并暂停 Mihomo"
             ${IPTABLES_PATH}/dns.sh disable
             bypass_switched="on"
+        fi
+        if isRun ${MIHOMO_BIN}; then
+            ${SERVICE_PATH}/mihomo.sh stop
+            ${IPTABLES_PATH}/mihomo.sh del
+            mihomo_backoff=0
         fi
         ensure_service
         sleep 5
@@ -184,11 +245,17 @@ while true; do
     if [ "${bypass_switched}" = "on" ]; then
         log "i" "守护: 直通模式关闭，恢复 DNS 劫持"
         bypass_switched=""
+        service_state_changed=1
     fi
 
     ensure_service
-    ensure_dns_rules
-    ensure_tun_rules
+
+    # 服务刚被拉起、模式刚切换时立即重建规则；其余情况每 10 秒检查一次
+    if [ ${service_state_changed} -eq 1 ] || [ $((loop_count % 2)) -eq 0 ]; then
+        ensure_dns_rules
+        ensure_tun_rules
+        service_state_changed=0
+    fi
 
     # 本轮发生过异常恢复: 重新验证一次网络
     # 场景: 服务被系统杀掉时，Android 已经把当前网络判成"无网络"，

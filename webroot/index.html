@@ -92,7 +92,7 @@
                 <div class="mount-item" data-id="1">
                     <div class="mount-info">
                         <h4>广告拦截 | GitHub加速 | 小米ROM下载加速</h4>
-                        <div class="mount-desc">源路径: /data/adb/modules/SAM/etc/system/etc/hosts </br> 目标路径: /system/etc/hosts</div>
+                        <div class="mount-desc">源路径: /data/adb/modules/SAM/etc/hosts </br> 目标路径: /system/etc/hosts</div>
                         <span id="host-mount-status" class="mount-status status-inactive">未挂载</span>
                     </div>
                     <div class="mount-actions">
@@ -181,7 +181,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>直通模式</h4>
-                        <div class="setting-desc">撤销 DNS 劫持，系统改用网络下发的 DNS。服务与 WebUI 保持运行，适合校园网、认证热点、企业内网</div>
+                        <div class="setting-desc">撤销 DNS 劫持，系统改用网络下发的 DNS。服务与 WebUI 保持运行，适合校园网、认证热点、企业内网。开启期间会暂停 Mihomo（TUN 仍会劫持 DNS），关闭后自动恢复</div>
                     </div>
                     <label class="switch">
                         <input type="checkbox" data-key="BYPASS_ENABLE">
@@ -276,7 +276,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>测速方式</h4>
-                        <div class="setting-desc">none / ping / tcp:443 / ping,tcp:80,tcp:443。移动网络下 ping 常被限速，默认只留 tcp:443</div>
+                        <div class="setting-desc">none / ping / tcp:443 / ping,tcp:80,tcp:443。默认 ping,tcp:80,tcp:443；移动网络下 ping 常被限速，可改为 tcp:443</div>
                     </div>
                     <input class="setting-input setting-input-wide" type="text" data-key="SMARTDNS_SPEED_CHECK">
                 </div>
@@ -284,7 +284,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>缓存 TTL 下限</h4>
-                        <div class="setting-desc">秒。上游 TTL 低于该值时按该值缓存。缓存由 SmartDNS 承担（AdGuardHome 不缓存），设太小会导致缓存形同虚设、每次都重新测速，默认 60</div>
+                        <div class="setting-desc">秒。上游 TTL 低于该值时按该值缓存。缓存由 SmartDNS 承担（AdGuardHome 不缓存），设太小会导致缓存形同虚设、每次都重新测速，默认 600</div>
                     </div>
                     <input class="setting-input" type="number" data-key="SMARTDNS_TTL_MIN">
                 </div>
@@ -302,7 +302,7 @@
                 <h3>其他</h3>
 
                 <div class="setting-row">
-                    <div class="setting-info"><h4>允许局域网访问</h4><div class="setting-desc">关闭时 AGH WebUI、Mihomo 控制台与各 DNS 只监听 127.0.0.1；开启后同一 WiFi 下的设备也能访问，请先把默认密码改掉</div></div>
+                    <div class="setting-info"><h4>允许局域网访问</h4><div class="setting-desc">关闭时所有管理面与 DNS 只监听 127.0.0.1；开启后 AdGuardHome 面板/DNS 与 SmartDNS DNS 对局域网开放（请先改默认密码）。Mihomo 控制台与代理端口始终只在本机，避免开放代理</div></div>
                     <label class="switch"><input type="checkbox" data-key="LAN_ACCESS"><span class="track"></span></label>
                 </div>
 
@@ -319,7 +319,7 @@
                     <label class="switch"><input type="checkbox" data-key="IP_IPTABLES"><span class="track"></span></label>
                 </div>
                 <div class="setting-row">
-                    <div class="setting-info"><h4>屏蔽 App 广告文件</h4><div class="setting-desc">把部分 App 的广告缓存目录改名保留并锁定(chattr +i)：屏蔽效果与清空相同，但数据不丢，随时可原样还原。App 启动异常时优先关掉这项</div></div>
+                    <div class="setting-info"><h4>屏蔽 App 广告文件</h4><div class="setting-desc">把部分 App 的广告缓存目录改名保留并锁定(chattr +i)：屏蔽效果与清空相同，但数据不丢，随时可原样还原。关闭后会立即恢复已屏蔽的文件；App 启动异常时先关闭此项</div></div>
                     <label class="switch"><input type="checkbox" data-key="AD_BLOCK_ENABLE"><span class="track"></span></label>
                 </div>
 
@@ -330,7 +330,7 @@
                     <pre id="ad-list-view" class="log-view" hidden>点击「查看影响范围」列出会被处理的 App 与路径</pre>
                 </div>
                 <div class="setting-row">
-                    <div class="setting-info"><h4>卸载时备份 Mihomo 配置</h4><div class="setting-desc">保存到 /sdcard/Mihomo配置.yaml</div></div>
+                    <div class="setting-info"><h4>卸载时备份 Mihomo 配置</h4><div class="setting-desc">保存到 /data/adb/SAM-backup/Mihomo配置.yaml（root-only）</div></div>
                     <label class="switch"><input type="checkbox" data-key="BACKUP_CONF"><span class="track"></span></label>
                 </div>
             </div>
@@ -411,7 +411,7 @@
                     <button class="tool-btn" data-script="backup.sh" data-args="list">备份列表</button>
                     <button class="tool-btn danger" data-script="backup.sh" data-args="restore" data-confirm="1">恢复最近备份</button>
                 </div>
-                <div class="setting-desc">备份内容: setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时，保留最近 5 份。</div>
+                <div class="setting-desc">备份内容: setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时，保存在 /data/adb/SAM-backup（root-only），保留最近 5 份。</div>
             </div>
 
             <div class="content-section">
@@ -421,7 +421,7 @@
                     <button class="tool-btn" data-script="ad.sh" data-args="recovery">恢复广告文件</button>
                     <button class="tool-btn" data-script="ad.sh" data-args="list">影响范围</button>
                     <button class="tool-btn" data-script="ad.sh" data-args="hold">备份占用</button>
-                    <button class="tool-btn" data-script="update/host.sh" data-args="update">更新 hosts</button>
+                    <button class="tool-btn" data-script="update/host.sh" data-args="update force">更新 hosts</button>
                 </div>
             </div>
 

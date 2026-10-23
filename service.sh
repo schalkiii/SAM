@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 模块路径
 MODULE_PATH="/data/adb/modules/SAM"
 # 脚本路径
@@ -56,7 +57,7 @@ if [ "${HOST_ENABLE}" = "true" ]; then
 
     # 监控 hosts 文件
     if has_cmd inotifyd; then
-        inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc/hosts" > /dev/null 2>&1 &
+        inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc" > /dev/null 2>&1 &
     fi
 fi
 

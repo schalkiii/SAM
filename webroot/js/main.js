@@ -45,7 +45,7 @@ function err(result) {
 function getServiceStatus(id, status) {
     const control = document.getElementById(id);
     if (!control) return;
-    control.innerHTML = status;
+    control.textContent = status;
     if ( status == "已运行" || status == "已挂载" ) {
         control.classList.remove('status-inactive');
         control.classList.add('status-active');
@@ -111,15 +111,15 @@ function updateHealthStatus(status) {
     const watchdog_status = document.getElementById("watchdog-status");
     if (watchdog_status) {
         const running = status.watchdog === "运行中";
-        watchdog_status.innerHTML = running ? "运行中" : "未运行";
+        watchdog_status.textContent = running ? "运行中" : "未运行";
         watchdog_status.classList.toggle("status-active", running);
         watchdog_status.classList.toggle("status-inactive", !running);
     }
 
     const dns_status = document.getElementById("dns-rule-status");
     if (dns_status) {
-        const ok = status.dns_rule === "正常";
-        dns_status.innerHTML = ok ? "正常" : "异常";
+        const ok = status.dns_rule === "正常" || status.dns_rule === "直通模式";
+        dns_status.textContent = ok ? status.dns_rule : "异常";
         dns_status.classList.toggle("status-active", ok);
         dns_status.classList.toggle("status-inactive", !ok);
     }
@@ -142,10 +142,10 @@ function updateMonitorStatus(value, status) {
             : " | 监听 hosts 文件，修改文件实时生效";
 
     if (pid_box) {
-        pid_box.innerHTML = "PID: " + (running ? pid : "null") + hint;
+        pid_box.textContent = "PID: " + (running ? pid : "null") + hint;
     }
 
-    monitor_status.innerHTML = running ? "已运行" : "未运行";
+    monitor_status.textContent = running ? "已运行" : "未运行";
     monitor_status.classList.toggle('status-active', running);
     monitor_status.classList.toggle('status-inactive', !running);
     monitor_action.classList.toggle('disable', running);
@@ -537,20 +537,25 @@ async function serviceControls(text, cmd) {
 }
 
 // 挂载控制
+// 挂载状态必须与 HOST_ENABLE 保持一致，否则下次启动服务会被设置重新挂回去
 async function mountControls(){
     const hostMountStatus = document.getElementById("host-mount-status");
     var host_mount_status = await runShell("webui.sh", "mount");
     if ( out(host_mount_status) == "已挂载" ) {
-        // 切换到禁用
-        hostMountStatus.classList.remove('status-active');
-        hostMountStatus.classList.add('status-inactive');
+        const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=false"]);
+        if (err(saved)) {
+            showToast("保存设置失败: " + err(saved), 6000);
+            return;
+        }
         await runCommand("umount /system/etc/hosts");
         showToast(`Host 未挂载`);
     } else {
-        // 切换到启用
-        hostMountStatus.classList.remove('status-inactive');
-        hostMountStatus.classList.add('status-active');
-        await runCommand(`mount ${module_path}/etc/hosts /system/etc/hosts`);
+        const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=true"]);
+        if (err(saved)) {
+            showToast("保存设置失败: " + err(saved), 6000);
+            return;
+        }
+        await runCommand(`mount -o bind ${module_path}/etc/hosts /system/etc/hosts`);
         showToast(`Host 已挂载`);
     }
     await updateServiceStatus();

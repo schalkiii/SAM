@@ -44,12 +44,13 @@ fi
 
 # 修改设置
 modify_setting(){
-    # 旧值
-    old_value=$(echo "${1}" | grep -v "示例" | grep ${3})
+    # 旧值(锚定 KEY=，避免新键是旧键子串时误匹配；示例行不参与迁移)
+    old_value=$(echo "${1}" | grep -v "示例" | grep "^${3}=")
     # 判断内容为空则返回
     [ -z "${old_value}" ] && return 0
-    # 替换行
-    line_number=$(echo "${2}" | sed "/示例:/c \#" | sed -n "/${3}/=")
+    # 新配置中找不到该键时必须放弃，否则 sed 的 c 命令会替换整个文件
+    line_number=$(echo "${2}" | sed "/示例:/c \#" | sed -n "/^${3}=/=" | sed -n "1p")
+    [ -z "${line_number}" ] && return 0
     # 替换
     out_content=$(echo "${2}" | sed "${line_number}c ${old_value}")
 }
@@ -92,10 +93,15 @@ if [ -e "${MODULE_PATH}/setting.conf" ]; then
     update_setting
     # 复制黑白名单和hosts文件
     find "${MODULE_PATH}/etc" -maxdepth 1 -type f -exec cp {} "${MODPATH}/etc" \;
+    # 保留用户在 AGH 面板里加的过滤器/重写/统计配置
+    if [ -f "${MODULE_PATH}/etc/AdGuardHome/AdGuardHome.yaml" ]; then
+        cp -f "${MODULE_PATH}/etc/AdGuardHome/AdGuardHome.yaml" "${MODPATH}/etc/AdGuardHome/AdGuardHome.yaml"
+    fi
     # 复制 SmartDNS 使用缓存
     cp -R -f "${MODULE_PATH}/etc/SmartDNS/data/." "${MODPATH}/etc/SmartDNS/data"
-    # 复制 AdGuardHome 使用缓存
-    find "${MODULE_PATH}/etc/AdGuardHome/data" -maxdepth 1 -type f -exec cp {} "${MODPATH}/etc/AdGuardHome/data" \;
+    # 复制 AdGuardHome 使用缓存与 data/filters 下的自定义过滤器
+    mkdir -p "${MODPATH}/etc/AdGuardHome/data"
+    cp -R -f "${MODULE_PATH}/etc/AdGuardHome/data/." "${MODPATH}/etc/AdGuardHome/data"
     # 复制 Mihomo 使用缓存
     cp -R -f "${MODULE_PATH}/etc/mihomo/proxy_provider/." "${MODPATH}/etc/mihomo/proxy_provider"
     cp -R -f "${MODULE_PATH}/etc/mihomo/rule_provider/." "${MODPATH}/etc/mihomo/rule_provider"    

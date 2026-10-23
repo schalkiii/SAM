@@ -58,6 +58,7 @@ need_refresh(){
 BOOL_KEYS="SMARTDNS_ENABLE AGH_ENABLE BLOCK_IPV6_DNS MIHOMO_ENABLE MIHOMO_IPV6 IP_IPTABLES HOST_ENABLE CRONTAB_ENABLE BACKUP_CONF ENABLE_WHITELIST BYPASS_ENABLE NETWORK_REFRESH AD_BLOCK_ENABLE LAN_ACCESS SMARTDNS_DUALSTACK"
 NUMBER_KEYS="AGH_DNS_PORT MIHOMO_DNS_PORT SMARTDNS_TTL_MIN"
 TEXT_KEYS="TUN_DEVICE EXCLUDE_NODE SMARTDNS_SPEED_CHECK"
+ENUM_KEYS="MODULE_DNS_MODE WHITELIST_MODE MIHOMO_DNS_MODE SMARTDNS_RESPONSE_MODE"
 ARRAY_KEYS="SUB_URL BLACKLIST_WIFI"
 
 # 枚举项的允许值
@@ -88,7 +89,7 @@ escape_value(){
 
 # 输出全部设置
 get_all(){
-    for key in ${BOOL_KEYS} ${NUMBER_KEYS} ${TEXT_KEYS} MODULE_DNS_MODE WHITELIST_MODE MIHOMO_DNS_MODE; do
+    for key in ${BOOL_KEYS} ${NUMBER_KEYS} ${TEXT_KEYS} ${ENUM_KEYS}; do
         eval "value=\${${key}}"
         printf '%s=%s\n' "${key}" "${value}"
     done
@@ -115,7 +116,8 @@ prepare_conf(){
         return 1
     fi
 
-    cp -f "${SETTING_CLEAN}" "${CONF_FILE}"
+    cp -f "${SETTING_CLEAN}" "${CONF_FILE}.prepare.$$" || return 1
+    mv -f "${CONF_FILE}.prepare.$$" "${CONF_FILE}"
 }
 
 # 替换单个键所在的行；键不存在则追加
@@ -170,9 +172,22 @@ set_scalar(){
             echo "取值非法: ${item_key} 必须在 1-65535 之间" >&2
             return 1
         fi
+        # 三个 DNS 端口不能冲突（SmartDNS 固定 3721）
+        if [ "${item_key}" = "AGH_DNS_PORT" ]; then
+            if [ "${item_value}" = "${MIHOMO_DNS_PORT}" ] || [ "${item_value}" = "3721" ]; then
+                echo "取值非法: AGH_DNS_PORT 与其它 DNS 端口冲突" >&2
+                return 1
+            fi
+        fi
+        if [ "${item_key}" = "MIHOMO_DNS_PORT" ]; then
+            if [ "${item_value}" = "${AGH_DNS_PORT}" ] || [ "${item_value}" = "3721" ]; then
+                echo "取值非法: MIHOMO_DNS_PORT 与其它 DNS 端口冲突" >&2
+                return 1
+            fi
+        fi
         replace_line "${item_key}" "${item_key}=${item_value}" || return 1
 
-    elif in_keys "${item_key}" MODULE_DNS_MODE WHITELIST_MODE MIHOMO_DNS_MODE SMARTDNS_RESPONSE_MODE; then
+    elif in_keys "${item_key}" ${ENUM_KEYS}; then
         allowed_values="$(enum_allowed "${item_key}")"
         allowed_ok=0
         for allowed_value in ${allowed_values}; do
@@ -186,6 +201,28 @@ set_scalar(){
 
     elif in_keys "${item_key}" ${TEXT_KEYS}; then
         # 单行文本，统一加引号
+        if [ "${item_key}" = "TUN_DEVICE" ]; then
+            case "${item_value}" in
+                ''|*[!A-Za-z0-9_]*)
+                    echo "取值非法: TUN_DEVICE 只能包含字母、数字和下划线" >&2
+                    return 1
+                    ;;
+            esac
+        fi
+        if [ "${item_key}" = "EXCLUDE_NODE" ]; then
+            case "${item_value}" in
+                *\"*|*\\*)
+                    echo "取值非法: EXCLUDE_NODE 不能包含双引号或反斜杠" >&2
+                    return 1
+                    ;;
+            esac
+        fi
+        if [ "${item_key}" = "SMARTDNS_SPEED_CHECK" ]; then
+            if ! setting_speed_check_valid "${item_value}"; then
+                echo "取值非法: SMARTDNS_SPEED_CHECK 只允许 none 或 ping/tcp:端口 组合" >&2
+                return 1
+            fi
+        fi
         escaped_value="$(escape_value "${item_value}")"
         replace_line "${item_key}" "${item_key}=\"${escaped_value}\"" || return 1
 
@@ -210,6 +247,15 @@ set_array(){
     array_line="${item_key}=("
     array_first=1
     for array_item in "$@"; do
+        # 订阅地址最终会进入 Mihomo 的 YAML 双引号字符串，必须提前拒绝会破坏 YAML 的字符
+        if [ "${item_key}" = "SUB_URL" ]; then
+            case "${array_item}" in
+                *\"*|*\\*)
+                    echo "取值非法: 订阅地址不能包含双引号或反斜杠" >&2
+                    return 1
+                    ;;
+            esac
+        fi
         escaped_item="$(escape_value "${array_item}")"
         if [ ${array_first} -eq 1 ]; then
             array_line="${array_line}\"${escaped_item}\""
@@ -228,10 +274,17 @@ apply_settings(){
     # 服务处于「停止」状态时不要擅自拉起(含 WiFi 黑名单触发的停止)
     case "$(cat "${TMP_PATH}/service.state" 2>/dev/null)" in
         stopped*)
+            rm -f "${CHANGED_FILE}"
             echo "配置已保存；服务当前处于停止状态，未自动启动"
             return 0
             ;;
     esac
+
+    # 本次没有任何实际变更时不要重启服务，避免每次保存都中断一次 DNS
+    if [ ! -s "${CHANGED_FILE}" ]; then
+        echo "配置未变化，无需重启服务"
+        return 0
+    fi
 
     # 必须在 restart 之前判断: 重启过程中会清理 tmp 目录
     refresh_needed=0
@@ -274,6 +327,11 @@ case "${1}" in
             [ -z "${pair}" ] && continue
             pair_key="${pair%%=*}"
             pair_value="${pair#*=}"
+            # 值没变就不重写文件，也不计入待应用列表
+            if in_keys "${pair_key}" ${BOOL_KEYS} ${NUMBER_KEYS} ${TEXT_KEYS} ${ENUM_KEYS}; then
+                eval "old_value=\${${pair_key}}"
+                [ "${old_value}" = "${pair_value}" ] && continue
+            fi
             if set_scalar "${pair_key}" "${pair_value}"; then
                 echo "${pair_key}" >> "${CHANGED_FILE}"
             else
@@ -286,9 +344,32 @@ case "${1}" in
     setarr)
         array_key="${2}"
         [ -z "${array_key}" ] && { echo "用法: setting_api.sh setarr KEY [值...]" >&2; exit 1; }
+        in_keys "${array_key}" ${ARRAY_KEYS} || {
+            echo "不支持的数组项: ${array_key}" >&2
+            exit 1
+        }
         shift 2
         acquire_lock
         prepare_conf || { release_lock; exit 1; }
+
+        # 与当前值一致时跳过写入，避免无谓的配置重写与 mtime 抖动
+        eval "array_count=\${#${array_key}[@]}"
+        array_same=1
+        [ "${array_count}" -eq "$#" ] || array_same=0
+        if [ ${array_same} -eq 1 ]; then
+            array_index=0
+            for array_item in "$@"; do
+                eval "array_old=\${${array_key}[${array_index}]}"
+                [ "${array_old}" = "${array_item}" ] || array_same=0
+                array_index=$((array_index + 1))
+            done
+        fi
+        if [ ${array_same} -eq 1 ]; then
+            release_lock
+            echo "已保存"
+            exit 0
+        fi
+
         if set_array "${array_key}" "$@"; then
             echo "${array_key}" >> "${CHANGED_FILE}"
             release_lock

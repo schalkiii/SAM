@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -16,7 +17,7 @@ detect_abnormal(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && abnormal=1
     [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && abnormal=1
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ]; then
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
         ! isRun ${MIHOMO_BIN} && abnormal=1
     fi
 
@@ -30,7 +31,14 @@ start(){
 
     # 启动 SmartDNS
     ${SERVICE_PATH}/sd.sh start
-    if [ "${MODULE_DNS_MODE}" = "2" ]; then
+    if [ "${BYPASS_ENABLE}" = "true" ]; then
+        # 直通模式的目的是让系统使用网络下发的 DNS；
+        # Mihomo 的 TUN(auto-route + dns-hijack) 会在路由层继续劫持 DNS，必须停掉。
+        # 只保留 SmartDNS/AdGuardHome 供 WebUI 查看与订阅更新。
+        ${SERVICE_PATH}/mihomo.sh stop
+        ${IPTABLES_PATH}/mihomo.sh del
+        ${SERVICE_PATH}/agh.sh start
+    elif [ "${MODULE_DNS_MODE}" = "2" ]; then
         # 启动 AdGuardHome
         ${SERVICE_PATH}/agh.sh start
         # 启动 Mihomo
@@ -69,6 +77,9 @@ start(){
     # 放后台执行，避免点"启动服务"要等几十秒才返回(离线时 curl 各自要等 10 秒超时)
     if [ "${AD_BLOCK_ENABLE}" = "true" ]; then
         detach_exec "${SCRIPTS_PATH}/ad.sh" block > /dev/null 2>&1
+    elif [ -s "${AD_HOLD_LIST}" ]; then
+        # 关闭开关必须真正解除屏蔽，否则"App 异常时关掉此项"的提示就是无效的
+        detach_exec "${SCRIPTS_PATH}/ad.sh" recovery > /dev/null 2>&1
     fi
     if [ "${HOST_ENABLE}" = "true" ]; then
         # 只更新文件不挂载是不会生效的，这里补上挂载动作
@@ -89,7 +100,7 @@ start(){
         fi
         if mount | grep -q " /system/etc/hosts "; then
             if ! pgrep -f "${INOTIFY_PATH}/host.sh" > /dev/null 2>&1; then
-                detach_exec inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc/hosts" > /dev/null 2>&1
+                detach_exec inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc" > /dev/null 2>&1
             fi
         fi
     fi
@@ -135,18 +146,19 @@ stop(){
             ;;
     esac
 
+    # 先撤销规则再停服务：反过来的话，服务已停、规则还在，DNS 会短暂进黑洞
+    # 删除 DNS 规则
+    ${IPTABLES_PATH}/dns.sh disable
+    # 删除 TUN 规则
+    ${IPTABLES_PATH}/mihomo.sh del
+    # 删除屏蔽 IP 规则(即使当前设置为 false 也要清理历史遗留规则)
+    ${IPTABLES_PATH}/ip.sh disable
     # 停止 SmartDNS
     ${SERVICE_PATH}/sd.sh stop
     # 停止 AdGuardHome
     ${SERVICE_PATH}/agh.sh stop
     # 停止 Mihomo
     ${SERVICE_PATH}/mihomo.sh stop
-    # 删除 DNS 规则
-    ${IPTABLES_PATH}/dns.sh disable
-    # 删除 TUN 规则
-    ${IPTABLES_PATH}/mihomo.sh del
-    # 删除屏蔽 IP 规则
-    [ "${IP_IPTABLES}" = "true" ] && ${IPTABLES_PATH}/ip.sh disable
     # 停止 crontabs
     ${SERVICE_PATH}/crontabs.sh stop
     # 更新描述

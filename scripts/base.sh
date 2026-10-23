@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 模块路径
 MODULE_PATH="/data/adb/modules/SAM"
 
@@ -60,6 +61,20 @@ detach_exec(){
     else
         "$@" &
     fi
+}
+
+# 判断 hosts 是否已挂载到系统路径
+hosts_mounted(){
+    mount | grep -q " /system/etc/hosts "
+}
+
+# 把当前 hosts 文件重新挂到系统路径
+# mv 替换文件后 inode 会变，bind 挂载点仍指向旧 inode，必须 umount 后重挂
+remount_hosts(){
+    [ "${HOST_ENABLE}" = "true" ] || return 0
+    [ -f "${HOSTS_FILE}" ] || return 1
+    umount /system/etc/hosts 2>/dev/null
+    mount -o bind "${HOSTS_FILE}" /system/etc/hosts 2>/dev/null
 }
 
 # 保护进程不被系统 LMKD/OOM killer 回收
@@ -149,6 +164,48 @@ isRun(){
         [ "${2}" = "pid" ] && echo ${pid}
         return 0
     fi
+    return 1
+}
+
+# 取 SmartDNS 实际监听端口
+# 只认以 bind 开头的行，避免注释里出现 bind/冒号时解析出垃圾
+smartdns_port(){
+    sed -n 's/^bind .*:\([0-9][0-9]*\).*$/\1/p' "${SMARTDNS_CONF}" 2>/dev/null | head -n 1
+}
+
+# 判断端口是否有进程在监听
+# 进程活着不代表 DNS 端口可用(端口冲突/配置错误都会出现"进程在、端口死")，
+# 重定向规则必须指向真正在监听的端口。
+# 没有 ss/netstat 时按"在监听"处理，避免在精简系统上误删规则。
+is_port_listening(){
+    listen_port="${1}"
+    [ -n "${listen_port}" ] || return 1
+
+    if has_cmd ss; then
+        listen_out=$(ss -lnut 2>/dev/null) || return 0
+        echo "${listen_out}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        return 1
+    fi
+    if has_cmd netstat; then
+        listen_out=$(netstat -lnu 2>/dev/null) || listen_out=""
+        echo "${listen_out}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        listen_out=$(netstat -lnt 2>/dev/null) || listen_out=""
+        echo "${listen_out}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        return 1
+    fi
+    return 0
+}
+
+# 等待端口就绪(最多约 5 秒)，避免进程刚 fork 出来还没 bind 就被判定失败
+wait_port(){
+    wait_port_value="${1}"
+    wait_port_try=0
+    [ -n "${wait_port_value}" ] || return 1
+    while [ ${wait_port_try} -lt 10 ]; do
+        is_port_listening "${wait_port_value}" && return 0
+        sleep 0.5 2>/dev/null || sleep 1
+        wait_port_try=$((wait_port_try + 1))
+    done
     return 1
 }
 

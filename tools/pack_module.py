@@ -29,7 +29,14 @@ import zipfile
 # 需要按文本处理并强制 LF 的后缀
 TEXT_SUFFIXES = {
     ".sh", ".prop", ".conf", ".cfg", ".yaml", ".yml", ".md",
-    ".json", ".txt", ".html", ".htm", ".css", ".js", ".xml", ".ini",
+    ".json", ".txt", ".html", ".htm", ".css", ".js", ".xml", ".ini", ".py",
+}
+
+# 没有文本后缀但也必须保证 LF 的文件
+TEXT_NAMES = {
+    "etc/crontabs/root",
+    "META-INF/com/google/android/update-binary",
+    "META-INF/com/google/android/updater-script",
 }
 
 # 需要 0755 的路径前缀
@@ -78,6 +85,8 @@ def is_vendor(relative):
 def is_text_file(relative):
     if is_vendor(relative):
         return False
+    if relative in TEXT_NAMES:
+        return True
     suffix = os.path.splitext(relative)[1].lower()
     return suffix in TEXT_SUFFIXES
 
@@ -86,7 +95,7 @@ def normalize_bytes(raw):
     """去 BOM + CRLF 转 LF，返回规范化后的字节"""
     if raw.startswith(UTF8_BOM):
         raw = raw[len(UTF8_BOM):]
-    return raw.replace(b"\\r\\n", b"\\n").replace(b"\\r", b"\\n")
+    return raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
 def normalize_text(path, report):
@@ -122,12 +131,15 @@ def check_shell_syntax(path, relative, report):
         report.warn("未找到 shell，跳过语法检查: {}".format(relative))
         return None
 
+    # 通过 stdin 传脚本，避免 Windows 下把 D:\... 传给 MSYS 解释器时反斜杠被吃掉
     try:
-        completed = subprocess.run(
-            [interpreter, "-n", path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        with open(path, "rb") as handle:
+            completed = subprocess.run(
+                [interpreter, "-n"],
+                stdin=handle,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
     except OSError as error:
         report.warn("无法执行 {} 检查 {}: {}".format(interpreter, relative, error))
         return interpreter
@@ -140,6 +152,8 @@ def check_shell_syntax(path, relative, report):
 
 
 def file_mode(relative):
+    if relative == "META-INF/com/google/android/update-binary":
+        return 0o755
     if relative.endswith(".sh") or relative.startswith(EXEC_PREFIXES):
         return 0o755
     return 0o644
@@ -225,6 +239,8 @@ def main():
                 raw = handle.read()
             if normalize_bytes(raw) != raw:
                 changed.append(relative)
+            # --check --no-write 时也必须发现 CRLF，否则 CI 会放过坏文件
+            check_eol(absolute, relative, report)
         else:
             if normalize_text(absolute, report):
                 changed.append(relative)

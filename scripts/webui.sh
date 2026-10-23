@@ -1,3 +1,4 @@
+#!/system/bin/sh
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
@@ -8,7 +9,7 @@ get_service_number(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && number=$((number + 1))
     [ "${AGH_ENABLE}" = "true" ] && number=$((number + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ]; then
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
         number=$((number + 1))
     fi
 
@@ -22,7 +23,7 @@ get_process_number(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && isRun ${SMARTDNS_BIN} && number=$((number + 1))
     [ "${AGH_ENABLE}" = "true" ] && isRun ${AGH_BIN} && number=$((number + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ]; then
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
         isRun ${MIHOMO_BIN} && number=$((number + 1))
     fi
 
@@ -31,8 +32,7 @@ get_process_number(){
 
 # 获取挂载状态
 get_mount_status(){
-    status=$(mount | grep "/system/etc/hosts")
-    [ "${status}" ] && echo "已挂载" || echo "未挂载"
+    hosts_mounted && echo "已挂载" || echo "未挂载"
 }
 
 # 获取监控
@@ -62,29 +62,32 @@ get_monitor_pid(){
 
 # 杀死监控
 kill_monitor(){
-    pid=$(get_monitor_pid "${1}")
+    pid_list=$(get_monitor_pid "${1}")
     # 没在运行就直接返回，避免 kill 空参数报错
-    [ -z "${pid}" ] && return 0
-    kill ${pid} 2>/dev/null || kill -9 ${pid} 2>/dev/null
+    [ -z "${pid_list}" ] && return 0
+    for pid in ${pid_list}; do
+        kill ${pid} 2>/dev/null || kill -9 ${pid} 2>/dev/null
+    done
     # 更新描述
     ${UPDATE_PATH}/desc.sh
 }
 
 # 启动监控
+# 必须 detach: 从 WebUI 调用时进程挂在调用会话上，会话结束会被一起回收
 start_monitor(){
     pid=$(get_monitor_pid "${1}")
 
     if [ "${1}" = "wifi" ] && [ -z "${pid}" ]; then
-        ${SCRIPTS_PATH}/wifi.monitor.sh > /dev/null 2>&1 &
+        detach_exec "${SCRIPTS_PATH}/wifi.monitor.sh" > /dev/null 2>&1
     elif [ "${1}" = "host" ] && [ -z "${pid}" ]; then
         if has_cmd inotifyd; then
-            inotifyd "${INOTIFY_PATH}/host.sh" "${HOSTS_FILE}" > /dev/null 2>&1 &
+            detach_exec inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc" > /dev/null 2>&1
         else
             log "e" "缺少 inotifyd，无法启动 hosts 监控"
         fi
     elif [ -z "${pid}" ]; then
         if has_cmd inotifyd; then
-            inotifyd "${INOTIFY_PATH}/module.sh" "${MODULE_PATH}" > /dev/null 2>&1 &
+            detach_exec inotifyd "${INOTIFY_PATH}/module.sh" "${MODULE_PATH}" > /dev/null 2>&1
         else
             log "e" "缺少 inotifyd，无法启动模块监控"
         fi
@@ -141,7 +144,7 @@ get_process_number_from(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && [ "${1}" = "已运行" ] && number=$((number + 1))
     [ "${AGH_ENABLE}" = "true" ] && [ "${2}" = "已运行" ] && number=$((number + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ]; then
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
         [ "${3}" = "已运行" ] && number=$((number + 1))
     fi
 
@@ -152,33 +155,40 @@ get_process_number_from(){
 # 不复用 dns.sh check: 那个子命令会重新 source 一遍 base.sh 并写临时文件，
 # WebUI 每次刷新都调它，开销与整轮 allstatus 相当。这里直接查 iptables。
 check_dns_rule(){
+    # 直通模式本来就不该有重定向规则，不能显示成"异常"
+    [ "${BYPASS_ENABLE}" = "true" ] && {
+        echo "直通模式"
+        return 0
+    }
+
     # 端口选择顺序必须与 iptables/dns.sh 的 select_dns_port 保持一致，
     # 否则会出现"规则其实正常但显示异常"的误报。
     if [ "${MODULE_DNS_MODE}" = "2" ]; then
         # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
-        isRun ${MIHOMO_BIN} && check_port=${MIHOMO_DNS_PORT}
-        if [ -z "${check_port}" ] && isRun ${AGH_BIN}; then
+        isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && check_port=${MIHOMO_DNS_PORT}
+        if [ -z "${check_port}" ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
             check_port=${AGH_DNS_PORT}
         fi
     else
         # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
-        isRun ${AGH_BIN} && check_port=${AGH_DNS_PORT}
-        if [ -z "${check_port}" ] && isRun ${MIHOMO_BIN}; then
+        isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && check_port=${AGH_DNS_PORT}
+        if [ -z "${check_port}" ] && isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}"; then
             check_port=${MIHOMO_DNS_PORT}
         fi
     fi
-    if [ -z "${check_port}" ] && isRun ${SMARTDNS_BIN}; then
-        check_port=$(cat "${SMARTDNS_CONF}" 2>/dev/null | grep "bind" | sed -n "s/bind.*:\(.*\)/\1/p")
+    if [ -z "${check_port}" ] && isRun ${SMARTDNS_BIN} && is_port_listening "$(smartdns_port)"; then
+        check_port=$(smartdns_port)
     fi
 
     # 没有服务在跑时谈不上规则是否正确
     [ -z "${check_port}" ] && {
-        echo "无服务"
+        echo "端口未监听"
         return 0
     }
 
     if ${iptables_w} -t nat -L REDIRECT_DNS > /dev/null 2>&1 && \
-       ${iptables_w} -t nat -C REDIRECT_DNS -p udp --dport 53 -j REDIRECT --to-ports ${check_port} > /dev/null 2>&1; then
+       ${iptables_w} -t nat -C REDIRECT_DNS -p udp --dport 53 -j REDIRECT --to-ports ${check_port} > /dev/null 2>&1 && \
+       ${iptables_w} -t nat -C REDIRECT_DNS -p tcp --dport 53 -j REDIRECT --to-ports ${check_port} > /dev/null 2>&1; then
         echo "正常"
     else
         echo "异常"
