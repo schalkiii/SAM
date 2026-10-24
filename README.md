@@ -50,6 +50,17 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml
 
+## WiFi 慢 / 5G 正常
+
+如果只在某个 WiFi 下慢，按顺序隔离：
+
+1. 打开「直通模式」测速。仍慢：关闭 Hosts 挂载并停止服务再测；仍慢基本不是模块，查 WiFi/路由器。
+2. 直通正常：只停 Mihomo 再测。变快 → TUN/代理；仍慢 → DNS/IPv6。
+3. DNS 方向逐项试：关闭「阻断 IPv6 DNS」、关闭「双栈 IP 优选」、测速方式改 `tcp:443`。
+4. 下载/大流量慢再试 TUN MTU（1500/1400）；高带宽 WiFi 下 gvisor 可能 CPU 打满，测速时看 mihomo 的 CPU。
+
+常见原因：IPv6 DNS 被 DROP 等超时、SmartDNS 的 ping/双栈冷查询、gvisor 用户态 TUN 的 CPU 上限、WiFi 限制公共 DNS 或代理路由。hosts 只影响 GitHub/FCM 等特定域名。
+
 ## ⚠️无网络
 - 检查手机网络，开关飞行模式
 - 排查 Mihomo 和 AdGuardHome 的拦截日志，手动添加规则放行

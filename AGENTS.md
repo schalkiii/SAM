@@ -41,6 +41,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载
 - 广告屏蔽为可逆设计（改名保留而非删除），设计与踩坑记录见 `docs/ad-block-hold-design.md`
 - 模块描述由 `desc.sh` 动态更新；待激活包单独标记。管理器缓存旧列表时，返回/刷新模块页即可
+- WiFi 慢/5G 正常的隔离排查步骤见 README「WiFi 慢 / 5G 正常」；常见原因是 IPv6 DNS DROP、SmartDNS 冷查询、gvisor CPU 与 TUN MTU
 - 直通模式必须同时停 Mihomo，否则 TUN 的 `dns-hijack` 仍会接管 DNS
 - `LAN_ACCESS=true` 只开放 AGH 面板/DNS 与 SmartDNS DNS；Mihomo 控制台、mixed-port、内部 DNS 始终回环
 - 已知取舍：未做代码与数据分离（配置仍随模块目录，卸载靠备份找回；广告备份清单例外，刻意放在模块目录外）；
