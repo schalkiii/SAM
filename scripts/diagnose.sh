@@ -7,7 +7,7 @@
 #
 # 用法(设备上, root):
 #   sh /data/adb/modules/SAM/scripts/diagnose.sh
-#   sh /data/adb/modules/SAM/scripts/diagnose.sh --watch 15   # 采样 15 秒看 v6 DROP 增量
+#   sh /data/adb/modules/SAM/scripts/diagnose.sh --watch 15   # 采样 15 秒看 v6 阻断增量
 #
 # WebUI 工具页「一键诊断」同样调用本脚本。
 
@@ -97,9 +97,13 @@ kv "tmp 占用" "$(du -sh "${TMP_PATH}" 2>/dev/null | awk '{print $1}')"
 echo ""
 echo "关键命令:"
 kv "  busybox" "$(have busybox)"
-if command -v busybox > /dev/null 2>&1; then
-    kv "  busybox setuidgid" "$(busybox setuidgid root:net_raw true > /dev/null 2>&1 && echo OK || echo 'FAIL <<< 三服务都无法拉起')"
+if command -v busybox > /dev/null 2>&1 && busybox setuidgid root:net_raw true > /dev/null 2>&1; then
+    kv "  busybox setuidgid" "OK"
     kv "  busybox 路径" "$(command -v busybox)"
+elif command -v setuidgid > /dev/null 2>&1 && setuidgid root:net_raw true > /dev/null 2>&1; then
+    kv "  busybox setuidgid" "busybox 不可用，独立 setuidgid 可用"
+else
+    kv "  busybox setuidgid" "FAIL <<< 三服务将以 root 降级启动(见 module.log)"
 fi
 kv "  setsid" "$(have setsid)"
 kv "  inotifyd" "$(have inotifyd)"
@@ -155,6 +159,9 @@ if [ -x "${MODULE_PATH}/bin/AdGuardHome" ]; then
     agh_check=$("${MODULE_PATH}/bin/AdGuardHome" --check-config -c "${AGH_CONF}" -w "${AGH_PATH}" 2>&1 | tail -5)
     echo "${agh_check}" | sed 's/^/  /'
     kv "  schema_version" "$(grep -m1 '^schema_version:' "${AGH_CONF}" 2>/dev/null | awk '{print $2}')"
+    if [ -s "${TMP_PATH}/agh.config.bad" ]; then
+        kv "  已暂停自动拉起" "$(cat "${TMP_PATH}/agh.config.bad.reason" 2>/dev/null || echo 未知)"
+    fi
     kv "  dns.port" "$(awk '/^dns:/{f=1} f&&/^  port:/{print $2; exit}' "${AGH_CONF}" 2>/dev/null)"
     echo "  upstream_dns:"
     awk '/^  upstream_dns:/{f=1;next} f&&/^    - /{print "    "$2} f&&!/^    - /{exit}' "${AGH_CONF}" 2>/dev/null | sed 's/^/  /'
@@ -195,8 +202,13 @@ iptables -w 100 -t nat -S REDIRECT_DNS 2>&1 | sed 's/^/  /'
 iptables -w 100 -t nat -S OUTPUT 2>/dev/null | grep -E "REDIRECT|BLOCK" | sed 's/^/  OUTPUT: /'
 
 echo ""
+echo "DNS 入口(规则期望端口 vs 当前监听):"
+sh "${MODULE_PATH}/scripts/iptables/dns.sh" check 2>&1 | sed 's/^/  /'
+
+echo ""
 echo "IPv6 filter (DNS 阻断，含计数):"
 ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>&1 | sed 's/^/  /'
+kv "  阻断方式" "$(cat "${TMP_PATH}/ipv6.block.mode" 2>/dev/null || echo 未记录)"
 
 echo ""
 echo "IPv6 nat 支持:"
@@ -240,6 +252,20 @@ else
 fi
 
 echo ""
+echo "私人 DNS(Private DNS):"
+if command -v settings > /dev/null 2>&1; then
+    private_dns_mode=$(settings get global private_dns_mode 2>/dev/null)
+    private_dns_host=$(settings get global private_dns_specifier 2>/dev/null)
+    echo "  mode: ${private_dns_mode:-未知}  host: ${private_dns_host:-无}"
+    case "${private_dns_mode}" in
+        off|null|"") ;;
+        *) echo "  >>> 已开启时会走 853 端口，不经过本模块的 53 重定向；计数不动时先检查这里" ;;
+    esac
+else
+    echo "  无 settings 命令"
+fi
+
+echo ""
 echo "IPv6 DNS 地址(系统配置):"
 if command -v dumpsys > /dev/null 2>&1; then
     dumpsys connectivity 2>/dev/null | grep -oE "DnsAddresses: \[[^]]*\]" | head -3 | grep -oE "[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{0,4}){2,}" | head -5 | sed 's/^/  /'
@@ -278,18 +304,22 @@ for k in SMARTDNS_RESPONSE_MODE SMARTDNS_SPEED_CHECK SMARTDNS_TTL_MIN SMARTDNS_D
     kv "  ${k}" "$(cfg "${k}")"
 done
 
-# ── 6. IPv6 DROP 增量采样 ───────────────────────────────
+# ── 6. IPv6 阻断增量采样 ───────────────────────────────
 if [ "${WATCH_SEC}" -gt 0 ]; then
-    sec "6. IPv6 DNS DROP 增量采样(${WATCH_SEC}s)"
-    before=$(ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>/dev/null | awk '/DROP/ && /udp/ {print $1; exit}')
+    sec "6. IPv6 DNS 阻断增量采样(${WATCH_SEC}s)"
+    count_v6_block(){
+        ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>/dev/null | \
+            awk '/udp/ && (/DROP/ || /REJECT/) {sum += $1} END {print sum + 0}'
+    }
+    before=$(count_v6_block)
     echo "  起始计数: ${before:-0}"
     sleep "${WATCH_SEC}"
-    after=$(ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>/dev/null | awk '/DROP/ && /udp/ {print $1; exit}')
+    after=$(count_v6_block)
     echo "  结束计数: ${after:-0}"
     delta=$(( ${after:-0} - ${before:-0} ))
-    echo "  增量: ${delta} 个 IPv6 DNS 包被静默丢弃"
-    echo "  >>> 增量 > 0 且网络是 WiFi 时，说明系统在向 IPv6 DNS 发查询并被本模块丢包，"
-    echo "      每个查询要等超时才回退 IPv4 —— 这是 WiFi 明显慢于 5G 的典型原因。"
+    echo "  增量: ${delta} 个 IPv6 DNS 包被阻断"
+    echo "  >>> 增量 > 0 且网络是 WiFi 时，说明系统在向 IPv6 DNS 发查询并被本模块拦截。"
+    echo "      REJECT 会立即回退 IPv4；若诊断上方显示阻断方式为 DROP，则仍可能等超时。"
 fi
 
 echo ""

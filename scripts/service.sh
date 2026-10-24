@@ -12,7 +12,8 @@ stop_reason="stopped"
 
 # 判断是否有"本该运行却已经消失"的服务
 # 用于识别: 服务不是被用户停的，而是被系统(LMKD/OOM/会话回收)杀掉的
-detect_abnormal(){
+# 返回 0 表示确实有服务缺失；返回 1 表示全部正常
+has_abnormal_service(){
     abnormal=0
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && abnormal=1
@@ -21,7 +22,7 @@ detect_abnormal(){
         ! isRun ${MIHOMO_BIN} && abnormal=1
     fi
 
-    return ${abnormal}
+    [ ${abnormal} -eq 1 ]
 }
 
 # 启动
@@ -89,7 +90,9 @@ start(){
         # 只更新文件不挂载是不会生效的，这里补上挂载动作
         # (在 WebUI 里把「Hosts 挂载」从关改到开时，走的就是这条路径)
         mount | grep -q " /system/etc/hosts " || mount -o bind "${MODULE_PATH}/etc/hosts" /system/etc/hosts
-        detach_exec "${UPDATE_PATH}/host.sh" update > /dev/null 2>&1
+        # 刚重启时系统网络/解析可能还没就绪，立即拉取会让所有源一起失败；
+        # 延后 10 秒再更新，旧 hosts 在更新完成前继续生效
+        detach_exec sh -c "sleep 10; sh '${UPDATE_PATH}/host.sh' update" > /dev/null 2>&1
     else
         # 关掉开关时要真正卸载，否则旧 hosts 会一直生效
         mount | grep -q " /system/etc/hosts " && umount /system/etc/hosts 2>/dev/null
@@ -124,12 +127,15 @@ start(){
     # 说明系统的网络状态可能已经被判成"无网络"，恢复后需要重新验证一次。
     # 只有所有启用服务都真正起来了才刷新；还有服务失败时刷新只会反复断开 WiFi。
     if [ -f "${ABNORMAL_FILE}" ]; then
-        rm -f "${ABNORMAL_FILE}"
-        if detect_abnormal; then
+        if has_abnormal_service; then
+            # 仍有服务没起来：保留标记，等下一次真正恢复后再刷新网络
             log "e" "服务未全部恢复，跳过网络刷新"
-        elif [ "${NETWORK_REFRESH}" = "true" ]; then
-            log "i" "检测到上次服务曾异常退出，刷新一次网络"
-            refresh_network
+        else
+            rm -f "${ABNORMAL_FILE}"
+            if [ "${NETWORK_REFRESH}" = "true" ]; then
+                log "i" "检测到上次服务曾异常退出，刷新一次网络"
+                refresh_network
+            fi
         fi
     fi
 }
@@ -149,7 +155,7 @@ stop(){
     # 形成"刷新 -> WiFi 断开 -> 启动/停止"的循环。
     case "${prev_state}" in
         running|"")
-            if [ "${stop_reason}" != "stopped-by-wifi" ] && detect_abnormal; then
+            if [ "${stop_reason}" != "stopped-by-wifi" ] && has_abnormal_service; then
                 echo "$(date '+%Y-%m-%d %H:%M:%S')" > "${ABNORMAL_FILE}"
                 log "i" "检测到有服务已异常退出(非手动停止)"
             fi

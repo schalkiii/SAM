@@ -63,6 +63,30 @@ detach_exec(){
     fi
 }
 
+# 以指定 用户:组 启动服务
+# 三个服务原先直接依赖 busybox setuidgid，临时 root 环境下 busybox 不在 PATH
+# 或缺少该 applet 时，SmartDNS/AGH/Mihomo 会一起启动失败。
+# 这里统一探测：不可用时降级为 root 启动，并在 module.log 明确记录风险。
+service_exec(){
+    service_user_group="${1}"
+    shift
+
+    if has_cmd busybox && busybox setuidgid "${service_user_group}" true > /dev/null 2>&1; then
+        detach_exec busybox setuidgid "${service_user_group}" "$@"
+        return $?
+    fi
+    if has_cmd setuidgid && setuidgid "${service_user_group}" true > /dev/null 2>&1; then
+        detach_exec setuidgid "${service_user_group}" "$@"
+        return $?
+    fi
+
+    if [ "${SERVICE_EXEC_FALLBACK_LOGGED}" != "1" ]; then
+        log "e" "没有可用的 setuidgid，服务降级为 root 启动；请安装 busybox 或检查 setuidgid"
+        SERVICE_EXEC_FALLBACK_LOGGED=1
+    fi
+    detach_exec "$@"
+}
+
 # 判断 hosts 是否已挂载到系统路径
 hosts_mounted(){
     mount | grep -q " /system/etc/hosts "

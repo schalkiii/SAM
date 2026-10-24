@@ -39,12 +39,13 @@ get_host(){
         source_content=$(curl -m 15 -s -f ${i} 2>/dev/null | grep -Ev "^#.*$|^[[:space:]]*$" | awk -F' ' '{print $1, $2}')
         # 有效内容: 至少有一行, 且不含 HTML 标签(代理/错误页的特征)
         if [ -z "${source_content}" ] || echo "${source_content}" | grep -qE "^<|^!DOCTYPE|^html"; then
-            log "e" "源不可用或内容无效: ${i}"
+            # 候选源失败是降级流程的一部分，不用 ERROR 污染"重启错误数"
+            log "i" "源不可用或内容无效，尝试下一个: ${i}"
             continue
         fi
         # 至少要有"IP 域名"行，避免代理返回 JSON/纯文本错误信息被写进 hosts
         if ! echo "${source_content}" | awk 'NF >= 2 && $1 ~ /^[0-9A-Fa-f:.]+$/ { ok = 1 } END { exit !ok }'; then
-            log "e" "源内容不是 hosts 格式: ${i}"
+            log "i" "源内容不是 hosts 格式，尝试下一个: ${i}"
             continue
         fi
         get_content="${source_content}"
@@ -123,13 +124,19 @@ case "$1" in
         fi
 
         log "i" "更新 host 规则"
-        update_ok=0
+        github_ok=0
+        fcm_ok=0
         # GitHub
-        get_host "GitHub" ${GITHUB_HOST_SOURCES} && update_ok=1
+        get_host "GitHub" ${GITHUB_HOST_SOURCES} && github_ok=1
         # FCM
-        get_host "FCM" ${FCM_HOST_SOURCES} && update_ok=1
-        # 至少成功一个才记录时间，失败时下次启动还会重试
-        [ ${update_ok} -eq 1 ] && touch "${host_stamp}" 2>/dev/null
+        get_host "FCM" ${FCM_HOST_SOURCES} && fcm_ok=1
+        # 只有两条规则都成功才记录时间；部分失败不能算完成，
+        # 否则失败的那条要等 24 小时才会重试。
+        if [ ${github_ok} -eq 1 ] && [ ${fcm_ok} -eq 1 ]; then
+            touch "${host_stamp}" 2>/dev/null
+        elif [ ${github_ok} -eq 1 ] || [ ${fcm_ok} -eq 1 ]; then
+            log "e" "host 规则部分更新失败，未记录更新时间，下次启动会重试"
+        fi
         ;;
     *)
         echo "使用: update [force](更新)"

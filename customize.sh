@@ -96,6 +96,14 @@ if [ -e "${MODULE_PATH}/setting.conf" ]; then
     # 保留用户在 AGH 面板里加的过滤器/重写/统计配置
     if [ -f "${MODULE_PATH}/etc/AdGuardHome/AdGuardHome.yaml" ]; then
         cp -f "${MODULE_PATH}/etc/AdGuardHome/AdGuardHome.yaml" "${MODPATH}/etc/AdGuardHome/AdGuardHome.yaml"
+        # 旧配置可能来自升级后的 AGH(schema 更高)；内置二进制回退时无法读取。
+        # 安装阶段先提示，启动失败后可在工具页用模板重置。
+        old_agh_schema=$(grep -m1 '^schema_version:' "${MODULE_PATH}/etc/AdGuardHome/AdGuardHome.yaml" 2>/dev/null | awk '{print $2}' | tr -d '\015')
+        new_agh_schema=$(grep -m1 '^schema_version:' "${MODPATH}/etc/AdGuardHome/AdGuardHome.template.yaml" 2>/dev/null | awk '{print $2}' | tr -d '\015')
+        if [ -n "${old_agh_schema}" ] && [ -n "${new_agh_schema}" ] && [ "${old_agh_schema}" -gt "${new_agh_schema}" ] 2>/dev/null; then
+            ui_print "提示: 旧 AGH 配置 schema ${old_agh_schema} 高于本包模板 ${new_agh_schema}"
+            ui_print "      若启动报 unknown current schema version，请用「工具 → 重置 AGH 配置」"
+        fi
     fi
     # 复制 SmartDNS 使用缓存
     cp -R -f "${MODULE_PATH}/etc/SmartDNS/data/." "${MODPATH}/etc/SmartDNS/data"

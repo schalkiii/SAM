@@ -119,6 +119,7 @@ body {
 
 .mount-info, .service-info, .monitor-info {
     flex: 1;
+    min-width: 0;
 }
 
 .mount-item h4, .service-item h4, .monitor-item h4 {
@@ -131,7 +132,7 @@ body {
     color: var(--text-secondary);
     margin-bottom: 8px;
     line-height: 1.4;
-    width: 70vw;
+    max-width: 100%;
 }
 
 /* 状态标签 */
@@ -305,8 +306,23 @@ body {
     background-color: #f39c12;
 }
 
-.uninstall-service {
-    background-color: #e74c3c;
+/* 操作说明: 解释按钮边界，避免把重启/恢复/刷新网络混为一谈 */
+.service-controls-hint {
+    padding: 0 15px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-tertiary);
+}
+
+.service-controls-hint.warning {
+    color: #f39c12;
+}
+
+.page-intro {
+    padding: 0 15px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-tertiary);
 }
 
 /* 服务状态样式 */
@@ -436,6 +452,10 @@ body {
 
 .setting-select {
     min-width: 110px;
+}
+
+.setting-select-wide {
+    min-width: 150px;
 }
 
 .setting-input {

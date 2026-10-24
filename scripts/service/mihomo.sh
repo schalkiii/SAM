@@ -34,7 +34,7 @@ start(){
 
     # 启动
     # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
-    detach_exec busybox setuidgid "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} >> "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1
+    service_exec "${SAM_USER}:${TUN_GROUP}" ${MIHOMO_BIN} -d ${MIHOMO_PATH} >> "${TMP_PATH}/${MIHOMO_BIN}.log" 2>&1
 
     # 轮询等待就绪(最多 5 秒)
     wait_ready=0

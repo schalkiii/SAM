@@ -80,7 +80,12 @@ async function updateServiceStatus() {
 
     getServiceStatus("smartdns-status", status.smartdns || "未运行");
     const aghConfigBad = status.agh_config === "bad";
-    getServiceStatus("agh-status", aghConfigBad ? "配置错误" : (status.agh || "未运行"));
+    const aghBadReason = String(status.agh_config_reason || "");
+    const aghBadText = aghBadReason === "schema" ? "配置版本不兼容"
+        : aghBadReason === "encoding" ? "配置编码错误"
+        : aghBadReason === "generate" ? "配置生成失败"
+        : "配置错误";
+    getServiceStatus("agh-status", aghConfigBad ? aghBadText : (status.agh || "未运行"));
     getServiceStatus("mihomo-status", status.mihomo || "未运行");
     getServiceStatus("host-mount-status", status.host || "未挂载");
 
@@ -99,6 +104,15 @@ async function updateServiceStatus() {
     if (pendingBadge) {
         pendingBadge.hidden = status.pending_update !== "yes";
     }
+    const pendingHint = document.getElementById("pending-update-hint");
+    if (pendingHint) {
+        pendingHint.hidden = status.pending_update !== "yes";
+    }
+    // 待激活包的恢复动作必须走 activate；按钮文案同步变化，避免用户以为仍在恢复旧版
+    const resumeBtn = document.querySelector('.resume-service');
+    if (resumeBtn) {
+        resumeBtn.textContent = status.pending_update === "yes" ? "激活并恢复新版" : "软重启后恢复";
+    }
 
     // 显示 module.prop 里实际写入的描述，用来区分"没写成"和"管理器缓存"
     const moduleDescStatus = document.getElementById("module-desc-status");
@@ -113,7 +127,16 @@ async function updateServiceStatus() {
     // AGH 配置校验状态
     const aghConfigStatus = document.getElementById("agh-config-status");
     if (aghConfigStatus) {
-        aghConfigStatus.textContent = aghConfigBad ? "校验失败(已暂停自动拉起)" : "正常";
+        let aghStatusText = "正常";
+        if (aghConfigBad) {
+            aghStatusText = aghBadReason === "schema" ? "schema 不兼容，请重置配置"
+                : aghBadReason === "encoding" ? "UTF-16 编码，请转存 UTF-8"
+                : aghBadReason === "generate" ? "配置生成失败"
+                : "校验失败(已暂停自动拉起)";
+        } else if (status.agh_schema) {
+            aghStatusText = "正常(schema " + status.agh_schema + ")";
+        }
+        aghConfigStatus.textContent = aghStatusText;
         aghConfigStatus.classList.toggle("status-active", !aghConfigBad);
         aghConfigStatus.classList.toggle("status-inactive", aghConfigBad);
     }
@@ -153,6 +176,16 @@ function updateHealthStatus(status) {
         dns_status.classList.toggle("status-active", ok);
         dns_status.classList.toggle("status-inactive", !ok);
     }
+
+    // 入口是独立状态：规则正常不代表查询一定经过入口（系统/应用缓存、私人 DNS 都会绕过）
+    const dns_entry = document.getElementById("dns-entry-status");
+    if (dns_entry) {
+        const entry = String(status.dns_entry || "").trim() || "未知";
+        const entryOk = entry !== "未监听" && entry !== "未知";
+        dns_entry.textContent = entry;
+        dns_entry.classList.toggle("status-active", entryOk);
+        dns_entry.classList.toggle("status-inactive", !entryOk);
+    }
 }
 
 // 更新监控状态(数据来自同一次 allstatus)
@@ -168,7 +201,7 @@ function updateMonitorStatus(value, status) {
     const hint = value == "module"
         ? " | 监听模块开关，模块启用则运行程序，模块禁用则停止程序"
         : value == "wifi"
-            ? " | 监听已连接 WIFI，在黑名单内则停止服务，反之启动"
+            ? " | 监听已连接 WiFi，在黑名单内则停止服务，反之启动"
             : " | 监听 hosts 文件，修改文件实时生效";
 
     if (pid_box) {
@@ -441,6 +474,7 @@ async function runToolButton(button) {
     const args = button.dataset.args || "";
     const originalText = button.textContent;
     const header = "执行: " + script + (args ? " " + args : "");
+    const isUninstall = script === "manual.sh" && args === "uninstall";
 
     button.disabled = true;
     button.textContent = "执行中...";
@@ -457,8 +491,13 @@ async function runToolButton(button) {
             view.textContent = header + newlineChar() + newlineChar() + (text || "(无输出)");
             view.scrollTop = 0;
         }
-        showToast(text ? "执行完成" : "执行完成(无输出)", 3000);
-        await updateServiceStatus();
+        // 卸载后模块目录已经被删除，不能再调用 webui.sh 刷新状态
+        if (isUninstall) {
+            showToast("已卸载，可关闭此页面", 6000);
+        } else {
+            showToast(text ? "执行完成" : "执行完成(无输出)", 3000);
+            await updateServiceStatus();
+        }
     } catch (error) {
         if (view) view.textContent = header + newlineChar() + "执行失败: " + error;
         showToast("执行失败", 5000);
@@ -620,10 +659,10 @@ async function monitorControls(text) {
         var pid_status = await runShell("webui.sh", `monitor ${text}`);
         if ( out(pid_status) == "已运行" ) {
             await runShell("webui.sh", `kill ${text}`);
-            showToast(text == "module" ? "模块未监控" : text == "wifi" ? "WIFI未监控" : "host未监控");
+            showToast(text == "module" ? "模块未监控" : text == "wifi" ? "WiFi未监控" : "host未监控");
         } else {
             await runShell("webui.sh", `start ${text}`);
-            showToast(text == "module" ? "模块已监控" : text == "wifi" ? "WIFI已监控" : "host已监控");
+            showToast(text == "module" ? "模块已监控" : text == "wifi" ? "WiFi已监控" : "host已监控");
         }
         await updateServiceStatus();
     } finally {
@@ -633,24 +672,26 @@ async function monitorControls(text) {
 
 // 软重启后恢复运行
 async function resumeModule() {
-    toast("正在恢复运行，请稍等......");
-    await runShell("manual.sh", "resume");
-    await updateServiceStatus();
-    showToast("恢复完成");
-}
-
-// 立即卸载
-// 不用 window.confirm: 部分 WebView 里 confirm 会被禁用或返回 false，
-// 表现为"点了没反应"。改为按钮二次确认(见绑定处)。
-async function uninstallModule() {
-    toast("正在卸载，请稍等......");
-    const result = await runShell("manual.sh", "uninstall");
-    const message = err(result);
-    if (message) {
-        showToast("卸载失败: " + message, 6000);
+    if (serviceActionBusy) {
+        showToast("服务操作进行中，请稍候", 2000);
         return;
     }
-    showToast("已卸载，可关闭此页面", 6000);
+    serviceActionBusy = true;
+    try {
+        const pending = lastStatus.pending_update === "yes";
+        toast(pending ? "正在激活并恢复，请稍等......" : "正在恢复运行，请稍等......");
+        // 统一走 resume；manual.sh 检测到待激活包时会先 activate
+        const result = await runShell("manual.sh", "resume");
+        await updateServiceStatus();
+        const message = err(result);
+        if (message) {
+            showToast((pending ? "激活恢复失败: " : "恢复失败: ") + message, 6000);
+            return;
+        }
+        showToast(pending ? "已激活并恢复" : "恢复完成");
+    } finally {
+        serviceActionBusy = false;
+    }
 }
 
 (async () => {
@@ -685,7 +726,7 @@ async function uninstallModule() {
     const startBtn = document.querySelector('.start-service');
     if (startBtn) {
         startBtn.addEventListener('click', () => {
-            serviceControls("启动","start");
+            serviceControls("启动全部服务","start");
         });
     }
 
@@ -693,7 +734,7 @@ async function uninstallModule() {
     const stopBtn = document.querySelector('.stop-service');
     if (stopBtn) {
         stopBtn.addEventListener('click', () => {
-            serviceControls("停止","stop");
+            serviceControls("停止全部服务","stop");
         });
     }
 
@@ -701,7 +742,7 @@ async function uninstallModule() {
     const restartBtn = document.querySelector('.restart-service');
     if (restartBtn) {
         restartBtn.addEventListener('click', () => {
-            serviceControls("重启","restart");
+            serviceControls("重启全部服务","restart");
         });
     }
 
@@ -710,31 +751,6 @@ async function uninstallModule() {
     if (resumeBtn) {
         resumeBtn.addEventListener('click', () => {
             resumeModule();
-        });
-    }
-
-    // 立即卸载: 二次确认，不依赖 window.confirm
-    const uninstallBtn = document.querySelector('.uninstall-service');
-    if (uninstallBtn) {
-        let uninstallArmed = false;
-        let uninstallTimer = null;
-
-        uninstallBtn.addEventListener('click', () => {
-            if (!uninstallArmed) {
-                uninstallArmed = true;
-                uninstallBtn.textContent = "再点一次确认卸载";
-                showToast("再次点击将立即删除模块目录", 4000);
-                uninstallTimer = setTimeout(() => {
-                    uninstallArmed = false;
-                    uninstallBtn.textContent = "立即卸载";
-                }, 4000);
-                return;
-            }
-
-            clearTimeout(uninstallTimer);
-            uninstallArmed = false;
-            uninstallBtn.textContent = "立即卸载";
-            uninstallModule();
         });
     }
 

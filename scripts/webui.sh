@@ -139,9 +139,12 @@ get_all_status(){
     fi
     if [ -s "${TMP_PATH}/agh.config.bad" ]; then
         echo "agh_config=bad"
+        agh_bad_reason=$(cat "${TMP_PATH}/agh.config.bad.reason" 2>/dev/null)
+        echo "agh_config_reason=${agh_bad_reason:-unknown}"
     else
         echo "agh_config=ok"
     fi
+    echo "agh_schema=$(grep -m1 '^schema_version:' "${AGH_CONF}" 2>/dev/null | awk '{print $2}')"
 
     # 守护循环与 DNS 规则状态: 服务异常退出后这两项最能说明问题
     if pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then
@@ -149,7 +152,9 @@ get_all_status(){
     else
         echo "watchdog=未运行"
     fi
+    resolve_dns_entry
     echo "dns_rule=$(check_dns_rule)"
+    echo "dns_entry=${dns_entry_label}"
 }
 
 # 用已取到的运行状态算进程数，避免再次 fork pidof
@@ -165,44 +170,66 @@ get_process_number_from(){
     echo ${number}
 }
 
+# 解析当前实际 DNS 入口
+# 顺序必须与 iptables/dns.sh 的 select_dns_port 保持一致，否则会出现
+# "规则其实正常但显示异常"的误报。入口只代表 53 端口被转发到哪里：
+# 下游命中 SmartDNS 缓存时，它的查询计数可能不变，这是正常现象。
+resolve_dns_entry(){
+    dns_check_port=""
+    dns_entry_label="未监听"
+
+    # 直通模式本来就不该有重定向规则，不能显示成"异常"
+    if [ "${BYPASS_ENABLE}" = "true" ]; then
+        dns_entry_label="直通模式"
+        return 0
+    fi
+
+    smartdns_dns_port=$(smartdns_port)
+
+    if [ "${MODULE_DNS_MODE}" = "2" ]; then
+        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
+        if [ "${mihomo_running}" = "已运行" ] && is_port_listening "${MIHOMO_DNS_PORT}"; then
+            dns_check_port="${MIHOMO_DNS_PORT}"
+            dns_entry_label="Mihomo:${MIHOMO_DNS_PORT}"
+        elif [ "${agh_running}" = "已运行" ] && is_port_listening "${AGH_DNS_PORT}"; then
+            dns_check_port="${AGH_DNS_PORT}"
+            dns_entry_label="AdGuardHome:${AGH_DNS_PORT}"
+        fi
+    else
+        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
+        if [ "${agh_running}" = "已运行" ] && is_port_listening "${AGH_DNS_PORT}"; then
+            dns_check_port="${AGH_DNS_PORT}"
+            dns_entry_label="AdGuardHome:${AGH_DNS_PORT}"
+        elif [ "${mihomo_running}" = "已运行" ] && is_port_listening "${MIHOMO_DNS_PORT}"; then
+            dns_check_port="${MIHOMO_DNS_PORT}"
+            dns_entry_label="Mihomo:${MIHOMO_DNS_PORT}"
+        fi
+    fi
+
+    if [ -z "${dns_check_port}" ] && [ "${smartdns_running}" = "已运行" ] && is_port_listening "${smartdns_dns_port}"; then
+        dns_check_port="${smartdns_dns_port}"
+        dns_entry_label="SmartDNS:${smartdns_dns_port}"
+    fi
+}
+
 # 检查 DNS 重定向规则是否完整
 # 不复用 dns.sh check: 那个子命令会重新 source 一遍 base.sh 并写临时文件，
 # WebUI 每次刷新都调它，开销与整轮 allstatus 相当。这里直接查 iptables。
 check_dns_rule(){
-    # 直通模式本来就不该有重定向规则，不能显示成"异常"
     [ "${BYPASS_ENABLE}" = "true" ] && {
         echo "直通模式"
         return 0
     }
 
-    # 端口选择顺序必须与 iptables/dns.sh 的 select_dns_port 保持一致，
-    # 否则会出现"规则其实正常但显示异常"的误报。
-    if [ "${MODULE_DNS_MODE}" = "2" ]; then
-        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
-        isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && check_port=${MIHOMO_DNS_PORT}
-        if [ -z "${check_port}" ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
-            check_port=${AGH_DNS_PORT}
-        fi
-    else
-        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
-        isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && check_port=${AGH_DNS_PORT}
-        if [ -z "${check_port}" ] && isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}"; then
-            check_port=${MIHOMO_DNS_PORT}
-        fi
-    fi
-    if [ -z "${check_port}" ] && isRun ${SMARTDNS_BIN} && is_port_listening "$(smartdns_port)"; then
-        check_port=$(smartdns_port)
-    fi
-
     # 没有服务在跑时谈不上规则是否正确
-    [ -z "${check_port}" ] && {
+    [ -z "${dns_check_port}" ] && {
         echo "端口未监听"
         return 0
     }
 
     if ${iptables_w} -t nat -L REDIRECT_DNS > /dev/null 2>&1 && \
-       ${iptables_w} -t nat -C REDIRECT_DNS -p udp --dport 53 -j REDIRECT --to-ports ${check_port} > /dev/null 2>&1 && \
-       ${iptables_w} -t nat -C REDIRECT_DNS -p tcp --dport 53 -j REDIRECT --to-ports ${check_port} > /dev/null 2>&1; then
+       ${iptables_w} -t nat -C REDIRECT_DNS -p udp --dport 53 -j REDIRECT --to-ports ${dns_check_port} > /dev/null 2>&1 && \
+       ${iptables_w} -t nat -C REDIRECT_DNS -p tcp --dport 53 -j REDIRECT --to-ports ${dns_check_port} > /dev/null 2>&1; then
         echo "正常"
     else
         echo "异常"

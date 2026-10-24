@@ -46,7 +46,7 @@ EXEC_PREFIXES = ("bin/",)
 VENDOR_PREFIXES = ("etc/SmartDNS/wwwroot/", "etc/mihomo/webui/")
 
 # 跳过目录 / 文件
-SKIP_DIRS = {".git", ".github", ".idea", ".vscode", "__pycache__", "dist", "tools"}
+SKIP_DIRS = {".git", ".github", ".idea", ".vscode", ".workbuddy", "__pycache__", "dist", "tools"}
 SKIP_FILES = {".gitignore", ".gitattributes", ".DS_Store", "Thumbs.db"}
 
 UTF8_BOM = b"\xef\xbb\xbf"

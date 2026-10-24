@@ -24,13 +24,13 @@
                 <h3>SmartDNS</h3>
                 <div class="service-item" data-id="1">
                     <div class="service-info">
-                        <h4>上游 DNS | 自动分流 </h4>
-                        <div class="service-desc">WebUI: 127.0.0.1:6080 | DNS 端口: 3721</div>
+                        <h4>SmartDNS | DNS 解析与分流</h4>
+                        <div class="service-desc">面板: 127.0.0.1:6080 | DNS 端口: 3721</div>
                         <span id="smartdns-status" class="service-status status-inactive">未运行</span>
                     </div>
                     <div class="service-actions">
                         <a href="http://127.0.0.1:6080" target="_blank">
-                            <button class="action-btn toggle-btn enable">打开</button>
+                            <button class="action-btn toggle-btn enable">打开面板</button>
                         </a>
                     </div>
                 </div>
@@ -40,13 +40,13 @@
                 <h3>Mihomo</h3>
                 <div class="service-item" data-id="1">
                     <div class="service-info">
-                        <h4>中间层 | 网络代理</h4>
-                        <div class="service-desc">WebUI: 127.0.0.1:9090 | 代理端口: 7890</div>
+                        <h4>Mihomo | 代理与 TUN</h4>
+                        <div class="service-desc">面板: 127.0.0.1:9090 | 代理端口: 7890</div>
                         <span id="mihomo-status" class="service-status status-inactive">未运行</span>
                     </div>
                     <div class="service-actions">
                         <a href="http://127.0.0.1:9090/ui/" target="_blank">
-                            <button class="action-btn toggle-btn enable">打开</button>
+                            <button class="action-btn toggle-btn enable">打开面板</button>
                         </a>
                     </div>
                 </div>
@@ -56,13 +56,13 @@
                 <h3>AdGuardHome</h3>
                 <div class="service-item" data-id="1">
                     <div class="service-info">
-                        <h4>下游 DNS | 广告拦截</h4>
-                        <div class="service-desc">WebUI: 127.0.0.1:3000 | DNS 端口: 5300</div>
+                        <h4>AdGuardHome | DNS 过滤与广告拦截</h4>
+                        <div class="service-desc">面板: 127.0.0.1:3000 | DNS 端口: 5300</div>
                         <span id="agh-status" class="service-status status-inactive">未运行</span>
                     </div>
                     <div class="service-actions">
                         <a href="http://127.0.0.1:3000" target="_blank">
-                            <button class="action-btn toggle-btn enable">打开</button>
+                            <button class="action-btn toggle-btn enable">打开面板</button>
                         </a>
                     </div>
                 </div>
@@ -70,15 +70,19 @@
                         
             <!-- 服务控制按钮区域 -->
             <div class="service-control-buttons">
-                <button class="service-btn start-service">启动服务</button>
-                <button class="service-btn stop-service">停止服务</button>
-                <button class="service-btn restart-service">重启服务</button>
+                <button class="service-btn start-service">启动全部服务</button>
+                <button class="service-btn stop-service">停止全部服务</button>
+                <button class="service-btn restart-service">重启全部服务</button>
             </div>
+            <div class="service-controls-hint">「重启」只停止后重新启动，不刷新网络；DNS 规则会在服务就绪后重建。</div>
 
             <!-- 临时 root / 只能软重启环境专用 -->
             <div class="service-control-buttons secondary">
-                <button class="service-btn resume-service">恢复运行(软重启后)</button>
-                <button class="service-btn uninstall-service">立即卸载</button>
+                <button class="service-btn resume-service">软重启后恢复</button>
+            </div>
+            <div class="service-controls-hint">软重启后恢复 = 重启服务 + 重挂 hosts + 启动监控，并按设置决定是否刷新网络；存在待激活包时按钮会改为「激活并恢复新版」。</div>
+            <div id="pending-update-hint" class="service-controls-hint warning" hidden>
+                检测到待激活包：点击下方按钮会先激活新版本再恢复；也可以完整重启，或到「工具 → 激活待更新版本」。
             </div>
             
         </div>
@@ -89,7 +93,7 @@
                 <h2>挂载</h2>
             </div>
             <div class="content-section">
-                <h3>Host</h3>
+                <h3>Hosts</h3>
                 <div class="mount-item" data-id="1">
                     <div class="mount-info">
                         <h4>广告拦截 | GitHub加速 | 小米ROM下载加速</h4>
@@ -134,7 +138,7 @@
                 
                 <div class="monitor-item" data-id="1">
                     <div class="monitor-info">
-                        <h4>WIFI</h4>
+                        <h4>WiFi</h4>
                         <div id="wifi-monitor-pid" class="monitor-desc">PID: null</div>
                         <span id="wifi-monitor-status" class="monitor-status status-inactive">未运行</span>
                     </div>
@@ -158,12 +162,21 @@
                 <div class="monitor-item" data-id="1">
                     <div class="monitor-info">
                         <h4>DNS 重定向规则</h4>
-                        <div class="monitor-desc">规则必须与当前实际运行的 DNS 端口一致，否则会指向没有进程监听的死端口</div>
+                        <div class="monitor-desc">必须与当前实际监听的 DNS 端口一致；「正常」只代表劫持链存在，不代表已经有查询经过</div>
                         <span id="dns-rule-status" class="monitor-status status-inactive">未知</span>
                     </div>
                     <div class="monitor-actions">
                         <button id="dns-rule-action" class="action-btn toggle-btn">重建</button>
                     </div>
+                </div>
+
+                <div class="monitor-item" data-id="1">
+                    <div class="monitor-info">
+                        <h4>DNS 入口</h4>
+                        <div class="monitor-desc">系统 53 端口当前转发到的服务。只有入口服务会计入全部查询；下游命中缓存时计数可能不变。若长期不动，检查是否开启了私人 DNS（853 端口不经过本模块）</div>
+                        <span id="dns-entry-status" class="monitor-status status-inactive">未知</span>
+                    </div>
+                    <div class="monitor-actions"></div>
                 </div>
 
                 <div class="monitor-item" data-id="1">
@@ -178,7 +191,7 @@
                 <div class="monitor-item" data-id="1">
                     <div class="monitor-info">
                         <h4>AdGuardHome 配置</h4>
-                        <div class="monitor-desc">启动前执行 --check-config；校验失败会暂停自动拉起，修复配置后重启服务</div>
+                        <div class="monitor-desc">启动前执行 --check-config；校验失败会暂停自动拉起。若提示 schema 不兼容，通常是升级 AGH 后又回退了旧版本，可用「工具 → 重置 AGH 配置」恢复模板</div>
                         <span id="agh-config-status" class="monitor-status status-inactive">未知</span>
                     </div>
                     <div class="monitor-actions"></div>
@@ -211,11 +224,11 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>DNS 结构模式</h4>
-                        <div class="setting-desc">模式 2：Mihomo → AdGuardHome → SmartDNS<br>模式 1：AdGuardHome → Mihomo → SmartDNS</div>
+                        <div class="setting-desc">决定 53 端口优先转发给谁；未运行的服务会自动跳过。模式 2：Mihomo → AdGuardHome → SmartDNS（代理优先）<br>模式 1：AdGuardHome → Mihomo → SmartDNS（过滤优先）</div>
                     </div>
-                    <select class="setting-select" data-key="MODULE_DNS_MODE">
-                        <option value="2">模式 2</option>
-                        <option value="1">模式 1</option>
+                    <select class="setting-select setting-select-wide" data-key="MODULE_DNS_MODE">
+                        <option value="2">模式 2（代理优先）</option>
+                        <option value="1">模式 1（过滤优先）</option>
                     </select>
                 </div>
 
@@ -248,7 +261,7 @@
                     <label class="switch"><input type="checkbox" data-key="MIHOMO_IPV6"><span class="track"></span></label>
                 </div>
                 <div class="setting-row">
-                    <div class="setting-info"><h4>阻断 IPv6 DNS</h4><div class="setting-desc">拦截本机 IPv6 的 53 端口查询，避免绕过过滤</div></div>
+                    <div class="setting-info"><h4>阻断 IPv6 DNS</h4><div class="setting-desc">拦截本机 IPv6 的 53 端口查询，避免绕过过滤。优先 REJECT（解析器立即回退 IPv4）；内核不支持时自动回退 DROP</div></div>
                     <label class="switch"><input type="checkbox" data-key="BLOCK_IPV6_DNS"><span class="track"></span></label>
                 </div>
             </div>
@@ -265,7 +278,7 @@
                     <input class="setting-input" type="number" data-key="MIHOMO_DNS_PORT">
                 </div>
                 <div class="setting-row">
-                    <div class="setting-info"><h4>Mihomo DNS 模式</h4><div class="setting-desc">fake-ip 响应更快，redir-host 兼容性更好</div></div>
+                    <div class="setting-info"><h4>Mihomo DNS 增强模式</h4><div class="setting-desc">fake-ip 响应更快，redir-host 兼容性更好；与上面的「DNS 结构模式」不是同一项</div></div>
                     <select class="setting-select" data-key="MIHOMO_DNS_MODE">
                         <option value="fake-ip">fake-ip</option>
                         <option value="redir-host">redir-host</option>
@@ -383,9 +396,9 @@
                 </div>
 
                 <div class="setting-block">
-                    <h4>黑名单 WIFI</h4>
-                    <div class="setting-desc">每行一个 SSID，连上这些 WIFI 时自动停止服务</div>
-                    <textarea class="setting-textarea" rows="2" data-key="BLACKLIST_WIFI" placeholder="公司WIFI"></textarea>
+                    <h4>黑名单 WiFi</h4>
+                    <div class="setting-desc">每行一个 SSID，连上这些 WiFi 时自动停止服务</div>
+                    <textarea class="setting-textarea" rows="2" data-key="BLACKLIST_WIFI" placeholder="公司WiFi"></textarea>
                 </div>
             </div>
 
@@ -412,15 +425,16 @@
             <div class="toolbar">
                 <h2>工具</h2>
             </div>
+            <div class="page-intro">日常启停、开关和参数在「服务」「设置」页；这里是一次性维护命令。</div>
 
             <div class="content-section">
-                <h3>模块</h3>
+                <h3>模块与诊断</h3>
                 <div class="tool-grid">
-                    <button class="tool-btn" data-script="manual.sh" data-args="activate">激活模块</button>
-                    <button class="tool-btn" data-script="manual.sh" data-args="resume">恢复运行</button>
-                    <button class="tool-btn" data-script="manual.sh" data-args="status">查看状态</button>
+                    <button class="tool-btn" data-script="manual.sh" data-args="activate">激活待更新版本</button>
+                    <button class="tool-btn" data-script="manual.sh" data-args="status">查看模块状态</button>
+                    <button class="tool-btn" data-script="diagnose.sh" data-args="">一键诊断</button>
                 </div>
-                <div class="setting-desc">激活模块用于刚刷入、还在 modules_update 的情况；恢复运行用于软重启之后。</div>
+                <div class="setting-desc">「激活待更新版本」只用于刚刷入、还在 modules_update 的情况；查看状态会核对服务、DNS 规则端口与模块目录。一键诊断只读采集服务/端口/配置校验/防火墙/DNS/MTU，建议在 WiFi 与 5G 下各跑一次。</div>
             </div>
 
             <div class="content-section">
@@ -444,37 +458,29 @@
                     <button class="tool-btn danger" data-script="ad.sh" data-args="cleanup purge" data-confirm="1">清理已卸载 App 及备份</button>
                     <button class="tool-btn" data-script="update/host.sh" data-args="update force">更新 hosts</button>
                 </div>
-                <div class="setting-desc">「清理已卸载 App 的锁定」只解除 immutable 并删除空壳；带「及备份」会同时删除孤儿 .samhold 备份，不可恢复。</div>
+                <div class="setting-desc">这些按钮是立即执行一次；是否随服务自动屏蔽由「设置 → 屏蔽 App 广告文件」决定。「清理已卸载 App 的锁定」只解除 immutable 并删除空壳；带「及备份」会同时删除孤儿 .samhold 备份，不可恢复。</div>
             </div>
 
             <div class="content-section">
-                <h3>高级</h3>
+                <h3>网络与配置维护</h3>
                 <div class="tool-grid">
-                    <button class="tool-btn" data-script="iptables/dns.sh" data-args="enable">重建 DNS 规则</button>
-                    <button class="tool-btn" data-script="iptables/dns.sh" data-args="check">检查 DNS 规则</button>
-                    <button class="tool-btn" data-script="service.sh" data-args="refresh">刷新网络</button>
-                    <button class="tool-btn" data-script="update/agh.sh" data-args="">重新生成 AGH 配置</button>
-                    <button class="tool-btn" data-script="update/mihomo.sh" data-args="">重新生成 Mihomo 配置</button>
-                    <button class="tool-btn" data-script="update/proxy.sh" data-args="">重建 TUN 名单</button>
+                    <button class="tool-btn" data-script="service.sh" data-args="refresh">刷新网络（开关飞行模式）</button>
+                    <button class="tool-btn" data-script="update/agh.sh" data-args="">重写 AGH 配置</button>
+                    <button class="tool-btn" data-script="update/mihomo.sh" data-args="">重写 Mihomo 配置</button>
+                    <button class="tool-btn" data-script="update/proxy.sh" data-args="">重建 TUN 分流名单</button>
                     <button class="tool-btn" data-script="update/desc.sh" data-args="">刷新模块描述</button>
                 </div>
-                <div class="setting-desc">「刷新网络」等价于开关一次飞行模式，用于服务异常退出后手机仍然没网的情况。</div>
+                <div class="setting-desc">「刷新网络」等价于开关一次飞行模式，WiFi 会短暂断开。「重写配置」只改写文件，不会重启服务；需要生效请回「服务」页重启。DNS 规则状态与重建在「监控 → 健康状态」。</div>
             </div>
 
             <div class="content-section">
-                <h3>诊断</h3>
+                <h3>危险操作</h3>
                 <div class="tool-grid">
-                    <button class="tool-btn" data-script="diagnose.sh" data-args="">一键诊断</button>
+                    <button class="tool-btn danger" data-script="update.sh" data-args="" data-confirm="1">更新内置组件</button>
+                    <button class="tool-btn danger" data-script="agh_reset.sh" data-args="" data-confirm="1">重置 AGH 配置</button>
+                    <button class="tool-btn danger" data-script="manual.sh" data-args="uninstall" data-confirm="1">卸载模块</button>
                 </div>
-                <div class="setting-desc">只读采集服务/端口/配置校验/防火墙/DNS/MTU；建议分别在 WiFi 与 5G 下各跑一次对比。也可在 root 终端执行 <code>sh /data/adb/modules/SAM/scripts/diagnose.sh</code>。</div>
-            </div>
-
-            <div class="content-section">
-                <h3>内核更新</h3>
-                <div class="tool-grid">
-                    <button class="tool-btn danger" data-script="update.sh" data-args="" data-confirm="1">更新内核</button>
-                </div>
-                <div class="setting-desc">从 GitHub 拉取最新 SmartDNS / AdGuardHome / Mihomo，耗时较长且会重启服务。需要网络。</div>
+                <div class="setting-desc">「更新内置组件」从 GitHub 拉取 SmartDNS / AdGuardHome / Mihomo，耗时较长且会重启服务；AGH 大版本升级会迁移配置 schema，回退旧版本后若无法启动，用「重置 AGH 配置」恢复模板。重置会先完整备份并保留单文件副本，但会丢失 AGH 面板密码与自定义过滤规则。卸载会立即停止服务并删除模块目录，配置备份保留。</div>
             </div>
 
             <div class="content-section">

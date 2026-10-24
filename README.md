@@ -12,14 +12,19 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **WebUI 设置页**：直通开关、DNS 结构模式、服务开关、端口、TUN、订阅与黑白名单等可直接改
 - **直通模式**：临时撤销 DNS 劫持并暂停 Mihomo（TUN 仍会劫持 DNS），适合校园网、认证热点；改动 5 秒内由守护循环生效
 - **免重启运维**：临时 root / 只能软重启环境使用 `sh scripts/manual.sh activate|resume|uninstall`
+- **启动降级**：三服务优先用 `busybox setuidgid` 指定用户/组；缺少该 applet 时以 root 启动并在 `module.log` 记录，避免临时 root 下三服务一起静默失败
+- **服务页语义明确**：启动/停止/重启全部服务；「软重启后恢复」会额外重挂 hosts、启动监控并按设置刷新网络；存在待激活包时按钮自动变为「激活并恢复新版」，不会再恢复旧版
+- **DNS 入口可见**：监控页显示当前 53 端口实际转发到的服务与端口，区分「DNS 规则正常」和「查询真的经过模块」
 - **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）；只有服务全部恢复且距离上次自动刷新超过 10 分钟时才刷新网络，避免服务反复掉线时反复开关 WiFi
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
 - **全量配置备份**：卸载时备份到 `/data/adb/SAM-backup/<时间>/`（root-only，避免订阅链接/节点密码被普通应用读取）
 - **默认仅回环监听**：AGH 面板/DNS、SmartDNS、Mihomo 控制台与代理端口默认只听 127.0.0.1；需要局域网使用时打开「允许局域网访问」，仅开放 AGH 面板/DNS 与 SmartDNS DNS，Mihomo 控制台与代理端口始终保持本机
-- **内核安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
+- **组件安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
 - **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC、`mksh -n` 校验；`.gitattributes` 保证 Windows 检出也是 LF
-- **一键诊断**：WebUI「工具 → 一键诊断」或 `scripts/diagnose.sh` 只读采集服务、端口、AGH 配置校验、防火墙、DNS、MTU 与 IPv6 DROP 计数
+- **一键诊断**：WebUI「工具 → 一键诊断」或 `scripts/diagnose.sh` 只读采集服务、端口、AGH 配置校验、防火墙、DNS、MTU 与 IPv6 阻断方式/计数
+- **AGH 配置恢复**：`--check-config` 失败会暂停自动拉起并区分 YAML / schema / 编码原因；schema 不兼容时可从工具页「重置 AGH 配置」恢复内置模板（先完整备份）
+- **IPv6 DNS 快速回退**：阻断优先用 `REJECT`（UDP `icmp6-port-unreachable`、TCP `tcp-reset`），让解析器立即回退 IPv4；内核不支持时记录并回退 `DROP`
 - **Mihomo 默认关闭**：没有订阅地址时它本身也起不来；需要代理时在设置里开启并填写订阅
 - **广告过滤加入 GOODBYEADS 规则集与其放行列表**（AdGuardHome 侧）
 - **广告屏蔽可逆**：屏蔽时把 App 广告缓存目录改名保留并锁定，屏蔽效果与清空相同但数据不丢，随时可原样还原；关闭开关会自动恢复；已卸载 App 的锁定会在启动/每 5 分钟自动解除
@@ -44,11 +49,12 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 ## 📢注意
 - 禁止和其它同类型模块使用
 - 模块所有服务的账号和密码都是 `root`，开启「允许局域网访问」前请先改密码
-- 刷入新版本后需**完整重启**或使用「工具 → 激活模块」；**软重启不会激活 `modules_update` 里的新包**。未激活时 KernelSU 模块列表显示的是待激活包，WebUI 仍由旧版本提供服务
-- WebUI 服务页出现「待激活更新」徽章时，说明新包还没激活；监控页「模块描述」显示的是 `module.prop` 里的实际值
+- 刷入新版本后需**完整重启**，或使用「工具 → 激活待更新版本」/ 服务页「激活并恢复新版」（等价于 `manual.sh resume`，检测到待激活包会先激活）；**软重启本身不会激活 `modules_update` 里的新包**。未激活时 KernelSU 模块列表显示的是待激活包，WebUI 仍由旧版本提供服务
+- WebUI 服务页出现「待激活更新」徽章时，说明新包还没激活；此时服务页按钮会变为「激活并恢复新版」，点击会先激活再恢复。监控页「模块描述」显示的是 `module.prop` 里的实际值
 - 如果 KernelSU 模块描述仍是旧状态，先确认 `cat /data/adb/modules/SAM/module.prop` 的 `description`，再返回/刷新模块页；管理器会缓存上次读取的模块列表
 - 广告屏蔽会对目录设置 immutable（`chattr +i`），可能阻止系统卸载时清理 App 数据；卸载 App 前建议先在「工具」页执行「恢复广告文件」。如果直接卸载，模块会在启动和每 5 分钟自动解除已卸载 App 的锁定（默认保留 `.samhold` 备份）；系统卸载当下仍可能提示删除数据失败，可用工具页「清理已卸载 App 及备份」删除孤儿备份
 - hosts 更新默认 24 小时节流；工具页的「更新 hosts」与每周定时任务会强制刷新
+- AGH 大版本升级会迁移配置 schema；回退旧二进制后若报 `unknown current schema version`，用「工具 → 重置 AGH 配置」恢复模板（会先完整备份并保留单文件副本，但会丢失面板密码与自定义过滤规则）
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml
 
@@ -61,7 +67,16 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 3. DNS 方向逐项试：关闭「阻断 IPv6 DNS」、关闭「双栈 IP 优选」、测速方式改 `tcp:443`。
 4. 下载/大流量慢再试 TUN MTU（1500/1400）；高带宽 WiFi 下 gvisor 可能 CPU 打满，测速时看 mihomo 的 CPU。
 
-常见原因：IPv6 DNS 被 DROP 等超时、SmartDNS 的 ping/双栈冷查询、gvisor 用户态 TUN 的 CPU 上限、WiFi 限制公共 DNS 或代理路由。hosts 只影响 GitHub/FCM 等特定域名。
+常见原因：IPv6 DNS 被静默 DROP 等超时（本版优先 REJECT，仅在不支持时回退 DROP）、SmartDNS 的 ping/双栈冷查询、gvisor 用户态 TUN 的 CPU 上限、WiFi 限制公共 DNS 或代理路由。hosts 只影响 GitHub/FCM 等特定域名。
+
+## 解析量不增加 / 过一阵才增加
+
+「DNS 重定向规则正常」只说明 53 端口的劫持链存在且目标端口在监听，不代表已经有查询经过。排查顺序：
+
+1. 看「监控 → DNS 入口」：当前是 `Mihomo:1053`、`AdGuardHome:5300` 还是 `SmartDNS:3721`。只有入口服务会统计全部查询；下游服务命中缓存时计数可能不变（AGH 不缓存，命中 SmartDNS 缓存时 SmartDNS 的上游请求也不会增加）。
+2. 这是缓存不是启动延迟：Android/应用/浏览器会缓存 DNS，SmartDNS 还有 `cache-persist yes` 与 `rr-ttl-min 600`（最短 10 分钟）。刚恢复运行或刷新网络后，短时间内没有新查询很正常。
+3. 检查系统「私人 DNS」：指定主机名时一定走 853，不经过本模块的 53 重定向；「自动」也可能协商 DoT。排查时先关闭再验证。
+4. 用 `sh /data/adb/modules/SAM/scripts/diagnose.sh` 或 `iptables -t nat -L REDIRECT_DNS -v -n` 看重定向包数；换一个未访问过的域名再看 AGH/SmartDNS 计数。
 
 ## ⚠️无网络
 - 检查手机网络，开关飞行模式

@@ -2,6 +2,14 @@
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
+# 记录坏配置的 cksum 供守护循环暂停重试；reason 供 WebUI 显示具体原因
+mark_agh_config_bad(){
+    bad_cksum=$(cksum "${AGH_CONF}" 2>/dev/null | awk '{print $1" "$2}')
+    [ -n "${bad_cksum}" ] || bad_cksum="missing 0"
+    printf '%s\n' "${bad_cksum}" > "${TMP_PATH}/agh.config.bad"
+    printf '%s\n' "${1}" > "${TMP_PATH}/agh.config.bad.reason" 2>/dev/null
+}
+
 # 启动
 start(){
     # 判断 AdGuardHome 未启用，则退出
@@ -19,14 +27,15 @@ start(){
     # 启动前清理 BOM/CR；UTF-16 明确报错，不自动转换
     sanitize_config "${AGH_CONF}"
     if [ $? -eq 2 ]; then
-        log "e" "${AGH_BIN} 配置未修复，取消启动"
-        cksum "${AGH_CONF}" 2>/dev/null | awk '{print $1" "$2}' > "${TMP_PATH}/agh.config.bad"
+        log "e" "${AGH_BIN} 配置是 UTF-16，未自动转换；请另存为 UTF-8"
+        mark_agh_config_bad "encoding"
         return 1
     fi
 
     # 更新 AdGuardHome 配置
     if ! ${UPDATE_PATH}/agh.sh; then
         log "e" "${AGH_BIN} 配置生成失败，取消启动"
+        mark_agh_config_bad "generate"
         return 1
     fi
 
@@ -35,15 +44,24 @@ start(){
     if ! agh_check_output=$("${AGH_BIN}" --check-config -c "${AGH_CONF}" -w "${AGH_PATH}" 2>&1); then
         log "e" "${AGH_BIN} 配置校验失败，已暂停自动拉起；请修复 AGH 配置后重启服务"
         log "e" "${AGH_BIN} 校验输出: $(printf '%s\n' "${agh_check_output}" | tail -n 3 | tr '\n' ' ')"
-        cksum "${AGH_CONF}" 2>/dev/null | awk '{print $1" "$2}' > "${TMP_PATH}/agh.config.bad"
+        case "${agh_check_output}" in
+            *"unknown current schema"*|*"schema version"*|*"schema_version"*)
+                # 常见于升级 AGH 后配置 schema 已迁移，又回退了旧二进制
+                mark_agh_config_bad "schema"
+                log "e" "${AGH_BIN} 配置 schema 与当前二进制不兼容；请用「工具 → 重置 AGH 配置」恢复模板"
+                ;;
+            *)
+                mark_agh_config_bad "yaml"
+                ;;
+        esac
         return 1
     fi
-    rm -f "${TMP_PATH}/agh.config.bad"
+    rm -f "${TMP_PATH}/agh.config.bad" "${TMP_PATH}/agh.config.bad.reason"
 
     # 启动
     # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
     # 用 >> 追加而不是 > 截断，方便守护循环原地轮转日志
-    detach_exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update >> "${TMP_PATH}/${AGH_BIN}.log" 2>&1
+    service_exec "${SAM_USER}:${DNS_GROUP}" ${AGH_BIN} -c ${AGH_CONF} -w ${AGH_PATH} --no-check-update >> "${TMP_PATH}/${AGH_BIN}.log" 2>&1
 
     # 轮询等待就绪(最多 5 秒)
     wait_ready=0

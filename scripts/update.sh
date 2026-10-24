@@ -20,6 +20,8 @@ esac
 smartdns_ver=$(cd ${SMARTDNS_PATH} && SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec ${SMARTDNS_BIN} -v | sed -n 's/^.*[[:space:]]\(.*\)[[:space:]].*/\1/p')
 # AdGuardHome 版本
 agh_ver=$(${AGH_BIN} --version | sed -n 's/^.*version[[:space:]]\(.*\)$/\1/p')
+# AGH 配置 schema: 大版本升级会在首次启动时迁移，回退旧二进制会不兼容
+agh_schema_ver=$(grep -m1 '^schema_version:' "${AGH_CONF}" 2>/dev/null | awk '{print $2}')
 # Mihomo 版本
 mihomo_ver=$(${MIHOMO_BIN} -v | sed -n "s/^.*Meta[[:space:]]\(.*\)[[:space:]]android.*$/\1/p")
 
@@ -164,6 +166,8 @@ agh_download(){
     chmod 755 "${BIN_PATH}/${AGH_BIN}"
     chown "${SAM_USER}:${DNS_GROUP}" "${BIN_PATH}/${AGH_BIN}"
 
+    new_agh_ver=$("${BIN_PATH}/${AGH_BIN}" --version | sed -n 's/^.*version[[:space:]]\(.*\)$/\1/p')
+
     if ! "${BIN_PATH}/${AGH_BIN}" --version > /dev/null 2>&1; then
         log "e" "新 AdGuardHome 无法运行，回滚"
         restore_bak "${BIN_PATH}/${AGH_BIN}"
@@ -172,6 +176,8 @@ agh_download(){
     fi
     # 自检通过后删除 .bak，避免常驻占用 30MB+
     rm -f "${BIN_PATH}/${AGH_BIN}.bak"
+    log "i" "AdGuardHome 版本: ${agh_ver} -> ${new_agh_ver}；配置 schema ${agh_schema_ver:-未知}"
+    log "i" "新版本首次启动会迁移配置 schema；若之后回退旧版无法启动，用「工具 → 重置 AGH 配置」恢复模板"
     log "i" "删除下载文件"
     rm -rf "${TMP_PATH}/${AGH_BIN}"
     is_update=true

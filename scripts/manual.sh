@@ -10,7 +10,7 @@
 #
 # 用法:
 #   sh manual.sh activate      激活(把 modules_update 搬到 modules)并启动
-#   sh manual.sh resume        软重启后恢复运行(重启服务 + 挂载 hosts + 起监控)
+#   sh manual.sh resume        软重启后恢复运行(有待激活包时先激活)
 #   sh manual.sh start|stop|restart
 #   sh manual.sh uninstall     立即卸载(停服务/清规则/卸 hosts/删目录，无需重启)
 #   sh manual.sh status        查看状态
@@ -34,7 +34,7 @@ die(){ echo "[×] ${1}" >&2; exit 1; }
 usage(){
     say "用法: sh manual.sh <命令>"
     say "  activate        激活模块并启动(把 modules_update 搬到 modules)"
-    say "  resume          软重启后恢复运行"
+    say "  resume          软重启后恢复运行(重启服务 + 挂载 hosts + 起监控；有待激活包时自动激活)"
     say "  start           启动服务"
     say "  stop            停止服务"
     say "  restart         重启服务"
@@ -134,12 +134,20 @@ activate_module(){
 
     if [ "${source_dir}" = "${UPDATE_DIR}" ]; then
         warn "检测到待激活模块: ${UPDATE_DIR}"
+        old_dir=""
         if [ -d "${ACTIVE_DIR}" ]; then
-            warn "移除旧版本: ${ACTIVE_DIR}"
+            warn "暂存旧版本: ${ACTIVE_DIR}"
             [ -f "${ACTIVE_DIR}/scripts/service.sh" ] && sh "${ACTIVE_DIR}/scripts/service.sh" stop > /dev/null 2>&1
-            rm -rf "${ACTIVE_DIR}"
+            old_dir="/data/adb/SAM.old.$(date '+%Y%m%d-%H%M%S').$$"
+            rm -rf "${old_dir}"
+            mv "${ACTIVE_DIR}" "${old_dir}" || die "无法暂存旧版本 ${ACTIVE_DIR}，已取消激活"
         fi
-        mv "${UPDATE_DIR}" "${ACTIVE_DIR}" || die "移动 ${UPDATE_DIR} 到 ${ACTIVE_DIR} 失败"
+        if ! mv "${UPDATE_DIR}" "${ACTIVE_DIR}"; then
+            # 更新包移动失败时把旧版本放回去，避免留下没有模块目录的状态
+            [ -n "${old_dir}" ] && mv "${old_dir}" "${ACTIVE_DIR}"
+            die "移动 ${UPDATE_DIR} 到 ${ACTIVE_DIR} 失败，已恢复旧版本"
+        fi
+        [ -n "${old_dir}" ] && rm -rf "${old_dir}"
         ok "已激活到 ${ACTIVE_DIR}"
     else
         ok "模块已在 ${ACTIVE_DIR}"
@@ -206,6 +214,15 @@ kill_monitor(){
 # 软重启后恢复
 resume_module(){
     need_root
+
+    # 软重启后若存在待激活包，resume 直接完成激活再恢复；
+    # 否则用户会看到"恢复完成"但 KernelSU 仍是旧版本/待激活状态
+    if [ -d "${UPDATE_DIR}" ]; then
+        say "检测到待激活包，先激活并恢复新版本"
+        activate_module
+        return $?
+    fi
+
     need_active
 
     ensure_busybox
@@ -365,10 +382,18 @@ show_status(){
         say "-    hosts 未挂载"
     fi
 
-    if iptables -t nat -L REDIRECT_DNS > /dev/null 2>&1; then
-        ok "DNS 重定向规则存在"
+    # 只判断链存在会漏掉"链还在但端口已经死了"的情况，
+    # 那种状态比没有规则更糟：整机 DNS 会被送进没有进程的端口。
+    if [ -d "${ACTIVE_DIR}" ]; then
+        dns_check_output=$(sh "${ACTIVE_DIR}/scripts/iptables/dns.sh" check 2>&1)
+        dns_check_rc=$?
+        case ${dns_check_rc} in
+            0) ok "${dns_check_output}" ;;
+            2) say "-    没有可用的 DNS 服务在运行" ;;
+            *) warn "${dns_check_output}" ;;
+        esac
     else
-        say "-    DNS 重定向规则不存在"
+        say "-    DNS 重定向规则未知(模块未激活)"
     fi
 
     if [ -d "${ACTIVE_DIR}" ] && pgrep -f "${ACTIVE_DIR}/scripts/watchdog.sh" > /dev/null 2>&1; then

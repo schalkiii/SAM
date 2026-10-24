@@ -78,7 +78,7 @@ start(){
     export SMARTDNS_WORKDIR="${SMARTDNS_PATH}"
     # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收
     # stdout/stderr 单独落一个文件，避免和 SmartDNS 自己的日志文件互相截断
-    detach_exec busybox setuidgid "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - >> "${TMP_PATH}/${SMARTDNS_BIN}.out" 2>&1
+    service_exec "${SAM_USER}:${DNS_GROUP}" ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - >> "${TMP_PATH}/${SMARTDNS_BIN}.out" 2>&1
     #SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec su -g $(id -g ${DNS_GROUP}) -- nohup ${SMARTDNS_BIN} -c ${SMARTDNS_CONF} -p - > "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>&1 &
     
     # 轮询等待就绪(最多 5 秒)，比固定 sleep 1 更可靠

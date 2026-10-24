@@ -1,3 +1,42 @@
+# 2026.10.24.17
+- 发布与打包
+  - 打包排除 `.workbuddy/` 等会话残留目录，避免内部排查笔记进入 release zip
+  - 发布前校验 zip 根目录、模块版本、脚本权限位与 SHA256
+- 修复服务异常检测反转
+  - `detect_abnormal` 原先把 `return 0`（全部健康）当成异常：正常重启会误写异常标记，健康启动反而误报「服务未全部恢复」，真实异常时不写标记也不刷新网络
+  - 改为 `has_abnormal_service`，返回 0 才表示有服务缺失；服务仍缺失时保留异常标记，等下一次真正恢复后再刷新网络
+- hosts 启动更新时序
+  - 服务启动后延迟 10 秒再拉取 hosts，避免刚重启时网络/解析未就绪导致所有候选源一起失败
+  - 单个候选源失败改为 INFO；只有最终失败/部分失败记 ERROR，避免把降级尝试计入「重启错误数」
+  - 只有 GitHub 与 FCM 都更新成功才写 24 小时时间戳；部分失败时下次启动会重试，不再被一次部分成功挡住
+- 修正 DNS 状态误导
+  - `manual.sh status` 不再只判断 `REDIRECT_DNS` 链是否存在；改为调用 `dns.sh check`，同时核对当前实际监听端口，并显示「服务名:端口」
+  - `dns.sh` 的入口选择统一记录服务名，日志与检查结果不再只有裸端口
+  - 直通模式下 `dns.sh check` 返回「直通模式(不劫持 DNS)」，不再误报规则缺失
+- WebUI 去重与语义整理
+  - 服务页按钮改为「启动/停止/重启全部服务」；明确「重启」不刷新网络
+  - 「恢复运行(软重启后)」统一为服务页的「软重启后恢复」，工具页不再重复；说明其会重挂 hosts、启动监控并按设置刷新网络
+  - 检测到待激活包时，服务页按钮自动变为「激活并恢复新版」；`manual.sh resume` 也会先激活再恢复，不再出现「恢复完成但仍是旧版本」的歧义
+  - `activate_module` 先把旧版本暂存到 `/data/adb/SAM.old.<pid>`，新包移动失败时自动恢复，避免激活中途失败留下空目录
+  - 待激活包出现时，服务页额外显示提示，避免把旧版本运行误认为新版本已生效
+  - 监控页新增「DNS 入口」：显示 53 端口当前转发到 Mihomo/AGH/SmartDNS 的哪个端口，并说明规则正常不等于有查询经过
+  - 移除工具页重复的「检查/重建 DNS 规则」，统一到监控页；「更新内核」更名为「更新内置组件」；卸载移入工具页「危险操作」
+  - 修正服务角色文案（SmartDNS 解析、AGH 过滤、Mihomo 代理）、「打开」→「打开面板」、DNS 结构模式选项与 Mihomo 增强模式文案
+- 服务启动依赖收口
+  - 三服务统一通过 `base.sh` 的 `service_exec` 启动；`busybox setuidgid` 或独立 `setuidgid` 不可用时降级为 root 并记录 ERROR，避免三服务一起静默失败
+  - 诊断脚本同步显示降级风险，不再把该情况报告成“三服务都无法拉起”
+- IPv6 DNS 阻断优化
+  - 优先用 REJECT：UDP `icmp6-port-unreachable`、TCP `tcp-reset`，让解析器立即回退 IPv4，减少 WiFi 下等待 IPv6 DNS 超时
+  - 内核/ip6tables 不支持 REJECT 时自动回退 DROP，并把探测结果写入 `tmp/ipv6.block.mode`，守护循环不会反复删加规则
+- AGH schema 与配置恢复
+  - AGH 校验失败时记录具体原因（`yaml` / `schema` / `encoding` / `generate`），WebUI 显示「配置版本不兼容」等明确状态
+  - 新增 `scripts/agh_reset.sh` 与内置模板：先完整备份并保留单文件副本，再重置、按 `setting.conf` 重写并校验；WebUI「危险操作 → 重置 AGH 配置」调用
+  - 刷入时若旧 AGH 配置 schema 高于新包模板，安装日志会提示回退风险
+  - 组件更新日志记录 AGH 版本与配置 schema，并提示大版本升级后回退的恢复方式
+- 诊断与文档
+  - 诊断脚本新增当前 DNS 入口核对、系统私人 DNS(Private DNS) 状态、IPv6 阻断方式
+  - README/AGENTS 补充 DNS 计数延迟、缓存、私人 DNS、IPv6 REJECT、AGH 重置与 WebUI 按钮语义
+
 # 2026.10.24.16
 - 默认关闭 Mihomo
   - `setting.conf` / `setting.sh` 默认值改为 `MIHOMO_ENABLE=false`；新安装不再默认拉起代理/TUN
