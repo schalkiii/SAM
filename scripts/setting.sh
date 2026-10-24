@@ -11,7 +11,7 @@ setting_default(){
     AGH_ENABLE=true
     AGH_DNS_PORT=5300
     BLOCK_IPV6_DNS=true
-    MIHOMO_ENABLE=true
+    MIHOMO_ENABLE=false
     MIHOMO_IPV6=true
     MIHOMO_DNS_PORT=1053
     MIHOMO_DNS_MODE=fake-ip
@@ -206,7 +206,7 @@ setting_validate(){
     setting_fix_bool SMARTDNS_ENABLE true
     setting_fix_bool AGH_ENABLE true
     setting_fix_bool BLOCK_IPV6_DNS true
-    setting_fix_bool MIHOMO_ENABLE true
+    setting_fix_bool MIHOMO_ENABLE false
     setting_fix_bool MIHOMO_IPV6 true
     setting_fix_bool IP_IPTABLES false
     setting_fix_bool HOST_ENABLE true

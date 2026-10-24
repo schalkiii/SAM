@@ -1,3 +1,21 @@
+# 2026.10.24.16
+- 默认关闭 Mihomo
+  - `setting.conf` / `setting.sh` 默认值改为 `MIHOMO_ENABLE=false`；新安装不再默认拉起代理/TUN
+  - 已有 `setting.conf` 保留用户原值；需要代理时开启并填写 `SUB_URL`
+- AGH 启动前配置校验
+  - 启动前执行 `AdGuardHome --check-config`；失败时把校验输出写进 module.log，并在 `tmp/agh.config.bad` 记录配置 cksum
+  - 守护循环发现同一份坏配置时暂停自动拉起，只提示一次；配置内容变化或手动重启后才重试
+  - WebUI 服务页 AGH 状态显示「配置错误」；监控页新增「AdGuardHome 配置」状态
+- SmartDNS 启动失败日志
+  - 失败时把 `tmp/smartdns.log` 最后 5 行写入 module.log；`smartdns.out` 只有 wrapper 提示，不能定位原因
+- 配置 BOM/CR 清洗
+  - AGH/SmartDNS 启动前由 `sanitize_config` 去掉 UTF-8 BOM 与 CR，并备份原文件
+  - 检测到 UTF-16 时明确报错、拒绝自动转换（请另存为 UTF-8）
+- 集成一键诊断
+  - `tools/diagnose.sh` 移到 `scripts/diagnose.sh` 随模块打包
+  - WebUI 工具页新增「一键诊断」；脚本补充 `smartdns.log` 尾部输出
+- 文档: README/AGENTS 同步默认 Mihomo 关闭、AGH 校验、配置清洗与一键诊断
+
 # 2026.10.23.15
 - 继续修模块描述不更新
   - `desc.sh`/`customize.sh` 不再用 awk 改 description，改为逐行重写，

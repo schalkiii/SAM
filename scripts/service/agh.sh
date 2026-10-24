@@ -16,11 +16,29 @@ start(){
         return 1
     }
 
+    # 启动前清理 BOM/CR；UTF-16 明确报错，不自动转换
+    sanitize_config "${AGH_CONF}"
+    if [ $? -eq 2 ]; then
+        log "e" "${AGH_BIN} 配置未修复，取消启动"
+        cksum "${AGH_CONF}" 2>/dev/null | awk '{print $1" "$2}' > "${TMP_PATH}/agh.config.bad"
+        return 1
+    fi
+
     # 更新 AdGuardHome 配置
     if ! ${UPDATE_PATH}/agh.sh; then
         log "e" "${AGH_BIN} 配置生成失败，取消启动"
         return 1
     fi
+
+    # 启动前做一次 YAML 自检：坏配置直接拒绝启动并暂停守护循环重试，
+    # 避免每 5 秒反复 attempt + 刷日志
+    if ! agh_check_output=$("${AGH_BIN}" --check-config -c "${AGH_CONF}" -w "${AGH_PATH}" 2>&1); then
+        log "e" "${AGH_BIN} 配置校验失败，已暂停自动拉起；请修复 AGH 配置后重启服务"
+        log "e" "${AGH_BIN} 校验输出: $(printf '%s\n' "${agh_check_output}" | tail -n 3 | tr '\n' ' ')"
+        cksum "${AGH_CONF}" 2>/dev/null | awk '{print $1" "$2}' > "${TMP_PATH}/agh.config.bad"
+        return 1
+    fi
+    rm -f "${TMP_PATH}/agh.config.bad"
 
     # 启动
     # 用 setsid 让进程脱离调用方会话，避免 WebUI/会话结束时被一起回收

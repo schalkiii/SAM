@@ -19,8 +19,11 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 ## 目录与约定
 - `service.sh` 开机入口；`scripts/service.sh` 负责 start / stop / restart
 - `scripts/watchdog.sh` 5 秒守护：拉起掉线服务；iptables/DNS 链与日志轮转每 10 秒检查；配置按 mtime 热加载；备份清单非空时每 5 分钟清理已卸载 App 的广告锁定；网络自动刷新有 10 分钟节流
+- `scripts/diagnose.sh` 只读诊断（服务/端口/AGH 配置校验/防火墙/DNS/MTU/v6 DROP 采样）；WebUI 工具页「一键诊断」调用它
 - `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换，临时文件放 `tmp/`）；`get` 必须覆盖 WebUI 所有 `data-key`
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
+- **配置文件清洗**：`base.sh` 的 `sanitize_config` 在 AGH/SmartDNS 启动前清理 UTF-8 BOM 与 CR；UTF-16 明确报错不自动转换。AGH 启动前跑 `--check-config`，失败写 `tmp/agh.config.bad`（内容 cksum），守护循环据此暂停自动拉起，配置内容变化或手动重启后才重试
+- SmartDNS 启动失败时把 `tmp/smartdns.log` 最后 5 行写入 module.log（`smartdns.out` 只有 wrapper 提示）
 - **网络刷新**：`base.sh` 的 `refresh_network` 自动刷新最多 10 分钟一次并用目录锁互斥，手动工具/保存配置传 `force`；只有所有启用服务真正恢复后才自动刷新，WiFi 黑名单触发的停止不写异常标记，避免“刷新→WiFi 断开→监控启动/停止”循环
 - **模块描述**：`scripts/update/desc.sh` 用逐行重写（不依赖 awk ENVIRON）更新 active 的 `module.prop`，并把 `modules_update` 的待激活包标记为“已安装，待重启/激活生效”；写入失败会记 ERROR。刷入后**软重启不会激活待生效包**，必须完整重启或 `manual.sh activate`；WebUI 服务页会显示待激活徽章，监控页显示 module.prop 实际描述
 - 监听地址由 `LAN_ACCESS` 决定（默认 false = 只回环）：AGH 在 `update/agh.sh` 改写并开放面板/DNS，SmartDNS 在 `service/sd.sh` 启动前改写；Mihomo 控制台/mixed-port/DNS 始终只监听 127.0.0.1（无鉴权控制面与开放代理不能暴露到局域网）

@@ -137,6 +137,11 @@ get_all_status(){
     else
         echo "pending_update=no"
     fi
+    if [ -s "${TMP_PATH}/agh.config.bad" ]; then
+        echo "agh_config=bad"
+    else
+        echo "agh_config=ok"
+    fi
 
     # 守护循环与 DNS 规则状态: 服务异常退出后这两项最能说明问题
     if pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then

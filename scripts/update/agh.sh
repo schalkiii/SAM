@@ -2,6 +2,10 @@
 # 加载基础脚本
 source "/data/adb/modules/SAM/scripts/base.sh"
 
+# 工具页可能直接调用本脚本，先清洗 BOM/CR；UTF-16 明确拒绝
+sanitize_config "${AGH_CONF}"
+[ $? -eq 2 ] && exit 1
+
 SMARTDNS_PORT=$(smartdns_port)
 # 全文件改写的临时文件；每个修改函数写它再原子替换
 # 放在 TMP_PATH 而不是配置目录，进程被杀时不会在 AGH 目录里留垃圾

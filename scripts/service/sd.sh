@@ -15,6 +15,13 @@ start(){
         log "i" "${SMARTDNS_BIN} 已运行"
         return 1
     }
+
+    # 启动前清理 BOM/CR；UTF-16 明确报错，不自动转换
+    sanitize_config "${SMARTDNS_CONF}"
+    if [ $? -eq 2 ]; then
+        log "e" "${SMARTDNS_BIN} 配置未修复，取消启动"
+        return 1
+    fi
     
     # 按 LAN_ACCESS 决定监听地址(默认只监听回环，避免同 WiFi 设备直接用本机 DNS)
     if [ "${LAN_ACCESS}" = "true" ]; then
@@ -94,6 +101,10 @@ start(){
         # 把最后一行日志带上，便于定位是缺 loader、配置错还是端口占用
         if [ -f "${TMP_PATH}/${SMARTDNS_BIN}.out" ]; then
             log "e" "${SMARTDNS_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${SMARTDNS_BIN}.out" 2>/dev/null)"
+        fi
+        # SmartDNS 自己的日志才是真正的失败原因；stdout 只有一句 wrapper 提示
+        if [ -f "${TMP_PATH}/${SMARTDNS_BIN}.log" ]; then
+            log "e" "${SMARTDNS_BIN} 详细日志: $(tail -n 5 "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>/dev/null | tr '\n' ' ')"
         fi
     fi
 }

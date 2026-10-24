@@ -77,6 +77,42 @@ remount_hosts(){
     mount -o bind "${HOSTS_FILE}" /system/etc/hosts 2>/dev/null
 }
 
+# 清洗配置文件里的 UTF-8 BOM 与 CR
+# 返回: 0 正常/已清洗, 1 文件缺失或读取失败, 2 检测到 UTF-16(不自动转换)
+# UTF-16 很可能是 Windows 编辑器误存，强行按 UTF-8 处理会得到乱码配置，
+# 所以这里只报错，让用户另存为 UTF-8。
+sanitize_config(){
+    clean_file="${1}"
+    [ -f "${clean_file}" ] || return 1
+
+    clean_head=$(head -c 2 "${clean_file}" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "${clean_head}" in
+        fffe|feff)
+            log "e" "配置文件是 UTF-16，未自动转换(请另存为 UTF-8): ${clean_file}"
+            return 2
+            ;;
+    esac
+
+    clean_tmp="${TMP_PATH}/$(basename "${clean_file}").clean.$$"
+    if [ "$(head -c 3 "${clean_file}" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then
+        tail -c +4 "${clean_file}" > "${clean_tmp}"
+    else
+        cp -f "${clean_file}" "${clean_tmp}"
+    fi
+    tr -d '\015' < "${clean_tmp}" > "${clean_tmp}.lf" && mv -f "${clean_tmp}.lf" "${clean_tmp}"
+
+    if cmp -s "${clean_file}" "${clean_tmp}" 2>/dev/null; then
+        rm -f "${clean_tmp}"
+        return 0
+    fi
+
+    # 改动前留一份备份；只保留最近一份
+    cp -f "${clean_file}" "${clean_file}.bak" 2>/dev/null
+    mv -f "${clean_tmp}" "${clean_file}"
+    log "i" "已清洗配置的 BOM/CR: ${clean_file}"
+    return 0
+}
+
 # 保护进程不被系统 LMKD/OOM killer 回收
 # AGH 与 SmartDNS 是常驻内存大户，系统内存紧张时会被优先杀掉；
 # 把 oom_score_adj 设为 -1000 让内核把它们视为不可回收进程。

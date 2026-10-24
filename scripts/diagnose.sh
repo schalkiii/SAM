@@ -1,0 +1,297 @@
+#!/system/bin/sh
+# SAM 只读诊断脚本
+#
+# 用途: 一次采集"服务为什么起不来"与"DNS 链路为什么慢"的全部关键证据。
+# 安全: 只读。不启动/停止服务，不改配置，不动 iptables，不写模块目录
+#       (仅向 tmp 写一个探测文件并立即删除，用于判断可写性)。
+#
+# 用法(设备上, root):
+#   sh /data/adb/modules/SAM/scripts/diagnose.sh
+#   sh /data/adb/modules/SAM/scripts/diagnose.sh --watch 15   # 采样 15 秒看 v6 DROP 增量
+#
+# WebUI 工具页「一键诊断」同样调用本脚本。
+
+MODULE_PATH="/data/adb/modules/SAM"
+UPDATE_DIR="/data/adb/modules_update/SAM"
+TMP_PATH="${MODULE_PATH}/tmp"
+AGH_PATH="${MODULE_PATH}/etc/AdGuardHome"
+AGH_CONF="${AGH_PATH}/AdGuardHome.yaml"
+SD_CONF="${MODULE_PATH}/etc/SmartDNS/smartdns.conf"
+SETTING="${MODULE_PATH}/setting.conf"
+
+WATCH_SEC=0
+[ "${1}" = "--watch" ] && WATCH_SEC="${2:-15}"
+
+sep(){ echo "──────────────────────────────────────────"; }
+sec(){ echo ""; sep; echo "## ${1}"; sep; }
+kv(){ printf '%-26s %s\n' "${1}" "${2}"; }
+have(){ command -v "${1}" > /dev/null 2>&1 && echo "yes" || echo "no"; }
+cfg(){ grep -m1 "^${1}=" "${SETTING}" 2>/dev/null | cut -d= -f2-; }
+
+# ── 0. 运行身份门禁 ─────────────────────────────────────
+# 非 root 时 iptables / dumpsys / pidof / 模块目录全部不可访问，
+# 会得到一整篇「Permission denied + 未运行 + 缺失」的假结论，比不跑更浪费时间。
+if [ "$(id -u)" != "0" ]; then
+    echo "[×] 当前 uid=$(id -u)，不是 root，本报告无效。"
+    echo ""
+    echo "    非 root 下这些必然失败、且失败原因会被误判成模块故障:"
+    echo "      iptables / ip6tables  -> Permission denied"
+    echo "      dumpsys / cmd wifi    -> 空输出"
+    echo "      pidof / busybox       -> 不在 PATH"
+    echo "      /data/adb/modules/SAM -> 目录不可遍历，会被判成「模块未激活」"
+    echo ""
+    echo "    请用 root 执行:"
+    echo "      su -c \"sh $0\""
+    echo "    临时 root 且没有 su 命令时，改用 WebUI「工具 → 一键诊断」。"
+    exit 1
+fi
+
+echo "SAM 诊断报告"
+kv "时间" "$(date '+%Y-%m-%d %H:%M:%S')"
+kv "机型/系统" "$(getprop ro.product.model) / Android $(getprop ro.build.version.release)"
+kv "模块版本" "$(grep -m1 '^version=' "${MODULE_PATH}/module.prop" 2>/dev/null | cut -d= -f2-)"
+kv "uid" "$(id -u)"
+
+# ── 1. 模块目录与运行环境 ────────────────────────────────
+sec "1. 模块目录 / 运行环境"
+
+if [ -d "${MODULE_PATH}" ]; then
+    kv "active 目录" "存在"
+else
+    kv "active 目录" "缺失 —— 模块未激活"
+fi
+
+if [ -d "${UPDATE_DIR}" ]; then
+    kv "待激活包" "存在(${UPDATE_DIR})"
+    echo "    >>> 这就是管理器显示「待重启/激活生效」的直接原因。"
+    echo "    >>> 软重启不会合并该目录，需执行: sh ${MODULE_PATH}/scripts/manual.sh activate"
+else
+    kv "待激活包" "无"
+fi
+
+kv "module.prop 描述" "$(grep -m1 '^description=' "${MODULE_PATH}/module.prop" 2>/dev/null | cut -d= -f2-)"
+
+# tmp 可写性：三服务的日志重定向与 AGH 配置临时文件都落在这里
+if [ -d "${TMP_PATH}" ]; then
+    if ( : > "${TMP_PATH}/.diag.$$" ) 2>/dev/null; then
+        rm -f "${TMP_PATH}/.diag.$$"
+        kv "tmp 可写" "yes"
+    else
+        kv "tmp 可写" "NO  <<< 三服务都会启动失败，AGH 会报配置异常"
+    fi
+else
+    kv "tmp 目录" "不存在"
+fi
+
+# AGH 配置目录需要可写：update/agh.sh 用 mv 原子替换 yaml
+if ( : > "${AGH_PATH}/.diag.$$" ) 2>/dev/null; then
+    rm -f "${AGH_PATH}/.diag.$$"
+    kv "etc/AdGuardHome 可写" "yes"
+else
+    kv "etc/AdGuardHome 可写" "NO  <<< AGH 配置无法原子替换"
+fi
+
+kv "磁盘剩余(/data)" "$(df -h /data 2>/dev/null | awk 'NR==2{print $4" / 已用 "$5}')"
+kv "tmp 占用" "$(du -sh "${TMP_PATH}" 2>/dev/null | awk '{print $1}')"
+
+echo ""
+echo "关键命令:"
+kv "  busybox" "$(have busybox)"
+if command -v busybox > /dev/null 2>&1; then
+    kv "  busybox setuidgid" "$(busybox setuidgid root:net_raw true > /dev/null 2>&1 && echo OK || echo 'FAIL <<< 三服务都无法拉起')"
+    kv "  busybox 路径" "$(command -v busybox)"
+fi
+kv "  setsid" "$(have setsid)"
+kv "  inotifyd" "$(have inotifyd)"
+kv "  pidof" "$(have pidof)"
+kv "  ss" "$(have ss)"
+kv "  netstat" "$(have netstat)"
+kv "  curl" "$(have curl)"
+# 用 id <组名> 查 AID：Android 10+ 的 /system/etc/group 并不完整，
+# 用 grep group 文件会误报「组不存在」
+if id net_raw > /dev/null 2>&1; then
+    kv "  net_raw 组" "$(id net_raw 2>/dev/null | tr -d '\n')"
+else
+    kv "  net_raw 组" "缺失  <<< chown root:net_raw 会失败"
+fi
+if id net_admin > /dev/null 2>&1; then
+    kv "  net_admin 组" "$(id net_admin 2>/dev/null | tr -d '\n')"
+else
+    kv "  net_admin 组" "缺失  <<< chown root:net_admin 会失败(Mihomo 需要)"
+fi
+
+echo ""
+echo "SmartDNS 软链:"
+kv "  bin/smartdns" "$([ -e "${MODULE_PATH}/bin/smartdns" ] && echo 存在 || echo 缺失)"
+kv "  lib/ld-musl-aarch64.so.1" "$([ -e "${MODULE_PATH}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" ] && echo 存在 || echo 缺失)"
+kv "  lib/ld-linux.so" "$([ -e "${MODULE_PATH}/etc/SmartDNS/lib/ld-linux.so" ] && echo 存在 || echo 缺失)"
+kv "  smartdns 可执行" "$([ -x "${MODULE_PATH}/etc/SmartDNS/smartdns" ] && echo yes || echo NO)"
+kv "  AdGuardHome 可执行" "$([ -x "${MODULE_PATH}/bin/AdGuardHome" ] && echo yes || echo NO)"
+
+# ── 2. 服务进程与端口 ────────────────────────────────────
+sec "2. 服务进程 / 端口"
+
+for bin in smartdns AdGuardHome mihomo; do
+    pid=$(pidof "${bin}" 2>/dev/null)
+    kv "${bin}" "${pid:-未运行}"
+done
+
+echo ""
+echo "监听端口(53/1053/3721/5300/3000/9090):"
+if command -v ss > /dev/null 2>&1; then
+    ss -lnut 2>/dev/null | grep -E ":(53|1053|3721|5300|3000|9090)[[:space:]]" || echo "  无匹配"
+elif command -v netstat > /dev/null 2>&1; then
+    netstat -lnut 2>/dev/null | grep -E ":(53|1053|3721|5300|3000|9090)[[:space:]]" || echo "  无匹配"
+else
+    echo "  缺少 ss / netstat"
+    for p in 53 1053 3721 5300 3000; do
+        grep -q ":$(printf '%04X' "${p}") " /proc/net/tcp 2>/dev/null && echo "  tcp ${p} 在监听"
+    done
+fi
+
+echo ""
+echo "AGH 配置自检:"
+if [ -x "${MODULE_PATH}/bin/AdGuardHome" ]; then
+    agh_check=$("${MODULE_PATH}/bin/AdGuardHome" --check-config -c "${AGH_CONF}" -w "${AGH_PATH}" 2>&1 | tail -5)
+    echo "${agh_check}" | sed 's/^/  /'
+    kv "  schema_version" "$(grep -m1 '^schema_version:' "${AGH_CONF}" 2>/dev/null | awk '{print $2}')"
+    kv "  dns.port" "$(awk '/^dns:/{f=1} f&&/^  port:/{print $2; exit}' "${AGH_CONF}" 2>/dev/null)"
+    echo "  upstream_dns:"
+    awk '/^  upstream_dns:/{f=1;next} f&&/^    - /{print "    "$2} f&&!/^    - /{exit}' "${AGH_CONF}" 2>/dev/null | sed 's/^/  /'
+else
+    echo "  AdGuardHome 不可执行，跳过"
+fi
+
+echo ""
+echo "服务日志尾部:"
+# smartdns.log 是 SmartDNS 自己的运行日志(log-file ../../tmp/smartdns.log)，
+# smartdns.out 只是 stdout/stderr。排查"上游慢"要看 smartdns.log，不是 .out。
+for f in "${TMP_PATH}/AdGuardHome.log" "${TMP_PATH}/smartdns.log" "${TMP_PATH}/smartdns.out" "${TMP_PATH}/mihomo.log"; do
+    if [ -f "${f}" ]; then
+        echo "  --- ${f} (最后 15 行) ---"
+        tail -n 15 "${f}" 2>/dev/null | sed 's/^/    /'
+    fi
+done
+
+echo ""
+echo "错误聚合(三个服务日志中的 error/warn):"
+for f in "${TMP_PATH}/AdGuardHome.log" "${TMP_PATH}/smartdns.log"; do
+    [ -f "${f}" ] || continue
+    err_count=$(grep -icE "error|warn|fail|timeout" "${f}" 2>/dev/null)
+    kv "  ${f##*/} 命中行数" "${err_count:-0}"
+    grep -iE "error|warn|fail|timeout" "${f}" 2>/dev/null | tail -n 12 | sed 's/^/    /'
+done
+
+if [ -f "${TMP_PATH}/module.log" ]; then
+    echo "  --- module.log 中的 ERROR (最后 15 条) ---"
+    grep "ERROR" "${TMP_PATH}/module.log" 2>/dev/null | tail -n 15 | sed 's/^/    /'
+fi
+
+# ── 3. 防火墙规则 ────────────────────────────────────────
+sec "3. 防火墙规则"
+
+echo "IPv4 nat (DNS 劫持):"
+iptables -w 100 -t nat -S REDIRECT_DNS 2>&1 | sed 's/^/  /'
+iptables -w 100 -t nat -S OUTPUT 2>/dev/null | grep -E "REDIRECT|BLOCK" | sed 's/^/  OUTPUT: /'
+
+echo ""
+echo "IPv6 filter (DNS 阻断，含计数):"
+ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>&1 | sed 's/^/  /'
+
+echo ""
+echo "IPv6 nat 支持:"
+# 必须区分「内核没有 nat 表」和「当前身份没有权限」：
+# 权限不足时 ip6tables 返回非 0，直接看退出码会把后者误判成前者
+v6nat_out=$(ip6tables -w 100 -t nat -L 2>&1)
+case "${v6nat_out}" in
+    *"Permission denied"*|*"must be root"*)
+        echo "  无法判断(权限不足)" ;;
+    *"can't initialize"*|*"does not exist"*|*"No such file"*)
+        echo "  no(该内核无 ip6tables nat)" ;;
+    *)
+        echo "  yes" ;;
+esac
+
+echo ""
+echo "TUN 转发规则:"
+iptables -w 100 -S FORWARD 2>/dev/null | grep -E "Meta|tun" | sed 's/^/  /' || echo "  无"
+
+# ── 4. 当前网络与 DNS 服务器 ─────────────────────────────
+sec "4. 当前网络 / 系统 DNS"
+
+net_type="未知"
+if command -v cmd > /dev/null 2>&1; then
+    wifi_status=$(cmd wifi status 2>/dev/null)
+    case "${wifi_status}" in
+        *"Wifi is enabled"*|*"enabled"*)
+            ssid=$(echo "${wifi_status}" | sed -n 's/.*SSID: "\(.*\)".*/\1/p' | head -n 1)
+            [ -n "${ssid}" ] && net_type="WiFi(${ssid})"
+            ;;
+    esac
+fi
+kv "网络类型" "${net_type}"
+
+echo ""
+echo "系统下发的 DNS 服务器(dumpsys connectivity):"
+if command -v dumpsys > /dev/null 2>&1; then
+    dumpsys connectivity 2>/dev/null | grep -oE "DnsAddresses: \[[^]]*\]" | head -3 | sed 's/^/  /'
+else
+    echo "  无 dumpsys"
+fi
+
+echo ""
+echo "IPv6 DNS 地址(系统配置):"
+if command -v dumpsys > /dev/null 2>&1; then
+    dumpsys connectivity 2>/dev/null | grep -oE "DnsAddresses: \[[^]]*\]" | head -3 | grep -oE "[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{0,4}){2,}" | head -5 | sed 's/^/  /'
+    echo "  (若上面有地址、而下面 counters 在涨，就是 WiFi 慢的主因)"
+fi
+
+echo ""
+echo "接口 MTU:"
+ip -o link 2>/dev/null | awk '{print "  "$2" mtu "$5}' | head -10
+
+# ── 5. 解析耗时实测 ─────────────────────────────────────
+sec "5. DNS 解析耗时实测(走模块链路)"
+
+if command -v curl > /dev/null 2>&1; then
+    for d in www.baidu.com www.qq.com github.com; do
+        t=$(curl -s -o /dev/null -m 8 -w "%{time_namelookup}" "https://${d}/" 2>/dev/null)
+        kv "  ${d}" "${t}s"
+    done
+else
+    echo "  无 curl，改用 ping 首次解析"
+    for d in www.baidu.com github.com; do
+        ping -c 1 -W 3 "${d}" > /dev/null 2>&1 && echo "  ${d} 解析成功" || echo "  ${d} 解析失败/超时"
+    done
+fi
+
+echo ""
+echo "SmartDNS 关键参数:"
+for k in "response-mode" "speed-check-mode" "rr-ttl-min" "dualstack-ip-selection" "cache-size"; do
+    kv "  ${k}" "$(grep -m1 "^${k} " "${SD_CONF}" 2>/dev/null | cut -d' ' -f2-)"
+done
+echo ""
+echo "模块设置:"
+for k in SMARTDNS_RESPONSE_MODE SMARTDNS_SPEED_CHECK SMARTDNS_TTL_MIN SMARTDNS_DUALSTACK \
+         BLOCK_IPV6_DNS MODULE_DNS_MODE LAN_ACCESS NETWORK_REFRESH BYPASS_ENABLE \
+         MIHOMO_ENABLE AGH_ENABLE SMARTDNS_ENABLE; do
+    kv "  ${k}" "$(cfg "${k}")"
+done
+
+# ── 6. IPv6 DROP 增量采样 ───────────────────────────────
+if [ "${WATCH_SEC}" -gt 0 ]; then
+    sec "6. IPv6 DNS DROP 增量采样(${WATCH_SEC}s)"
+    before=$(ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>/dev/null | awk '/DROP/ && /udp/ {print $1; exit}')
+    echo "  起始计数: ${before:-0}"
+    sleep "${WATCH_SEC}"
+    after=$(ip6tables -w 100 -t filter -L BLOCK_IPV6_DNS -v -n 2>/dev/null | awk '/DROP/ && /udp/ {print $1; exit}')
+    echo "  结束计数: ${after:-0}"
+    delta=$(( ${after:-0} - ${before:-0} ))
+    echo "  增量: ${delta} 个 IPv6 DNS 包被静默丢弃"
+    echo "  >>> 增量 > 0 且网络是 WiFi 时，说明系统在向 IPv6 DNS 发查询并被本模块丢包，"
+    echo "      每个查询要等超时才回退 IPv4 —— 这是 WiFi 明显慢于 5G 的典型原因。"
+fi
+
+echo ""
+sep
+echo "诊断结束。把整段输出回传即可定位。"

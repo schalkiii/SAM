@@ -174,6 +174,15 @@
                     </div>
                     <div class="monitor-actions"></div>
                 </div>
+
+                <div class="monitor-item" data-id="1">
+                    <div class="monitor-info">
+                        <h4>AdGuardHome 配置</h4>
+                        <div class="monitor-desc">启动前执行 --check-config；校验失败会暂停自动拉起，修复配置后重启服务</div>
+                        <span id="agh-config-status" class="monitor-status status-inactive">未知</span>
+                    </div>
+                    <div class="monitor-actions"></div>
+                </div>
             </div>
 
         </div>
@@ -231,7 +240,7 @@
                     <label class="switch"><input type="checkbox" data-key="AGH_ENABLE"><span class="track"></span></label>
                 </div>
                 <div class="setting-row">
-                    <div class="setting-info"><h4>Mihomo</h4><div class="setting-desc">代理与 TUN，需要填写订阅地址</div></div>
+                    <div class="setting-info"><h4>Mihomo</h4><div class="setting-desc">代理与 TUN，需要填写订阅地址；默认关闭</div></div>
                     <label class="switch"><input type="checkbox" data-key="MIHOMO_ENABLE"><span class="track"></span></label>
                 </div>
                 <div class="setting-row">
@@ -450,6 +459,14 @@
                     <button class="tool-btn" data-script="update/desc.sh" data-args="">刷新模块描述</button>
                 </div>
                 <div class="setting-desc">「刷新网络」等价于开关一次飞行模式，用于服务异常退出后手机仍然没网的情况。</div>
+            </div>
+
+            <div class="content-section">
+                <h3>诊断</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-script="diagnose.sh" data-args="">一键诊断</button>
+                </div>
+                <div class="setting-desc">只读采集服务/端口/配置校验/防火墙/DNS/MTU；建议分别在 WiFi 与 5G 下各跑一次对比。也可在 root 终端执行 <code>sh /data/adb/modules/SAM/scripts/diagnose.sh</code>。</div>
             </div>
 
             <div class="content-section">

@@ -19,7 +19,9 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **内核安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
 - **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC、`mksh -n` 校验；`.gitattributes` 保证 Windows 检出也是 LF
-- 广告过滤加入 GOODBYEADS 规则集与其放行列表（AdGuardHome 侧）
+- **一键诊断**：WebUI「工具 → 一键诊断」或 `scripts/diagnose.sh` 只读采集服务、端口、AGH 配置校验、防火墙、DNS、MTU 与 IPv6 DROP 计数
+- **Mihomo 默认关闭**：没有订阅地址时它本身也起不来；需要代理时在设置里开启并填写订阅
+- **广告过滤加入 GOODBYEADS 规则集与其放行列表**（AdGuardHome 侧）
 - **广告屏蔽可逆**：屏蔽时把 App 广告缓存目录改名保留并锁定，屏蔽效果与清空相同但数据不丢，随时可原样还原；关闭开关会自动恢复；已卸载 App 的锁定会在启动/每 5 分钟自动解除
 - **缓存只留一层**：AdGuardHome 自身不缓存，缓存由上游 SmartDNS 独占，避免双份内存并保留其测速选优能力
 

@@ -79,7 +79,8 @@ async function updateServiceStatus() {
     lastStatus = status;
 
     getServiceStatus("smartdns-status", status.smartdns || "未运行");
-    getServiceStatus("agh-status", status.agh || "未运行");
+    const aghConfigBad = status.agh_config === "bad";
+    getServiceStatus("agh-status", aghConfigBad ? "配置错误" : (status.agh || "未运行"));
     getServiceStatus("mihomo-status", status.mihomo || "未运行");
     getServiceStatus("host-mount-status", status.host || "未挂载");
 
@@ -107,6 +108,14 @@ async function updateServiceStatus() {
         moduleDescStatus.textContent = moduleDesc;
         moduleDescStatus.classList.toggle("status-active", descRunning);
         moduleDescStatus.classList.toggle("status-inactive", !descRunning);
+    }
+
+    // AGH 配置校验状态
+    const aghConfigStatus = document.getElementById("agh-config-status");
+    if (aghConfigStatus) {
+        aghConfigStatus.textContent = aghConfigBad ? "校验失败(已暂停自动拉起)" : "正常";
+        aghConfigStatus.classList.toggle("status-active", !aghConfigBad);
+        aghConfigStatus.classList.toggle("status-inactive", aghConfigBad);
     }
 
     const host_mount_action = document.getElementById("host-mount-action");

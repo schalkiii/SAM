@@ -44,6 +44,8 @@ protect_process "$$"
 sd_backoff=0
 agh_backoff=0
 mihomo_backoff=0
+# AGH 配置校验失败时只提示一次，避免刷日志
+agh_config_skip_logged=0
 
 # 本轮是否发生了"服务异常死亡后被拉起"
 # 异常死亡意味着系统的网络状态可能已经被判成无网络，
@@ -65,6 +67,21 @@ all_services_running(){
         isRun ${MIHOMO_BIN} || return 1
     fi
     return 0
+}
+
+# AGH 配置是否仍处于上次校验失败的状态
+# 用 cksum 而不是 mtime: update/agh.sh 每次启动都会重写配置，mtime 必然变化；
+# 只有内容真的变了才允许再试，否则会陷入"校验失败 -> 5 秒后重试"的循环。
+agh_config_blocked(){
+    [ -s "${TMP_PATH}/agh.config.bad" ] || return 1
+    [ -f "${AGH_CONF}" ] || return 1
+    current_stamp=$(cksum "${AGH_CONF}" 2>/dev/null | awk '{print $1" "$2}')
+    saved_stamp=$(cat "${TMP_PATH}/agh.config.bad" 2>/dev/null)
+    if [ -n "${current_stamp}" ] && [ "${current_stamp}" = "${saved_stamp}" ]; then
+        return 0
+    fi
+    rm -f "${TMP_PATH}/agh.config.bad"
+    return 1
 }
 
 # 日志轮转
@@ -113,19 +130,30 @@ ensure_service(){
     fi
 
     if [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN}; then
-        if [ ${agh_backoff} -le 0 ]; then
-            log "i" "守护: ${AGH_BIN} 未运行，重新启动"
-            ${SERVICE_PATH}/agh.sh start
-            agh_backoff=${BACKOFF_ROUNDS}
-            if isRun ${AGH_BIN}; then
-                recovered_abnormal=1
-                service_state_changed=1
+        if agh_config_blocked; then
+            # 配置没修好，不再每轮尝试；只提示一次，等配置内容变化或用户手动重启
+            if [ "${agh_config_skip_logged}" != "1" ]; then
+                log "e" "守护: ${AGH_BIN} 配置校验失败，暂停自动拉起(修复后重启服务)"
+                agh_config_skip_logged=1
             fi
+            agh_backoff=0
         else
-            agh_backoff=$((agh_backoff - 1))
+            agh_config_skip_logged=0
+            if [ ${agh_backoff} -le 0 ]; then
+                log "i" "守护: ${AGH_BIN} 未运行，重新启动"
+                ${SERVICE_PATH}/agh.sh start
+                agh_backoff=${BACKOFF_ROUNDS}
+                if isRun ${AGH_BIN}; then
+                    recovered_abnormal=1
+                    service_state_changed=1
+                fi
+            else
+                agh_backoff=$((agh_backoff - 1))
+            fi
         fi
     else
         agh_backoff=0
+        agh_config_skip_logged=0
     fi
 
     # Mihomo 没有订阅时本身起不来，不反复重试刷日志；直通模式下停用
