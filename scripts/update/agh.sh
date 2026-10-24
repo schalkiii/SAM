@@ -81,6 +81,7 @@ modify_conf(){
     fi
 
     # 判断 SmartDNS 启用且端口确实在监听，才把它作为上游
+    # 期望链路不可用时回退到另一个可用本地 DNS；全不可用才使用公共 DNS
     if [ "${SMARTDNS_ENABLE}" = "true" ] && [ "${MODULE_DNS_MODE}" = "2" ] && \
        isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
         log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
@@ -89,10 +90,12 @@ modify_conf(){
          isRun "${MIHOMO_BIN}" && is_port_listening "${MIHOMO_DNS_PORT}"; then
         log "i" "${AGH_BIN} 上游DNS使用 ${MIHOMO_BIN}"
         replace_upstream "127.0.0.1:${MIHOMO_DNS_PORT}"
-    elif [ "${MIHOMO_ENABLE}" = "false" ] && [ "${SMARTDNS_ENABLE}" = "true" ] && \
-         isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
-        log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
+    elif [ "${SMARTDNS_ENABLE}" = "true" ] && isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
+        log "i" "${AGH_BIN} 上游DNS回退到 ${SMARTDNS_BIN}"
         replace_upstream "127.0.0.1:${SMARTDNS_PORT}"
+    elif [ "${MIHOMO_ENABLE}" = "true" ] && isRun "${MIHOMO_BIN}" && is_port_listening "${MIHOMO_DNS_PORT}"; then
+        log "i" "${AGH_BIN} 上游DNS回退到 ${MIHOMO_BIN}"
+        replace_upstream "127.0.0.1:${MIHOMO_DNS_PORT}"
     else
         log "i" "${AGH_BIN} 上游DNS使用默认DNS"
         replace_upstream $(echo "${DNS_LIST}")
@@ -103,8 +106,8 @@ modify_conf(){
 modify_dns_port(){
     port_value=$(get_dns_port)
     [ -z "${port_value}" ] && {
-        log "e" "读取 ${AGH_BIN} DNS 端口失败，跳过端口修改"
-        return 0
+        log "e" "读取 ${AGH_BIN} DNS 端口失败"
+        return 1
     }
     if [ "${AGH_DNS_PORT}" != "${port_value}" ]; then
         log "i" "修改 AdGuardHome DNS 端口 ${port_value} 为 ${AGH_DNS_PORT}"

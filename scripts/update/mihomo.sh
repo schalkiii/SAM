@@ -18,13 +18,14 @@ content=$(cat "${MIHOMO_PATH}/base.yaml")
 SMARTDNS_PORT=$(smartdns_port)
 
 # DNS 端口
+# 期望链路不可用时必须回退到真正可用的上游，不能把 Mihomo 指向已经死亡的 AGH/SmartDNS
 if [ "${MODULE_DNS_MODE}" = 1 ] && [ "${SMARTDNS_ENABLE}" = true ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
     DNS_PORT=${SMARTDNS_PORT}
 elif [ "${MODULE_DNS_MODE}" = 2 ] && [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
     DNS_PORT=${AGH_DNS_PORT}
-elif [ "${SMARTDNS_ENABLE}" = true ] && [ "${AGH_ENABLE}" = false ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
+elif [ "${SMARTDNS_ENABLE}" = true ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
     DNS_PORT=${SMARTDNS_PORT}
-elif [ "${SMARTDNS_ENABLE}" = false ] && [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
+elif [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
     DNS_PORT=${AGH_DNS_PORT}
 fi
 
@@ -361,9 +362,14 @@ add_easytier_conf
 add_smart_conf
 
 # 全部修改完成后一次性写回，避免运行中的 mihomo 读到半截配置
-if [ -s "${MIHOMO_CONF}" ] && mv -f "${MIHOMO_CONF}" "${MIHOMO_CONF_REAL}"; then
-    log "i" "Mihomo 配置已更新"
+if [ -s "${MIHOMO_CONF}" ] && mihomo -t -d "${MIHOMO_PATH}" -f "${MIHOMO_CONF}" > /dev/null 2>&1; then
+    if mv -f "${MIHOMO_CONF}" "${MIHOMO_CONF_REAL}"; then
+        log "i" "Mihomo 配置已更新"
+    else
+        log "e" "写入 ${MIHOMO_CONF_REAL} 失败"
+        exit 1
+    fi
 else
-    log "e" "写入 ${MIHOMO_CONF_REAL} 失败"
+    log "e" "Mihomo 配置生成或校验失败，保留原配置"
     exit 1
 fi

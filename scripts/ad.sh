@@ -444,18 +444,27 @@ recovery_ad(){
             chattr -i "${ad_target}" 2>/dev/null
             if [ -d "${ad_target}" ]; then
                 # 空目录直接删; 非空说明 App 期间又写了东西, 改名保留而不是删
-                rmdir "${ad_target}" 2>/dev/null ||                     mv "${ad_target}" "${ad_target}.samnew" 2>/dev/null
+                rmdir "${ad_target}" 2>/dev/null || \
+                    mv "${ad_target}" "${ad_target}.samnew" 2>/dev/null
             else
-                rm -f "${ad_target}" 2>/dev/null
+                # 文件目标也不能直接 rm：屏蔽期间 App 可能写入了新内容。
+                # 空壳才删除；非空必须保留到 .samnew。
+                if [ -s "${ad_target}" ]; then
+                    mv "${ad_target}" "${ad_target}.samnew" 2>/dev/null || return 1
+                else
+                    rm -f "${ad_target}" 2>/dev/null
+                fi
             fi
+            # 目标仍存在时不能继续覆盖，否则会把 .samhold 或新内容压掉
+            [ -e "${ad_target}" ] && return 1
         fi
         if mv "${ad_hold}" "${ad_target}" 2>/dev/null; then
             hold_forget "${ad_target}"
-        else
-            log "e" "恢复失败, 备份仍在: ${ad_hold}"
+            let "recovery_number++"
+            return 0
         fi
-        let "recovery_number++"
-        return 0
+        log "e" "恢复失败, 备份仍在: ${ad_hold}"
+        return 1
     fi
 
     # 没有备份: 只处理旧版本屏蔽留下的锁定空壳
@@ -467,8 +476,10 @@ recovery_ad(){
         else
             rm -f "${ad_target}" 2>/dev/null
         fi
+        hold_forget "${ad_target}"
         let "recovery_number++"
     fi
+    return 0
 }
 
 # 运行
@@ -504,6 +515,7 @@ run(){
 
 # 恢复全部: 优先按备份清单精确处理, 再兜底扫一遍路径数组(处理旧版本屏蔽的)
 recovery_all(){
+    recovery_failed=0
     # 1) 备份清单里的(新方案屏蔽的)
     # 先复制一份再遍历: recovery_ad 内部会从清单里删条目, 边遍历边改会漏读
     hold_copy="${TMP_PATH}/ad_hold_copy.$$"
@@ -516,7 +528,7 @@ recovery_all(){
                 hold_forget "${hold_line}"
                 continue
             fi
-            recovery_ad "${hold_line}"
+            recovery_ad "${hold_line}" || recovery_failed=1
         done < "${hold_copy}"
     fi
     rm -f "${hold_copy}" 2>/dev/null
@@ -533,15 +545,16 @@ recovery_all(){
                     is_hold_item "${ad_item}" && continue
                     # 已在第 1 步处理过的跳过
                     [ -e "${ad_item}${HOLD_SUFFIX}" ] && continue
-                    recovery_ad "${ad_item}"
+                    recovery_ad "${ad_item}" || recovery_failed=1
                 done
                 ;;
             *)
                 [ -e "${ad}${HOLD_SUFFIX}" ] && continue
-                recovery_ad "${ad}"
+                recovery_ad "${ad}" || recovery_failed=1
                 ;;
         esac
     done
+    [ ${recovery_failed} -eq 0 ]
 }
 
 # 从 App 数据路径解析包名；共享存储等无法确定包名的路径返回 1
@@ -830,23 +843,12 @@ list_hold(){
 
 # 添加指令前先加锁: block/recovery/cleanup 可能由启动、守护循环和 WebUI 并发触发，
 # 清单是「读-改-写」，不加锁会互相覆盖
-AD_LOCK="${TMP_PATH}/.ad.lock"
 acquire_ad_lock(){
-    ad_lock_try=0
-    while ! mkdir "${AD_LOCK}" 2>/dev/null; do
-        ad_lock_try=$((ad_lock_try + 1))
-        # 超过 10 秒视为崩溃残留锁
-        if [ ${ad_lock_try} -gt 100 ]; then
-            rm -rf "${AD_LOCK}"
-            mkdir "${AD_LOCK}" 2>/dev/null
-            break
-        fi
-        sleep 0.1 2>/dev/null || sleep 1
-    done
+    sam_lock_acquire "ad" 30
 }
 
 release_ad_lock(){
-    rmdir "${AD_LOCK}" 2>/dev/null
+    sam_lock_release "ad"
 }
 
 trap release_ad_lock EXIT HUP INT TERM
@@ -860,8 +862,12 @@ case "$1" in
         ;;
     recovery)
         log "i" "恢复 App 广告路径"
-        recovery_all
-        log "i" "已恢复 ${recovery_number} 个"
+        if recovery_all; then
+            log "i" "已恢复 ${recovery_number} 个"
+        else
+            log "e" "广告恢复存在失败项，请勿删除备份清单"
+            exit 1
+        fi
         ;;
     cleanup)
         cleanup_removed "${2:-safe}"

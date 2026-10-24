@@ -9,7 +9,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 软重启后恢复：`sh scripts/manual.sh resume`（检测到待激活包时会先 `activate`；WebUI 按钮同步变为「激活并恢复新版」）
 - 卸载（不需要重启）：`sh scripts/manual.sh uninstall`
 - 打包：`python tools/pack_module.py`；只检查用 `--check`；不改源文件用 `--no-write`；打包会跳过 `tools/`、`dist/`、`.workbuddy/` 等非模块内容
-- 广告屏蔽回归测试：`python tools/test_ad_sh.py`（改 `scripts/ad.sh` 后必跑，25 项断言）
+- 广告屏蔽回归测试：`python tools/test_ad_sh.py`（改 `scripts/ad.sh` 后必跑，27 项断言）
 
 ## 技术栈
 - 设备端 `/system/bin/sh` 是 mksh：支持数组、`(( ))`、`let`；不要用 bash 专属语法
@@ -26,7 +26,13 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换，临时文件放 `tmp/`）；`get` 必须覆盖 WebUI 所有 `data-key`
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
 - **配置文件清洗**：`base.sh` 的 `sanitize_config` 在 AGH/SmartDNS 启动前清理 UTF-8 BOM 与 CR；UTF-16 明确报错不自动转换。AGH 启动前跑 `--check-config`，失败写 `tmp/agh.config.bad`（内容 cksum）和 `agh.config.bad.reason`（`yaml`/`schema`/`encoding`/`generate`），守护循环据此暂停自动拉起，配置内容变化或手动重启后才重试
-- **服务用户降级**：三服务统一经 `base.sh` 的 `service_exec` 启动；`busybox setuidgid` 或独立 `setuidgid` 不可用时以 root 启动并在 `module.log` 记录 ERROR，避免临时 root 下三服务一起静默失败
+- **服务用户降级**：三服务统一经 `base.sh` 的 `service_exec` 启动；`busybox setuidgid` 或独立 `setuidgid` 不可用时以 root 启动并在 `module.log` 记录 ERROR，避免临时 root 下三服务一起静默失败。当前 `SAM_USER=root`，只降组不降 UID，控制面仍需依赖回环监听和默认密码提醒。
+- **服务启停互斥**：`service.sh start/stop/restart`、watchdog 的服务/规则恢复、`setting_api apply` 共用 `base.sh` 的 PID 目录锁；watchdog 拿锁后会再次检查 `service.state`，避免停止屏障失效。WiFi 查询失败时保持现状，不把空 SSID 当成非黑名单。
+- **配置事务写入**：`setting_api.sh set/setarr` 先写临时副本，全部校验通过后一次 `mv`；端口冲突按同一批最终候选值校验，TTL 独立为 0-86400。
+- **服务自动停止取证**：watchdog 在服务异常消失时写 `tmp/auto-stop.<bin>.*.log`，`diagnose.sh` 汇总 `SERVICE-EVENT`、`watchdog.heartbeat`、`oom_score_adj`、MIUI/`logcat` 杀进程线索。
+- **广告恢复保护**：文件类路径屏蔽期间的新内容改名到 `.samnew`，恢复失败返回非零；卸载只有全部恢复成功才删除 `/data/adb/SAM-ad-hold.list`。
+- **更新与安装安全**：组件下载优先校验 `.sha256`，tar 拒绝绝对路径/`..`/链接；AGH/Mihomo 替换失败会回滚；`customize.sh` 解压或关键文件失败会中止安装。
+- **hosts 更新**：内容必须逐行是 `IP 域名`，更新使用 PID 锁与唯一临时文件，失败不覆盖原 hosts。
 - **IPv6 DNS 阻断**：`iptables/dns.sh` 优先用 REJECT（UDP `icmp6-port-unreachable`、TCP `tcp-reset`），内核不支持时回退 DROP；探测结果写入 `tmp/ipv6.block.mode`，避免守护循环反复删加规则
 - SmartDNS 启动失败时把 `tmp/smartdns.log` 最后 5 行写入 module.log（`smartdns.out` 只有 wrapper 提示）
 - **服务异常检测**：`service.sh` 的 `has_abnormal_service` 返回 0 才表示有服务缺失；正常重启不应写 `tmp/service.abnormal`。异常标记只在全部启用服务恢复后才消费并刷新网络，仍缺失时保留标记等下次

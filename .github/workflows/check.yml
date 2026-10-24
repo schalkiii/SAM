@@ -14,6 +14,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       # 设备上的 sh 是 mksh，bash 通过不代表能跑
       - name: 安装 mksh
         run: sudo apt-get update && sudo apt-get install -y mksh
@@ -21,6 +25,9 @@ jobs:
       # --no-write: 只校验，不改仓库里的文件；CRLF 现在也会让 --check 失败
       - name: 检查模块
         run: python tools/pack_module.py --check --no-write
+
+      - name: WebUI JavaScript 语法检查
+        run: node --check webroot/js/main.js && node --check webroot/js/kernelsu.js
 
       - name: 广告屏蔽回归测试
         run: python tools/test_ad_sh.py

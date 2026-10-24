@@ -17,26 +17,15 @@
 source "/data/adb/modules/SAM/scripts/base.sh" > /dev/null 2>&1
 
 CONF_FILE="${MODULE_PATH}/setting.conf"
-LOCK_DIR="${TMP_PATH}/.setting.lock"
 CHANGED_FILE="${TMP_PATH}/.setting_changed"
 
 # 进程内互斥，避免 WebUI 与命令行同时写导致互相覆盖
 acquire_lock(){
-    lock_try=0
-    while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
-        lock_try=$((lock_try + 1))
-        # 超过 5 秒视为残留锁，强制接管
-        if [ ${lock_try} -gt 50 ]; then
-            rm -rf "${LOCK_DIR}"
-            mkdir "${LOCK_DIR}" 2>/dev/null
-            break
-        fi
-        sleep 0.1 2>/dev/null || sleep 1
-    done
+    sam_lock_acquire "setting" 30
 }
 
 release_lock(){
-    rmdir "${LOCK_DIR}" 2>/dev/null
+    sam_lock_release "setting"
 }
 
 # 只写日志文件，不污染 WebUI 的返回值
@@ -56,7 +45,8 @@ need_refresh(){
 
 # 支持的设置项分类
 BOOL_KEYS="SMARTDNS_ENABLE AGH_ENABLE BLOCK_IPV6_DNS MIHOMO_ENABLE MIHOMO_IPV6 IP_IPTABLES HOST_ENABLE CRONTAB_ENABLE BACKUP_CONF ENABLE_WHITELIST BYPASS_ENABLE NETWORK_REFRESH AD_BLOCK_ENABLE LAN_ACCESS SMARTDNS_DUALSTACK"
-NUMBER_KEYS="AGH_DNS_PORT MIHOMO_DNS_PORT SMARTDNS_TTL_MIN"
+PORT_KEYS="AGH_DNS_PORT MIHOMO_DNS_PORT"
+TTL_KEYS="SMARTDNS_TTL_MIN"
 TEXT_KEYS="TUN_DEVICE EXCLUDE_NODE SMARTDNS_SPEED_CHECK"
 ENUM_KEYS="MODULE_DNS_MODE WHITELIST_MODE MIHOMO_DNS_MODE SMARTDNS_RESPONSE_MODE"
 ARRAY_KEYS="SUB_URL BLACKLIST_WIFI"
@@ -89,7 +79,7 @@ escape_value(){
 
 # 输出全部设置
 get_all(){
-    for key in ${BOOL_KEYS} ${NUMBER_KEYS} ${TEXT_KEYS} ${ENUM_KEYS}; do
+    for key in ${BOOL_KEYS} ${PORT_KEYS} ${TTL_KEYS} ${TEXT_KEYS} ${ENUM_KEYS}; do
         eval "value=\${${key}}"
         printf '%s=%s\n' "${key}" "${value}"
     done
@@ -120,11 +110,29 @@ prepare_conf(){
     mv -f "${TMP_PATH}/setting.prepare.$$" "${CONF_FILE}"
 }
 
+# 事务写入：先在副本上完成全部校验和替换，最后一次性原子提交
+begin_setting_transaction(){
+    SETTING_TARGET="${TMP_PATH}/setting.transaction.$$"
+    cp -f "${CONF_FILE}" "${SETTING_TARGET}" 2>/dev/null || return 1
+}
+
+commit_setting_transaction(){
+    [ -s "${SETTING_TARGET}" ] || return 1
+    mv -f "${SETTING_TARGET}" "${CONF_FILE}"
+    SETTING_TARGET=""
+}
+
+abort_setting_transaction(){
+    rm -f "${SETTING_TARGET}" 2>/dev/null
+    SETTING_TARGET=""
+}
+
 # 替换单个键所在的行；键不存在则追加
 # 内容通过临时文件传入，避免 awk -v 解释反斜杠
 replace_line(){
     target_key="${1}"
     target_line="${2}"
+    target_conf="${SETTING_TARGET:-${CONF_FILE}}"
 
     line_file="${TMP_PATH}/.setting_line.$$"
     tmp_file="${TMP_PATH}/.setting_tmp.$$"
@@ -136,7 +144,7 @@ replace_line(){
         index($0, k "=") == 1 && !done { print newline; done = 1; next }
         { print }
         END { if (!done) print newline }
-    ' "${line_file}" "${CONF_FILE}" > "${tmp_file}"
+    ' "${line_file}" "${target_conf}" > "${tmp_file}"
 
     rm -f "${line_file}"
 
@@ -147,7 +155,7 @@ replace_line(){
         return 1
     fi
 
-    mv -f "${tmp_file}" "${CONF_FILE}"
+    mv -f "${tmp_file}" "${target_conf}"
     return 0
 }
 
@@ -163,27 +171,38 @@ set_scalar(){
         esac
         replace_line "${item_key}" "${item_key}=${item_value}" || return 1
 
-    elif in_keys "${item_key}" ${NUMBER_KEYS}; then
+    elif in_keys "${item_key}" ${PORT_KEYS}; then
         case "${item_value}" in
             ''|*[!0-9]*) echo "取值非法: ${item_key} 只能是数字" >&2; return 1 ;;
         esac
-        # 端口必须落在 1-65535；用 awk 做数值比较，避免 shell 对前导 0 的歧义
         if ! awk -v p="${item_value}" 'BEGIN { exit !(p >= 1 && p <= 65535) }'; then
             echo "取值非法: ${item_key} 必须在 1-65535 之间" >&2
             return 1
         fi
-        # 三个 DNS 端口不能冲突（SmartDNS 固定 3721）
-        if [ "${item_key}" = "AGH_DNS_PORT" ]; then
-            if [ "${item_value}" = "${MIHOMO_DNS_PORT}" ] || [ "${item_value}" = "3721" ]; then
-                echo "取值非法: AGH_DNS_PORT 与其它 DNS 端口冲突" >&2
-                return 1
-            fi
+        # 同一批次必须基于最终候选值校验，不能只和进程内旧值比较
+        pending_agh_port="${AGH_DNS_PORT}"
+        pending_mihomo_port="${MIHOMO_DNS_PORT}"
+        [ "${item_key}" = "AGH_DNS_PORT" ] && pending_agh_port="${item_value}"
+        [ "${item_key}" = "MIHOMO_DNS_PORT" ] && pending_mihomo_port="${item_value}"
+        if [ "${pending_agh_port}" = "3721" ] || [ "${pending_mihomo_port}" = "3721" ] || \
+           [ "${pending_agh_port}" = "${pending_mihomo_port}" ]; then
+            echo "取值非法: DNS 端口不能为 3721 或互相冲突" >&2
+            return 1
         fi
-        if [ "${item_key}" = "MIHOMO_DNS_PORT" ]; then
-            if [ "${item_value}" = "${AGH_DNS_PORT}" ] || [ "${item_value}" = "3721" ]; then
-                echo "取值非法: MIHOMO_DNS_PORT 与其它 DNS 端口冲突" >&2
-                return 1
-            fi
+        if [ "${item_key}" = "AGH_DNS_PORT" ]; then
+            AGH_DNS_PORT="${item_value}"
+        else
+            MIHOMO_DNS_PORT="${item_value}"
+        fi
+        replace_line "${item_key}" "${item_key}=${item_value}" || return 1
+
+    elif in_keys "${item_key}" ${TTL_KEYS}; then
+        case "${item_value}" in
+            ''|*[!0-9]*) echo "取值非法: ${item_key} 只能是数字" >&2; return 1 ;;
+        esac
+        if ! awk -v p="${item_value}" 'BEGIN { exit !(p >= 0 && p <= 86400) }'; then
+            echo "取值非法: ${item_key} 必须在 0-86400 之间" >&2
+            return 1
         fi
         replace_line "${item_key}" "${item_key}=${item_value}" || return 1
 
@@ -294,17 +313,29 @@ apply_settings(){
     # 这里只把结论返回给 WebUI —— 否则 toast 会变成几十行服务日志，没法读。
     restart_out="${TMP_PATH}/apply_restart.$$"
     sh "${SCRIPTS_PATH}/service.sh" restart > "${restart_out}" 2>&1
-    # 重启过程中出现的错误条数，用于给用户一个可操作的提示
-    restart_err=$(grep -c "ERROR" "${restart_out}" 2>/dev/null)
-    [ -z "${restart_err}" ] && restart_err=0
+    restart_rc=$?
+    # 只有真实退出码和最终服务数量才可信；日志文本可能不含 ERROR 字样
+    expected_services=0
+    [ "${SMARTDNS_ENABLE}" = "true" ] && expected_services=$((expected_services + 1))
+    [ "${AGH_ENABLE}" = "true" ] && expected_services=$((expected_services + 1))
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+        expected_services=$((expected_services + 1))
+    fi
+    running_services=0
+    isRun ${SMARTDNS_BIN} && running_services=$((running_services + 1))
+    isRun ${AGH_BIN} && running_services=$((running_services + 1))
+    isRun ${MIHOMO_BIN} && running_services=$((running_services + 1))
+    if [ ${restart_rc} -ne 0 ] || [ ${running_services} -lt ${expected_services} ]; then
+        echo "配置已保存，但服务重启未完全成功(${running_services}/${expected_services})，请到日志页查看" >&2
+        rm -f "${restart_out}" "${CHANGED_FILE}"
+        return 1
+    fi
     rm -f "${restart_out}"
 
     if [ ${refresh_needed} -eq 1 ]; then
         file_log "配置变更涉及 DNS 链路，刷新一次网络"
         refresh_network force
         echo "配置已应用，已刷新网络"
-    elif [ "${restart_err}" -gt 0 ]; then
-        echo "配置已应用(重启过程有 ${restart_err} 条错误，请到日志页查看)"
     else
         echo "配置已应用"
     fi
@@ -319,16 +350,17 @@ case "${1}" in
         ;;
     set)
         shift
-        acquire_lock
+        acquire_lock || { echo "获取配置锁失败" >&2; exit 1; }
         : > "${CHANGED_FILE}"
         prepare_conf || { release_lock; exit 1; }
+        begin_setting_transaction || { release_lock; exit 1; }
         failed=0
         for pair in "$@"; do
             [ -z "${pair}" ] && continue
             pair_key="${pair%%=*}"
             pair_value="${pair#*=}"
             # 值没变就不重写文件，也不计入待应用列表
-            if in_keys "${pair_key}" ${BOOL_KEYS} ${NUMBER_KEYS} ${TEXT_KEYS} ${ENUM_KEYS}; then
+            if in_keys "${pair_key}" ${BOOL_KEYS} ${PORT_KEYS} ${TTL_KEYS} ${TEXT_KEYS} ${ENUM_KEYS}; then
                 eval "old_value=\${${pair_key}}"
                 [ "${old_value}" = "${pair_value}" ] && continue
             fi
@@ -338,8 +370,15 @@ case "${1}" in
                 failed=1
             fi
         done
+        if [ ${failed} -ne 0 ]; then
+            abort_setting_transaction
+            rm -f "${CHANGED_FILE}"
+            release_lock
+            exit 1
+        fi
+        commit_setting_transaction || { abort_setting_transaction; release_lock; exit 1; }
         release_lock
-        [ ${failed} -eq 0 ] && echo "已保存" || exit 1
+        echo "已保存"
         ;;
     setarr)
         array_key="${2}"
@@ -349,7 +388,7 @@ case "${1}" in
             exit 1
         }
         shift 2
-        acquire_lock
+        acquire_lock || { echo "获取配置锁失败" >&2; exit 1; }
         prepare_conf || { release_lock; exit 1; }
 
         # 与当前值一致时跳过写入，避免无谓的配置重写与 mtime 抖动
@@ -370,17 +409,24 @@ case "${1}" in
             exit 0
         fi
 
+        begin_setting_transaction || { release_lock; exit 1; }
         if set_array "${array_key}" "$@"; then
+            commit_setting_transaction || { abort_setting_transaction; release_lock; exit 1; }
             echo "${array_key}" >> "${CHANGED_FILE}"
             release_lock
             echo "已保存"
         else
+            abort_setting_transaction
             release_lock
             exit 1
         fi
         ;;
     apply)
+        acquire_lock || { echo "获取配置锁失败" >&2; exit 1; }
         apply_settings
+        apply_rc=$?
+        release_lock
+        exit ${apply_rc}
         ;;
     logview)
         if [ -f "${LOG_FILE}" ]; then

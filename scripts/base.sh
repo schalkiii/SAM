@@ -157,6 +157,71 @@ airplane_set(){
     am broadcast -a android.intent.action.AIRPLANE_MODE > /dev/null 2>&1
 }
 
+# 统一目录锁
+# 所有服务启停、配置写入、广告清单更新都走这里，避免 WebUI / watchdog / WiFi 监控并发覆盖状态。
+# 锁目录内记录持有者 PID：只有持有者已死才允许接管，不能按固定秒数强删活锁。
+sam_lock_acquire(){
+    sam_lock_name="${1}"
+    sam_lock_timeout="${2:-30}"
+    sam_lock_dir="${TMP_PATH}/.${sam_lock_name}.lock"
+    sam_lock_try=0
+    while ! mkdir "${sam_lock_dir}" 2>/dev/null; do
+        sam_lock_pid=$(cat "${sam_lock_dir}/pid" 2>/dev/null)
+        if [ -n "${sam_lock_pid}" ] && ! kill -0 "${sam_lock_pid}" 2>/dev/null; then
+            rm -rf "${sam_lock_dir}" 2>/dev/null
+            continue
+        fi
+        sam_lock_try=$((sam_lock_try + 1))
+        [ ${sam_lock_try} -ge ${sam_lock_timeout} ] && return 1
+        sleep 1
+    done
+    printf '%s\n' "$$" > "${sam_lock_dir}/pid" 2>/dev/null
+    return 0
+}
+
+sam_lock_release(){
+    sam_release_name="${1}"
+    sam_release_dir="${TMP_PATH}/.${sam_release_name}.lock"
+    sam_release_pid=$(cat "${sam_release_dir}/pid" 2>/dev/null)
+    [ "${sam_release_pid}" = "$$" ] && rm -rf "${sam_release_dir}" 2>/dev/null
+    return 0
+}
+
+# 记录服务生命周期事件，供自动停止排查
+record_service_event(){
+    log_file "[SERVICE-EVENT] ${1}"
+}
+
+# WiFi / 黑名单判定
+# 返回:
+#   0 = 已连接黑名单 WiFi，必须停止服务
+#   1 = 可以运行服务（不在黑名单、蜂窝网络、未连接 WiFi）
+#   2 = 状态未知（查询失败/权限不足），调用方应保持现状，不能盲目启动
+wifi_blacklist_state(){
+    wifi_cmd_output=""
+    wifi_known=0
+
+    if has_cmd cmd; then
+        wifi_cmd_output=$(cmd wifi status 2>/dev/null)
+        [ -n "${wifi_cmd_output}" ] && wifi_known=1
+    fi
+    if [ ${wifi_known} -eq 0 ] && has_cmd dumpsys; then
+        wifi_cmd_output=$(dumpsys connectivity 2>/dev/null | grep -E "WIFI|SSID" | head -n 20)
+        [ -n "${wifi_cmd_output}" ] && wifi_known=1
+    fi
+
+    if [ ${wifi_known} -eq 0 ]; then
+        return 2
+    fi
+
+    current_wifi_ssid=$(printf '%s\n' "${wifi_cmd_output}" | sed -n 's/.*SSID: "\(.*\)".*/\1/p' | head -n 1)
+    for blacklist_ssid in "${BLACKLIST_WIFI[@]}"; do
+        [ -n "${blacklist_ssid}" ] || continue
+        [ "${current_wifi_ssid}" = "${blacklist_ssid}" ] && return 0
+    done
+    return 1
+}
+
 # 开关一次飞行模式，让系统与 App 立即重新发起 DNS 查询
 # 场景: DNS 服务异常退出后，系统的网络状态已被判成"无网络"，
 #       即使服务恢复也需要重新验证一次网络，否则表现为"还是没网"。
@@ -176,20 +241,9 @@ refresh_network(){
         return 0
     fi
 
-    if ! mkdir "${refresh_lock}" 2>/dev/null; then
-        refresh_lock_time=$(stat -c %Y "${refresh_lock}" 2>/dev/null)
-        refresh_now=$(date +%s)
-        if [ -z "${refresh_lock_time}" ] || [ $((refresh_now - refresh_lock_time)) -gt 60 ]; then
-            # 锁超过 60 秒视为崩溃残留
-            rm -rf "${refresh_lock}"
-            mkdir "${refresh_lock}" 2>/dev/null || {
-                log_file "网络刷新锁被占用，跳过"
-                return 0
-            }
-        else
-            log_file "网络刷新正在进行，跳过"
-            return 0
-        fi
+    if ! sam_lock_acquire "network_refresh" 60; then
+        log_file "网络刷新正在进行，跳过"
+        return 0
     fi
 
     if [ "${refresh_mode}" != "force" ] && [ -f "${refresh_stamp}" ]; then
@@ -197,7 +251,7 @@ refresh_network(){
         refresh_now=$(date +%s)
         if [ -n "${refresh_last}" ] && [ $((refresh_now - refresh_last)) -lt ${refresh_window} ]; then
             log_file "10 分钟内已自动刷新过网络，跳过"
-            rmdir "${refresh_lock}" 2>/dev/null
+            sam_lock_release "network_refresh"
             return 0
         fi
     fi
@@ -210,7 +264,7 @@ refresh_network(){
     sleep 1
     airplane_set disable 0
     sleep 1
-    rmdir "${refresh_lock}" 2>/dev/null
+    sam_lock_release "network_refresh"
 }
 
 # 占位符
@@ -287,16 +341,18 @@ is_port_listening(){
     [ -n "${listen_port}" ] || return 1
 
     if has_cmd ss; then
-        listen_out=$(ss -lnut 2>/dev/null) || return 0
-        echo "${listen_out}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
-        return 1
+        listen_udp=$(ss -lun 2>/dev/null) || listen_udp=""
+        listen_tcp=$(ss -ltn 2>/dev/null) || listen_tcp=""
+        echo "${listen_udp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
+        echo "${listen_tcp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
+        return 0
     fi
     if has_cmd netstat; then
-        listen_out=$(netstat -lnu 2>/dev/null) || listen_out=""
-        echo "${listen_out}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
-        listen_out=$(netstat -lnt 2>/dev/null) || listen_out=""
-        echo "${listen_out}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
-        return 1
+        listen_udp=$(netstat -lnu 2>/dev/null) || listen_udp=""
+        listen_tcp=$(netstat -lnt 2>/dev/null) || listen_tcp=""
+        echo "${listen_udp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
+        echo "${listen_tcp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
+        return 0
     fi
     return 0
 }

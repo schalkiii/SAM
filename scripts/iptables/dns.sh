@@ -83,7 +83,7 @@ rule_exists(){
 #       当某个服务被杀后回退到另一个端口(例如 AGH 挂了改用 SmartDNS 3721)，
 #       链里的 REDIRECT 仍指向旧端口 —— 那个端口已经没有进程监听，
 #       整机 DNS 全部进黑洞，表现为"服务恢复了但还是没网"。
-#       所以必须校验跳转与端口是否与当前实际服务一致。
+#       所以必须校验跳转、端口和防回环/owner 排除规则是否齐全。
 check_dns_chain(){
     rule_ver="${1}"
     target_chain="${2}"
@@ -92,6 +92,10 @@ check_dns_chain(){
     ipt_run ${rule_ver} -t nat -L ${target_chain} > /dev/null 2>&1 || return 1
     # OUTPUT 未跳转到该链
     rule_exists ${rule_ver} OUTPUT -j ${target_chain} || return 1
+    # 防止模块自身 DNS 查询再次被劫持
+    rule_exists ${rule_ver} ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
+    rule_exists ${rule_ver} ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    rule_exists ${rule_ver} ${target_chain} -d 127.0.0.0/8 -j ACCEPT || return 1
     # tcp/udp 53 的重定向必须指向当前 DNS_PORT
     rule_exists ${rule_ver} ${target_chain} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
     rule_exists ${rule_ver} ${target_chain} -p udp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
@@ -257,18 +261,15 @@ case "$1" in
     # 启用
     enable)
         if [ -n "${DNS_PORT}" ]; then
-            if [ "${DNS_PORT}" = "53" ]; then
-                log "i" "端口等于 53，移除旧重定向规则"
-                disable_dns "ipv4" ${DNS_CHAIN}
-            else
-                enable_dns "ipv4" ${DNS_CHAIN}
-            fi
+            # 53 端口也必须保留重定向：模块服务监听 53 时仍需把外部 53 查询转回本机。
+            enable_dns "ipv4" ${DNS_CHAIN}
             if [ "${BLOCK_IPV6_DNS}" = "true" ]; then
                 # v6 阻断优先于重定向，清掉历史版本可能残留的 v6 重定向链
                 has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
                 enable_block_ipv6
             else
                 has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
+                ${ip6tables_w} -t filter -L ${BLOCK_IPV6_CHAIN} > /dev/null 2>&1 && disable_block_ipv6
                 log "i" "未阻断 IPv6 DNS，v6 查询将绕过本模块"
             fi
         else

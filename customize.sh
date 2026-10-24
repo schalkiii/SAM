@@ -13,6 +13,12 @@ fi
 ui_print "📥 开始安装"
 ui_print "📥 解压模块文件"
 unzip -o "${ZIPFILE}" "*" -x "META-INF/*" -d "${MODPATH}" >/dev/null 2>&1
+unzip_rc=$?
+if [ ${unzip_rc} -ne 0 ] || [ ! -f "${MODPATH}/module.prop" ] || [ ! -f "${MODPATH}/scripts/service.sh" ]; then
+    ui_print "❌ 解压失败或模块包缺少关键文件，安装中止"
+    rm -rf "${MODPATH}" 2>/dev/null
+    exit 1
+fi
 ui_print "💾 文件解压完成"
 
 ui_print "🔒 设置权限"

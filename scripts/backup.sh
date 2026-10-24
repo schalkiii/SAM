@@ -20,6 +20,7 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 
 BACKUP_ROOT="/data/adb/SAM-backup"
 BACKUP_FILES="setting.conf etc/AdGuardHome/AdGuardHome.yaml etc/SmartDNS/smartdns.conf etc/mihomo/config.yaml etc/app_blacklist.prop etc/app_whitelist.prop etc/hosts etc/crontabs/root"
+BACKUP_DIRS="etc/AdGuardHome/data etc/SmartDNS/data etc/mihomo/proxy_provider etc/mihomo/rule_provider"
 KEEP_BACKUP=5
 
 # 备份
@@ -29,7 +30,7 @@ save_backup(){
         return 0
     }
 
-    backup_stamp=$(date "+%Y%m%d-%H%M%S")
+    backup_stamp=$(date "+%Y%m%d-%H%M%S").$$
     backup_dir="${BACKUP_ROOT}/${backup_stamp}"
     mkdir -p "${backup_dir}" || {
         echo "无法创建备份目录 ${backup_dir}"
@@ -39,6 +40,7 @@ save_backup(){
     chmod 700 "${BACKUP_ROOT}" 2>/dev/null
 
     backup_count=0
+    backup_failed=0
     for backup_file in ${BACKUP_FILES}; do
         backup_src="${MODULE_PATH}/${backup_file}"
         [ -f "${backup_src}" ] || continue
@@ -49,7 +51,26 @@ save_backup(){
         # "<备份>/etc/crontabs/etc/crontabs/root" —— 路径重复，定时任务恢复不出来。
         backup_target="${backup_dir}/${backup_file}"
         mkdir -p "$(dirname "${backup_target}")" 2>/dev/null
-        cp -f "${backup_src}" "${backup_target}" && backup_count=$((backup_count + 1))
+        if cp -f "${backup_src}" "${backup_target}"; then
+            backup_count=$((backup_count + 1))
+        else
+            backup_failed=1
+            echo "备份失败: ${backup_file}"
+        fi
+    done
+
+    # 用户数据目录也必须备份，否则 AGH 自定义过滤器/SmartDNS 缓存/Mihomo 提供商会丢
+    for backup_dir_name in ${BACKUP_DIRS}; do
+        backup_src="${MODULE_PATH}/${backup_dir_name}"
+        [ -d "${backup_src}" ] || continue
+        backup_target="${backup_dir}/${backup_dir_name}"
+        mkdir -p "$(dirname "${backup_target}")" 2>/dev/null
+        if cp -R -f "${backup_src}/." "${backup_target}" 2>/dev/null; then
+            backup_count=$((backup_count + 1))
+        else
+            backup_failed=1
+            echo "备份失败: ${backup_dir_name}"
+        fi
     done
 
     # 兼容旧路径的便捷副本，同样放在 root-only 目录
@@ -62,7 +83,11 @@ save_backup(){
         rm -rf "${old_backup}"
     done
 
-    echo "已备份 ${backup_count} 个文件到 ${backup_dir}"
+    if [ ${backup_failed} -ne 0 ]; then
+        echo "备份未完整完成，保留现有备份文件"
+        return 1
+    fi
+    echo "已备份 ${backup_count} 个文件/目录到 ${backup_dir}"
 }
 
 # 列出备份
@@ -84,16 +109,38 @@ restore_backup(){
     fi
 
     restore_count=0
+    restore_failed=0
     for restore_file in ${BACKUP_FILES}; do
         restore_src="${latest_backup}${restore_file}"
         [ -f "${restore_src}" ] || continue
 
         restore_target="${MODULE_PATH}/${restore_file}"
         mkdir -p "$(dirname "${restore_target}")" 2>/dev/null
-        cp -f "${restore_src}" "${restore_target}" && restore_count=$((restore_count + 1))
+        if cp -f "${restore_src}" "${restore_target}"; then
+            restore_count=$((restore_count + 1))
+        else
+            restore_failed=1
+            echo "恢复失败: ${restore_file}"
+        fi
+    done
+    for restore_dir in ${BACKUP_DIRS}; do
+        restore_src="${latest_backup}${restore_dir}"
+        [ -d "${restore_src}" ] || continue
+        restore_target="${MODULE_PATH}/${restore_dir}"
+        mkdir -p "${restore_target}" 2>/dev/null
+        if cp -R -f "${restore_src}/." "${restore_target}" 2>/dev/null; then
+            restore_count=$((restore_count + 1))
+        else
+            restore_failed=1
+            echo "恢复失败: ${restore_dir}"
+        fi
     done
 
-    echo "已从 ${latest_backup} 恢复 ${restore_count} 个文件"
+    if [ ${restore_failed} -ne 0 ]; then
+        echo "备份恢复未完整完成，请检查磁盘与权限"
+        return 1
+    fi
+    echo "已从 ${latest_backup} 恢复 ${restore_count} 个文件/目录"
 
     # 恢复后让新配置生效；用户主动停止服务时不要擅自拉起
     case "$(cat "${TMP_PATH}/service.state" 2>/dev/null)" in

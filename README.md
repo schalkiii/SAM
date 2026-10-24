@@ -17,7 +17,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **DNS 入口可见**：监控页显示当前 53 端口实际转发到的服务与端口，区分「DNS 规则正常」和「查询真的经过模块」
 - **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）；只有服务全部恢复且距离上次自动刷新超过 10 分钟时才刷新网络，避免服务反复掉线时反复开关 WiFi
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
-- **全量配置备份**：卸载时备份到 `/data/adb/SAM-backup/<时间>/`（root-only，避免订阅链接/节点密码被普通应用读取）
+- **全量配置备份**：卸载时备份到 `/data/adb/SAM-backup/<时间>/`（root-only，含 AGH/SmartDNS/Mihomo 用户数据目录；任一复制失败会返回失败并保留清单，避免假备份）
 - **默认仅回环监听**：AGH 面板/DNS、SmartDNS、Mihomo 控制台与代理端口默认只听 127.0.0.1；需要局域网使用时打开「允许局域网访问」，仅开放 AGH 面板/DNS 与 SmartDNS DNS，Mihomo 控制台与代理端口始终保持本机
 - **组件安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
@@ -57,6 +57,18 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - AGH 大版本升级会迁移配置 schema；回退旧二进制后若报 `unknown current schema version`，用「工具 → 重置 AGH 配置」恢复模板（会先完整备份并保留单文件副本，但会丢失面板密码与自定义过滤规则）
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml
+
+## 服务过一段时间自动停止
+
+按下面顺序区分“系统杀后台”与“模块自身停止”：
+
+1. 看 `tmp/module.log` 是否有 `[SERVICE-EVENT] stop requested reason=...`。
+   有 `reason=stopped` / `stopped-by-wifi`：来自用户或 WiFi 黑名单。
+   只有 `watchdog restart ...`、没有 stop requested：更像系统/OOM 杀进程。
+2. 看 `tmp/auto-stop.*.log`。watchdog 在异常消失时会抓 `logcat` 中的 `lmkd/ActivityManager kill/Force stopping` 线索。
+3. 跑 `sh scripts/diagnose.sh`，重点看 `watchdog.heartbeat`、`oom_score_adj`、小米/MIUI 后台限制线索。
+4. 小米设备把模块相关进程设为“无限制后台”、关闭电池优化，并在最近任务中锁定；不要只依赖默认的后台限制策略。
+5. 若诊断显示 `service.state=stopped` 但没有对应 SERVICE-EVENT，再把整段诊断输出回传定位。
 
 ## WiFi 慢 / 5G 正常
 

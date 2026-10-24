@@ -32,6 +32,18 @@ get_download_url(){
     # API 内容
     api_content=$(curl --connect-timeout 10 -m 15 -s -f ${api_url})
 
+    # release tag 与当前版本一致时直接跳过，避免 AGH 这类固定资产名每次重复停服替换
+    release_tag=$(printf '%s\n' "${api_content}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1 | sed 's/^[vV]//')
+    if [ -n "${4}" ] && [ -n "${release_tag}" ] && [ "${release_tag}" = "${4}" ]; then
+        log "i" "已是最新版本(tag ${release_tag})"
+        return 1
+    fi
+    release_prerelease=$(printf '%s\n' "${api_content}" | sed -n 's/.*"prerelease"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' | head -n 1)
+    if [ "${3}" = "1" ] && [ "${release_prerelease}" = "true" ]; then
+        log "i" "最新 release 是预发布版本，按设置跳过"
+        return 1
+    fi
+
     # 获取下载地址
     download_url=$(echo "${api_content}" | grep "browser_download_url" | grep -E "${2}")
     if [ ${3} = 1 ]; then
@@ -63,10 +75,32 @@ get_download_url(){
 # 必须有连接/总时长超时，否则网络卡住时 WebUI 会一直等
 download_file(){
     save_file="${TMP_PATH}/$(echo ${download_url} | sed 's/^.*\///g')"
-    curl -f -L -# --connect-timeout 15 -m 300 -o "${save_file}" "${download_url}" && return 0
-    rm -f "${save_file}"
-    log "e" "下载失败: ${download_url}"
-    return 1
+    curl -f -L -# --connect-timeout 15 -m 300 -o "${save_file}" "${download_url}" || {
+        rm -f "${save_file}"
+        log "e" "下载失败: ${download_url}"
+        return 1
+    }
+    verify_download_checksum "${download_url}" "${save_file}"
+}
+
+# 发布方提供 .sha256 时强制校验；未提供时记录风险但不阻断
+verify_download_checksum(){
+    checksum_url="${1}.sha256"
+    checksum_file="${TMP_PATH}/download.sha256.$$"
+    if ! curl -f -L --connect-timeout 10 -m 30 -s -o "${checksum_file}" "${checksum_url}"; then
+        rm -f "${checksum_file}"
+        log "i" "发布未提供 .sha256，无法做下载摘要校验"
+        return 0
+    fi
+    expected_hash=$(awk 'NF {print $1; exit}' "${checksum_file}" | tr 'A-F' 'a-f')
+    actual_hash=$(sha256sum "${2}" 2>/dev/null | awk '{print $1}')
+    rm -f "${checksum_file}"
+    if [ -z "${expected_hash}" ] || [ "${expected_hash}" != "${actual_hash}" ]; then
+        log "e" "下载摘要校验失败，删除文件"
+        rm -f "${2}"
+        return 1
+    fi
+    log "i" "下载摘要校验通过"
 }
 
 # 替换前停服务：直接覆盖运行中的二进制会 ETXTBSY，覆盖已 mmap 的 libc 还可能 SIGBUS
@@ -83,9 +117,35 @@ stop_for_replace(){
 replace_file(){
     log "i" "替换文件: ${1} > ${2}"
     if [ -f "${2}" ]; then
-        cp -f -p "${2}" "${2}.bak" 2>/dev/null
+        cp -f -p "${2}" "${2}.bak" 2>/dev/null || {
+            log "e" "备份旧文件失败，取消替换: ${2}"
+            return 1
+        }
     fi
-    cp -R -f -p "${1}" "${2}"
+    cp -R -f -p "${1}" "${2}" || {
+        log "e" "复制新文件失败: ${1} -> ${2}"
+        restore_bak "${2}"
+        return 1
+    }
+}
+
+# 校验 tar 归档，拒绝绝对路径和 .. 穿越
+safe_tar_extract(){
+    tar_file="${1}"
+    extract_dir="${2}"
+    tar_list="${TMP_PATH}/tar.list.$$"
+    tar -tvzf "${tar_file}" > "${tar_list}" 2>/dev/null || {
+        rm -f "${tar_list}"
+        return 1
+    }
+    if grep -qE '(^/|(^|/)\.\.(/|$))' "${tar_list}" || grep -qE '^[lh]' "${tar_list}"; then
+        log "e" "归档包含不安全路径或链接，拒绝解压"
+        rm -f "${tar_list}"
+        return 1
+    fi
+    rm -f "${tar_list}"
+    mkdir -p "${extract_dir}" 2>/dev/null
+    tar -zxf "${tar_file}" -C "${extract_dir}" >/dev/null 2>&1
 }
 
 restore_bak(){
@@ -113,7 +173,7 @@ smartdns_download(){
     log "i" "开始下载，请稍等..."
     download_file || return 1
     log "i" "解压缩 > ${save_file}"
-    tar -zxvf "${save_file}" -C "${TMP_PATH}" || { rm -f "${save_file}"; return 1; }
+    safe_tar_extract "${save_file}" "${TMP_PATH}" || { rm -f "${save_file}"; return 1; }
     rm -f "${save_file}"
     # 删除软连接
     rm -rf "${TMP_PATH}/${SMARTDNS_BIN}/usr/local/lib/smartdns/lib/ld-linux.so"
@@ -157,11 +217,16 @@ agh_download(){
     log "i" "开始下载，请稍等..."
     download_file || return 1
     log "i" "解压缩 > ${save_file}"
-    tar -zxvf "${save_file}" -C "${TMP_PATH}" || { rm -f "${save_file}"; return 1; }
+    safe_tar_extract "${save_file}" "${TMP_PATH}" || { rm -f "${save_file}"; return 1; }
     rm -f "${save_file}"
     stop_for_replace
     # 替换文件
-    replace_file "${TMP_PATH}/${AGH_BIN}/${AGH_BIN}" "${BIN_PATH}/${AGH_BIN}" || return 1
+    replace_file "${TMP_PATH}/${AGH_BIN}/${AGH_BIN}" "${BIN_PATH}/${AGH_BIN}" || {
+        log "e" "AdGuardHome 替换失败，尝试回滚"
+        restore_bak "${BIN_PATH}/${AGH_BIN}"
+        rm -rf "${TMP_PATH}/${AGH_BIN}"
+        return 1
+    }
     log "i" "修改权限"
     chmod 755 "${BIN_PATH}/${AGH_BIN}"
     chown "${SAM_USER}:${DNS_GROUP}" "${BIN_PATH}/${AGH_BIN}"
@@ -203,7 +268,12 @@ mihomo_download(){
     mv -f "${mihomo_file}" "${TMP_PATH}/${MIHOMO_BIN}" || return 1
     stop_for_replace
     # 替换文件
-    replace_file "${TMP_PATH}/${MIHOMO_BIN}" "${BIN_PATH}/${MIHOMO_BIN}" || return 1
+    replace_file "${TMP_PATH}/${MIHOMO_BIN}" "${BIN_PATH}/${MIHOMO_BIN}" || {
+        log "e" "Mihomo 替换失败，尝试回滚"
+        restore_bak "${BIN_PATH}/${MIHOMO_BIN}"
+        rm -rf "${TMP_PATH}/${MIHOMO_BIN}"
+        return 1
+    }
     log "i" "修改权限"
     chmod 755 "${BIN_PATH}/${MIHOMO_BIN}"
     chown "${SAM_USER}:${TUN_GROUP}" "${BIN_PATH}/${MIHOMO_BIN}"
@@ -222,9 +292,10 @@ mihomo_download(){
 }
 
 log "i" "update >>>"
-mihomo_download
-agh_download
-smartdns_download
+update_failed=0
+mihomo_download || update_failed=1
+agh_download || update_failed=1
+smartdns_download || update_failed=1
 log "i" "<<< update"
 
 # 替换过内核后重启服务；如果用户本来是手动停止的，保持停止
@@ -244,3 +315,8 @@ if [ "${is_update}" = true ]; then
 else
     log "i" "没有需要更新的内核"
 fi
+
+[ ${update_failed} -eq 0 ] || {
+    log "e" "部分组件更新失败，请查看上方日志"
+    exit 1
+}

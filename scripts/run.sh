@@ -11,12 +11,17 @@
 # 提权后的第二段: 从文件还原位置参数
 if [ "$1" = "--args-file" ]; then
     args_file="$2"
+    caller_uid="${3:-}"
     [ -f "${args_file}" ] || { echo "参数文件不存在: ${args_file}" >&2; exit 1; }
+    if [ -n "${caller_uid}" ]; then
+        file_uid=$(stat -c %u "${args_file}" 2>/dev/null)
+        [ "${file_uid}" = "${caller_uid}" ] || { echo "参数文件属主异常，拒绝执行" >&2; rm -rf "$(dirname "${args_file}")"; exit 1; }
+    fi
     set --
     while IFS= read -r arg_line; do
         set -- "$@" "${arg_line}"
     done < "${args_file}"
-    rm -f "${args_file}"
+    rm -rf "$(dirname "${args_file}")"
     [ "$#" -gt 0 ] || exit 1
     exec "$@"
 fi
@@ -29,24 +34,40 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # 非 root: 参数落盘后提权
-# /data/local/tmp 其他应用可进入，参数里可能带订阅链接，收紧权限
+# /data/local/tmp 其他应用可进入，必须用随机私有目录，不能用可预测的 PID 文件名
 umask 077
-args_file="/data/local/tmp/.sam_args.$$"
+args_dir=""
+if command -v mktemp > /dev/null 2>&1; then
+    args_dir=$(mktemp -d /data/local/tmp/.sam_args.XXXXXX 2>/dev/null)
+fi
+if [ -z "${args_dir}" ]; then
+    args_dir="/data/local/tmp/.sam_args.$$.$(date +%s).${RANDOM:-0}"
+    rm -rf "${args_dir}" 2>/dev/null
+    mkdir -m 700 "${args_dir}" 2>/dev/null || { echo "无法创建临时目录: ${args_dir}" >&2; exit 1; }
+fi
+chmod 700 "${args_dir}" 2>/dev/null
+args_file="${args_dir}/args"
 : > "${args_file}" 2>/dev/null || { echo "无法创建临时文件: ${args_file}" >&2; exit 1; }
+chmod 600 "${args_file}" 2>/dev/null
+caller_uid=$(id -u)
 for arg in "$@"; do
+    case "${arg}" in
+        *'
+'*) echo "参数不能包含换行: ${arg}" >&2; rm -rf "${args_dir}"; exit 1 ;;
+    esac
     printf '%s\n' "${arg}" >> "${args_file}"
 done
 
 for elevator in su ksu apd; do
     if command -v "${elevator}" > /dev/null 2>&1; then
         case "${elevator}" in
-            su)  exec su -c "sh '$0' --args-file '${args_file}'" ;;
-            ksu) exec ksu -c "sh '$0' --args-file '${args_file}'" ;;
-            apd) exec apd -c "sh '$0' --args-file '${args_file}'" ;;
+            su)  exec su -c "sh '$0' --args-file '${args_file}' '${caller_uid}'" ;;
+            ksu) exec ksu -c "sh '$0' --args-file '${args_file}' '${caller_uid}'" ;;
+            apd) exec apd -c "sh '$0' --args-file '${args_file}' '${caller_uid}'" ;;
         esac
     fi
 done
 
-rm -f "${args_file}"
+rm -rf "${args_dir}"
 echo "[×] 无法提权：当前非 root，且未找到 su / ksu / apd" >&2
 exit 1

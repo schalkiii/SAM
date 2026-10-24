@@ -37,15 +37,23 @@ get_host(){
         [ -n "${i}" ] || continue
         log "i" "尝试源: ${i}"
         source_content=$(curl -m 15 -s -f ${i} 2>/dev/null | grep -Ev "^#.*$|^[[:space:]]*$" | awk -F' ' '{print $1, $2}')
-        # 有效内容: 至少有一行, 且不含 HTML 标签(代理/错误页的特征)
+        # 有效内容: 至少一行严格 "IP 域名"，且不能混入 HTML/非法映射
         if [ -z "${source_content}" ] || echo "${source_content}" | grep -qE "^<|^!DOCTYPE|^html"; then
             # 候选源失败是降级流程的一部分，不用 ERROR 污染"重启错误数"
             log "i" "源不可用或内容无效，尝试下一个: ${i}"
             continue
         fi
-        # 至少要有"IP 域名"行，避免代理返回 JSON/纯文本错误信息被写进 hosts
-        if ! echo "${source_content}" | awk 'NF >= 2 && $1 ~ /^[0-9A-Fa-f:.]+$/ { ok = 1 } END { exit !ok }'; then
-            log "i" "源内容不是 hosts 格式，尝试下一个: ${i}"
+        # 至少要有"IP 域名"行，且每行都必须是合法 hosts 映射，
+        # 防止镜像返回混合恶意映射时被整份写入系统 hosts
+        if ! echo "${source_content}" | awk '
+            BEGIN { ok = 0 }
+            NF < 2 { exit 1 }
+            $1 !~ /^[0-9A-Fa-f:.]+$/ { exit 1 }
+            $2 !~ /^[A-Za-z0-9._-]+$/ { exit 1 }
+            { ok = 1 }
+            END { exit !ok }
+        '; then
+            log "i" "源内容不是严格 hosts 格式，尝试下一个: ${i}"
             continue
         fi
         get_content="${source_content}"
@@ -76,18 +84,21 @@ get_host(){
     # 先写临时文件再替换: 原实现直接 > ${HOSTS_FILE} 覆盖写，
     # 中途出错(磁盘满/被杀)就会把 hosts 写成半截文件，
     # 而 hosts 是系统启动必需文件，损坏会直接导致开机异常。
-    echo -e "${hosts_content}" | sed "s/^# .*start/\n# start/g" > "${HOSTS_FILE}.tmp" 2>/dev/null || {
+    echo -e "${hosts_content}" | sed "s/^# .*start/\n# start/g" > "${HOSTS_FILE}.tmp.$$" 2>/dev/null || {
         log "e" "写入 hosts 临时文件失败，保留原文件"
-        rm -f "${HOSTS_FILE}.tmp"
+        rm -f "${HOSTS_FILE}.tmp.$$"
         return 1
     }
     # 临时文件必须非空且包含 hosts 标记，否则视为失败
-    if [ ! -s "${HOSTS_FILE}.tmp" ] || ! grep -q "^# start" "${HOSTS_FILE}.tmp"; then
+    if [ ! -s "${HOSTS_FILE}.tmp.$$" ] || ! grep -q "^# start" "${HOSTS_FILE}.tmp.$$"; then
         log "e" "hosts 临时文件校验失败，保留原文件"
-        rm -f "${HOSTS_FILE}.tmp"
+        rm -f "${HOSTS_FILE}.tmp.$$"
         return 1
     fi
-    mv -f "${HOSTS_FILE}.tmp" "${HOSTS_FILE}"
+    mv -f "${HOSTS_FILE}.tmp.$$" "${HOSTS_FILE}" || {
+        log "e" "hosts 原子替换失败，保留临时文件供排查"
+        return 1
+    }
     # update 用 mv 换掉了 inode，系统里的 bind 挂载仍指向旧文件，必须重挂才生效
     remount_hosts || log "e" "hosts 重挂载失败，新规则将在下次启动后生效"
     log "i" "写入 hosts 文件"
@@ -124,6 +135,10 @@ case "$1" in
         fi
 
         log "i" "更新 host 规则"
+        sam_lock_acquire "host_update" 120 || {
+            log "e" "hosts 更新正在进行，跳过"
+            exit 1
+        }
         github_ok=0
         fcm_ok=0
         # GitHub
@@ -137,6 +152,7 @@ case "$1" in
         elif [ ${github_ok} -eq 1 ] || [ ${fcm_ok} -eq 1 ]; then
             log "e" "host 规则部分更新失败，未记录更新时间，下次启动会重试"
         fi
+        sam_lock_release "host_update"
         ;;
     *)
         echo "使用: update [force](更新)"

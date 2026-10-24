@@ -134,6 +134,9 @@ activate_module(){
 
     if [ "${source_dir}" = "${UPDATE_DIR}" ]; then
         warn "检测到待激活模块: ${UPDATE_DIR}"
+        if [ ! -f "${UPDATE_DIR}/module.prop" ] || [ ! -f "${UPDATE_DIR}/scripts/service.sh" ] || [ ! -f "${UPDATE_DIR}/scripts/manual.sh" ]; then
+            die "待激活包缺少关键文件，取消激活"
+        fi
         old_dir=""
         if [ -d "${ACTIVE_DIR}" ]; then
             warn "暂存旧版本: ${ACTIVE_DIR}"
@@ -146,6 +149,15 @@ activate_module(){
             # 更新包移动失败时把旧版本放回去，避免留下没有模块目录的状态
             [ -n "${old_dir}" ] && mv "${old_dir}" "${ACTIVE_DIR}"
             die "移动 ${UPDATE_DIR} 到 ${ACTIVE_DIR} 失败，已恢复旧版本"
+        fi
+        fix_permission "${ACTIVE_DIR}"
+        fix_symlink "${ACTIVE_DIR}"
+        # 新包连基本启动入口都没有时恢复旧版本，不能直接删旧包
+        if [ ! -x "${ACTIVE_DIR}/bin/AdGuardHome" ] && [ ! -x "${ACTIVE_DIR}/etc/SmartDNS/smartdns" ] && [ ! -x "${ACTIVE_DIR}/bin/mihomo" ]; then
+            warn "新版本缺少可执行组件，恢复旧版本"
+            rm -rf "${ACTIVE_DIR}"
+            [ -n "${old_dir}" ] && mv "${old_dir}" "${ACTIVE_DIR}"
+            die "激活失败，已恢复旧版本"
         fi
         [ -n "${old_dir}" ] && rm -rf "${old_dir}"
         ok "已激活到 ${ACTIVE_DIR}"
@@ -291,15 +303,27 @@ uninstall_module(){
             umount "${SYSTEM_HOSTS}" 2>/dev/null && ok "已卸载 hosts" || warn "卸载 hosts 失败"
         fi
 
-        # 恢复广告目录/文件(新方案是把内容改名保留, 这里改回原名)
-        [ -f "${ACTIVE_DIR}/scripts/ad.sh" ] && sh "${ACTIVE_DIR}/scripts/ad.sh" recovery > /dev/null 2>&1
-        # 清理广告备份清单(在模块目录外, 卸载时不会自动消失)
-        rm -f "/data/adb/SAM-ad-hold.list" 2>/dev/null
-
-        # 备份全部配置(setting / AdGuardHome / SmartDNS / Mihomo / 黑白名单 / hosts / 定时)
+        # 先备份配置，再恢复广告文件；备份失败时不应先改变广告目录
         if [ -f "${ACTIVE_DIR}/scripts/backup.sh" ]; then
             backup_output=$(sh "${ACTIVE_DIR}/scripts/backup.sh" save 2>&1)
+            backup_rc=$?
+            if [ ${backup_rc} -ne 0 ] && grep -q "^BACKUP_CONF=true" "${ACTIVE_DIR}/setting.conf" 2>/dev/null; then
+                die "配置备份失败，已中止卸载: ${backup_output}"
+            fi
             ok "${backup_output}"
+        fi
+
+        # 恢复广告目录/文件(新方案是把内容改名保留, 这里改回原名)
+        ad_recovery_ok=1
+        if [ -f "${ACTIVE_DIR}/scripts/ad.sh" ]; then
+            sh "${ACTIVE_DIR}/scripts/ad.sh" recovery > /dev/null 2>&1 || ad_recovery_ok=0
+        fi
+        # 清理广告备份清单(在模块目录外, 卸载时不会自动消失)
+        # 只有全部恢复成功才删除清单，失败时保留索引并中止卸载
+        if [ ${ad_recovery_ok} -eq 1 ]; then
+            rm -f "/data/adb/SAM-ad-hold.list" 2>/dev/null
+        else
+            die "广告文件未全部恢复，已中止卸载；请修复后重试 scripts/ad.sh recovery"
         fi
 
         # 先清软链接，避免留下悬空链接

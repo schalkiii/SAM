@@ -23,13 +23,29 @@ SCRIPTS_PATH="${MODULE_PATH}/scripts"
 [ -f "${SCRIPTS_PATH}/service.sh" ] && sh "${SCRIPTS_PATH}/service.sh" stop > /dev/null 2>&1
 
 # 备份全部配置(备份目录在 /data/adb/SAM-backup，root-only，不依赖 /sdcard)
-[ -f "${SCRIPTS_PATH}/backup.sh" ] && sh "${SCRIPTS_PATH}/backup.sh" save
+backup_ok=1
+if [ -f "${SCRIPTS_PATH}/backup.sh" ]; then
+    sh "${SCRIPTS_PATH}/backup.sh" save || backup_ok=0
+fi
+if [ ${backup_ok} -eq 0 ] && grep -q "^BACKUP_CONF=true" "${MODULE_PATH}/setting.conf" 2>/dev/null; then
+    echo "配置备份失败，已中止卸载以避免丢失订阅/节点配置"
+    exit 1
+fi
 
 # 恢复 App 广告文件(新方案是把内容改名保留，这里改回原名)
-[ -f "${SCRIPTS_PATH}/ad.sh" ] && "${SCRIPTS_PATH}/ad.sh" recovery
+# 恢复失败时保留备份清单，避免 .samhold 数据变成无法定位的孤儿
+ad_recovery_ok=1
+if [ -f "${SCRIPTS_PATH}/ad.sh" ]; then
+    "${SCRIPTS_PATH}/ad.sh" recovery || ad_recovery_ok=0
+fi
 
 # 清理广告备份清单(在模块目录外, 卸载时不会自动消失)
-rm -f "/data/adb/SAM-ad-hold.list"
+if [ ${ad_recovery_ok} -eq 1 ]; then
+    rm -f "/data/adb/SAM-ad-hold.list"
+else
+    echo "广告文件未全部恢复，已中止卸载；请修复后重试 scripts/ad.sh recovery"
+    exit 1
+fi
 
 # 卸载 hosts 绑定，避免残留挂载
 mount | grep -q " /system/etc/hosts " && umount "/system/etc/hosts" 2>/dev/null

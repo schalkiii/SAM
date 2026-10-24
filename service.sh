@@ -19,7 +19,11 @@ done
 [ -d "${MODULE_PATH}/tmp" ] || mkdir -p "${MODULE_PATH}/tmp"
 
 # 删除日志及缓存文件
-rm -rf "${MODULE_PATH}/tmp/"*
+# 自动停止排查依赖历史日志，不能开机直接清空；只保留最近一份后重新开始。
+if [ -s "${MODULE_PATH}/tmp/module.log" ]; then
+    mv -f "${MODULE_PATH}/tmp/module.log" "${MODULE_PATH}/tmp/module.log.boot.1" 2>/dev/null
+fi
+rm -f "${MODULE_PATH}/tmp/"*.log.rot "${MODULE_PATH}/tmp/setting.clean."* "${MODULE_PATH}/tmp/setting.error."* 2>/dev/null
 
 # 加载设置(自动处理 BOM / CRLF / 语法错误 / 缺失项)
 source "${SCRIPTS_PATH}/base.sh"

@@ -8,8 +8,9 @@
 # 用法(设备上, root):
 #   sh /data/adb/modules/SAM/scripts/diagnose.sh
 #   sh /data/adb/modules/SAM/scripts/diagnose.sh --watch 15   # 采样 15 秒看 v6 阻断增量
+#   sh /data/adb/modules/SAM/scripts/diagnose.sh --auto-stop  # 只分析服务自动停止
 #
-# WebUI 工具页「一键诊断」同样调用本脚本。
+# WebUI 工具页「一键诊断 / 自动停止分析」同样调用本脚本。
 
 MODULE_PATH="/data/adb/modules/SAM"
 UPDATE_DIR="/data/adb/modules_update/SAM"
@@ -20,13 +21,102 @@ SD_CONF="${MODULE_PATH}/etc/SmartDNS/smartdns.conf"
 SETTING="${MODULE_PATH}/setting.conf"
 
 WATCH_SEC=0
+AUTO_STOP_ONLY=0
 [ "${1}" = "--watch" ] && WATCH_SEC="${2:-15}"
+[ "${1}" = "--auto-stop" ] && AUTO_STOP_ONLY=1
 
 sep(){ echo "──────────────────────────────────────────"; }
 sec(){ echo ""; sep; echo "## ${1}"; sep; }
 kv(){ printf '%-26s %s\n' "${1}" "${2}"; }
 have(){ command -v "${1}" > /dev/null 2>&1 && echo "yes" || echo "no"; }
 cfg(){ grep -m1 "^${1}=" "${SETTING}" 2>/dev/null | cut -d= -f2-; }
+
+# 自动停止分析：把命令行取证收敛成 WebUI 可读的结论
+analyze_auto_stop(){
+    sec "服务自动停止分析"
+    kv "时间" "$(date '+%Y-%m-%d %H:%M:%S')"
+    kv "service.state" "$(cat "${TMP_PATH}/service.state" 2>/dev/null || echo 无)"
+    kv "service.abnormal" "$(cat "${TMP_PATH}/service.abnormal" 2>/dev/null || echo 无)"
+
+    heartbeat=$(cat "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null)
+    if [ -n "${heartbeat}" ]; then
+        heartbeat_age=$(( $(date +%s) - heartbeat ))
+        kv "watchdog.heartbeat" "${heartbeat_age}s 前"
+    else
+        kv "watchdog.heartbeat" "无"
+    fi
+
+    for service_name in smartdns AdGuardHome mihomo watchdog.sh; do
+        service_pid=$(pidof "${service_name}" 2>/dev/null)
+        [ -z "${service_pid}" ] && service_pid=$(pgrep -f "${service_name}" 2>/dev/null | head -n 1)
+        if [ -n "${service_pid}" ]; then
+            kv "${service_name}" "PID ${service_pid}, oom=$(cat "/proc/${service_pid}/oom_score_adj" 2>/dev/null)"
+        else
+            kv "${service_name}" "未运行"
+        fi
+    done
+
+    event_log="${TMP_PATH}/diag.events.$$"
+    cat "${TMP_PATH}/module.log" "${TMP_PATH}/module.log.1" "${TMP_PATH}/module.log.boot.1" 2>/dev/null | \
+        grep "SERVICE-EVENT" | tail -n 40 > "${event_log}" 2>/dev/null
+
+    echo ""
+    echo "最近 SERVICE-EVENT:"
+    if [ -s "${event_log}" ]; then
+        sed 's/^/  /' "${event_log}"
+    else
+        echo "  无"
+    fi
+
+    stop_requested=$(grep -c "stop requested" "${event_log}" 2>/dev/null)
+    watchdog_restarts=$(grep -c "watchdog restart" "${event_log}" 2>/dev/null)
+    wifi_stops=$(grep -c "stopped-by-wifi" "${event_log}" 2>/dev/null)
+    kv "stop requested 次数" "${stop_requested:-0}"
+    kv "watchdog restart 次数" "${watchdog_restarts:-0}"
+    kv "WiFi 黑名单停止次数" "${wifi_stops:-0}"
+
+    kill_evidence=""
+    snapshot_found=0
+    echo ""
+    echo "auto-stop 取证文件:"
+    for snapshot_file in "${TMP_PATH}"/auto-stop.*.log; do
+        [ -f "${snapshot_file}" ] || continue
+        snapshot_found=1
+        echo "  --- ${snapshot_file##*/} ---"
+        ls -l "${snapshot_file}" 2>/dev/null | sed 's/^/    /'
+        grep -iE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping|Scheduling restart" "${snapshot_file}" 2>/dev/null | tail -n 8 | sed 's/^/    /'
+        snapshot_kill=$(grep -icE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping" "${snapshot_file}" 2>/dev/null)
+        [ "${snapshot_kill:-0}" -gt 0 ] && kill_evidence=1
+    done
+    [ ${snapshot_found} -eq 0 ] && echo "  暂无 auto-stop.*.log（服务尚未发生异常消失，或 watchdog 也被同时杀死）"
+
+    echo ""
+    echo "MIUI/系统限制:"
+    kv "  MIUI" "$(getprop ro.miui.ui.version.name 2>/dev/null)"
+    if command -v dumpsys > /dev/null 2>&1; then
+        dumpsys deviceidle whitelist 2>/dev/null | grep -E "SAM|smartdns|AdGuardHome|mihomo" | sed 's/^/    /'
+    fi
+
+    echo ""
+    echo "结论:"
+    if [ -n "${kill_evidence}" ]; then
+        echo "  倾向系统/小米杀后台或 OOM：auto-stop 日志中出现 LMKD/ActivityManager/Force stopping。"
+        echo "  建议：设为无限制后台、关闭电池优化、锁定最近任务，并观察 watchdog 心跳。"
+    elif [ "${wifi_stops:-0}" -gt 0 ] && [ "${wifi_stops:-0}" -ge "${stop_requested:-0}" ]; then
+        echo "  倾向 WiFi 黑名单触发停止：存在 stopped-by-wifi。"
+    elif [ "${stop_requested:-0}" -gt 0 ]; then
+        echo "  存在模块主动停止记录：优先检查手动停止/保存配置/卸载或 WiFi 黑名单链路。"
+    elif [ "${watchdog_restarts:-0}" -gt 0 ]; then
+        echo "  服务曾异常消失并由 watchdog 拉起，但当前没有系统杀进程证据。"
+        echo "  若自动停止后本报告仍无 auto-stop 文件，说明 watchdog 可能也被一起杀死。"
+    elif [ -n "${heartbeat}" ] && [ ${heartbeat_age:-0} -gt 120 ]; then
+        echo "  watchdog 心跳过期：优先排查 watchdog 自身被杀，服务停止只是结果。"
+    else
+        echo "  当前没有足够证据区分系统杀后台与模块停止，请在下次自动停止后立即重新分析。"
+    fi
+
+    rm -f "${event_log}" 2>/dev/null
+}
 
 # ── 0. 运行身份门禁 ─────────────────────────────────────
 # 非 root 时 iptables / dumpsys / pidof / 模块目录全部不可访问，
@@ -44,6 +134,11 @@ if [ "$(id -u)" != "0" ]; then
     echo "      su -c \"sh $0\""
     echo "    临时 root 且没有 su 命令时，改用 WebUI「工具 → 一键诊断」。"
     exit 1
+fi
+
+if [ ${AUTO_STOP_ONLY} -eq 1 ]; then
+    analyze_auto_stop
+    exit 0
 fi
 
 echo "SAM 诊断报告"
@@ -83,13 +178,9 @@ else
     kv "tmp 目录" "不存在"
 fi
 
-# AGH 配置目录需要可写：update/agh.sh 用 mv 原子替换 yaml
-if ( : > "${AGH_PATH}/.diag.$$" ) 2>/dev/null; then
-    rm -f "${AGH_PATH}/.diag.$$"
-    kv "etc/AdGuardHome 可写" "yes"
-else
-    kv "etc/AdGuardHome 可写" "NO  <<< AGH 配置无法原子替换"
-fi
+# AGH 配置目录可写性不再直接探测：诊断必须只读。
+# 配置生成失败会在 service/agh 日志里体现，避免为了探测写 .diag 文件。
+kv "etc/AdGuardHome 存在" "$([ -d "${AGH_PATH}" ] && echo yes || echo no)"
 
 kv "磁盘剩余(/data)" "$(df -h /data 2>/dev/null | awk 'NR==2{print $4" / 已用 "$5}')"
 kv "tmp 占用" "$(du -sh "${TMP_PATH}" 2>/dev/null | awk '{print $1}')"
@@ -156,8 +247,13 @@ fi
 echo ""
 echo "AGH 配置自检:"
 if [ -x "${MODULE_PATH}/bin/AdGuardHome" ]; then
-    agh_check=$("${MODULE_PATH}/bin/AdGuardHome" --check-config -c "${AGH_CONF}" -w "${AGH_PATH}" 2>&1 | tail -5)
+    agh_check_work="${TMP_PATH}/diag.agh.$$"
+    mkdir -p "${agh_check_work}" 2>/dev/null
+    agh_check_status=0
+    agh_check=$("${MODULE_PATH}/bin/AdGuardHome" --check-config -c "${AGH_CONF}" -w "${agh_check_work}" 2>&1) || agh_check_status=$?
+    rm -rf "${agh_check_work}" 2>/dev/null
     echo "${agh_check}" | sed 's/^/  /'
+    kv "  check-config" "$([ ${agh_check_status} -eq 0 ] && echo PASS || echo "FAIL(${agh_check_status})")"
     kv "  schema_version" "$(grep -m1 '^schema_version:' "${AGH_CONF}" 2>/dev/null | awk '{print $2}')"
     if [ -s "${TMP_PATH}/agh.config.bad" ]; then
         kv "  已暂停自动拉起" "$(cat "${TMP_PATH}/agh.config.bad.reason" 2>/dev/null || echo 未知)"
@@ -321,6 +417,45 @@ if [ "${WATCH_SEC}" -gt 0 ]; then
     echo "  >>> 增量 > 0 且网络是 WiFi 时，说明系统在向 IPv6 DNS 发查询并被本模块拦截。"
     echo "      REJECT 会立即回退 IPv4；若诊断上方显示阻断方式为 DROP，则仍可能等超时。"
 fi
+
+echo ""
+echo "服务停止取证(区分系统杀后台 / 模块自身停止):"
+kv "  service.state" "$(cat "${TMP_PATH}/service.state" 2>/dev/null || echo 无)"
+kv "  service.abnormal" "$(cat "${TMP_PATH}/service.abnormal" 2>/dev/null || echo 无)"
+kv "  watchdog.heartbeat" "$(cat "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null || echo 无)"
+for service_name in smartdns AdGuardHome mihomo watchdog.sh; do
+    service_pid=$(pidof "${service_name}" 2>/dev/null)
+    [ -z "${service_pid}" ] && service_pid=$(pgrep -f "${service_name}" 2>/dev/null | head -n 1)
+    if [ -n "${service_pid}" ]; then
+        kv "  ${service_name} oom_score_adj" "$(cat "/proc/${service_pid}/oom_score_adj" 2>/dev/null)"
+    fi
+done
+for f in "${TMP_PATH}/module.log" "${TMP_PATH}/module.log.1" "${TMP_PATH}/module.log.boot.1"; do
+    [ -f "${f}" ] || continue
+    echo "  --- ${f##*/} 中的 SERVICE-EVENT/ERROR (最后 20 条) ---"
+    grep -E "SERVICE-EVENT|ERROR" "${f}" 2>/dev/null | tail -n 20 | sed 's/^/    /'
+done
+
+echo ""
+echo "小米/系统后台限制线索:"
+kv "  MIUI 版本" "$(getprop ro.miui.ui.version.name 2>/dev/null)"
+kv "  Android 版本" "$(getprop ro.build.version.release 2>/dev/null)"
+kv "  SELinux" "$(getenforce 2>/dev/null || echo 未知)"
+if command -v dumpsys > /dev/null 2>&1; then
+    echo "  deviceidle 白名单:"
+    dumpsys deviceidle whitelist 2>/dev/null | grep -E "SAM|smartdns|AdGuardHome|mihomo" | sed 's/^/    /'
+    echo "  最近 LMKD/ActivityManager 杀进程线索:"
+    logcat -d -t 500 2>/dev/null | grep -iE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping|Scheduling restart" | tail -n 20 | sed 's/^/    /'
+else
+    echo "  无 dumpsys，无法读取系统后台限制信息"
+fi
+
+echo ""
+echo "建议采集命令(发生自动停止后立即执行):"
+echo "  su -c 'sh ${MODULE_PATH}/scripts/diagnose.sh --watch 15'"
+echo "  su -c 'logcat -d -t 1000 | grep -iE \"lmkd|ActivityManager|kill|Scheduling restart\"'"
+echo "  su -c 'dumpsys deviceidle whitelist'"
+echo "  小米设置中将 SAM/SmartDNS/AdGuardHome/Mihomo 设为无限制后台、关闭电池优化，并锁定最近任务"
 
 echo ""
 sep

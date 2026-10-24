@@ -254,6 +254,7 @@ def main():
         print('[5] 屏蔽期间 App 又写入: 新内容不丢')
         run_ad(mod, base, ['block'], stub_dir)
         (test_root / 'test/A/files/ad/new.txt').write_text('app-new', encoding='utf-8')
+        (test_root / 'test/A/files/ad_prefs.xml').write_text('app-new-pref', encoding='utf-8')
         run_ad(mod, base, ['recovery'], stub_dir)
         c.check('原数据回填',
                 (test_root / 'test/A/files/ad/ad.jpg').read_text(encoding='utf-8'),
@@ -261,6 +262,12 @@ def main():
         c.check('新写内容存到 .samnew',
                 (test_root / 'test/A/files/ad.samnew/new.txt').read_text(encoding='utf-8'),
                 'app-new')
+        c.check('文件原数据回填',
+                (test_root / 'test/A/files/ad_prefs.xml').read_text(encoding='utf-8'),
+                'important-config')
+        c.check('文件新写内容存到 .samnew',
+                (test_root / 'test/A/files/ad_prefs.xml.samnew').read_text(encoding='utf-8'),
+                'app-new-pref')
 
         print('[6] 备份丢失(App 被卸载)时恢复不报错')
         run_ad(mod, base, ['block'], stub_dir)

@@ -225,6 +225,31 @@ def main():
 
     report = Report()
     files = collect_files(source_dir)
+
+    # 输出 zip 位于源码目录时必须排除，避免第二次打包把旧 zip 当源文件读入
+    output_relative = None
+    if not args.check:
+        output_path = os.path.abspath(args.output or os.path.join(source_dir, "dist", "SAM.zip"))
+        try:
+            output_relative = os.path.relpath(output_path, source_dir).replace(os.sep, "/")
+        except ValueError:
+            output_relative = None
+        if output_relative and output_relative in files:
+            files.remove(output_relative)
+
+    required_files = [
+        "module.prop",
+        "service.sh",
+        "uninstall.sh",
+        "customize.sh",
+        "scripts/service.sh",
+        "scripts/base.sh",
+        "META-INF/com/google/android/update-binary",
+    ]
+    missing_required = [f for f in required_files if f not in files]
+    if missing_required:
+        report.error("缺少必需文件: {}".format(", ".join(missing_required)))
+
     print("[1/4] 收集文件: {} 个".format(len(files)))
 
     # 1. 文本规范化

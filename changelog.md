@@ -1,3 +1,23 @@
+# 2026.10.24.18
+- WebUI 新增「自动停止分析」，一键输出手动/WiFi 停止、watchdog 拉起或系统/小米杀后台的判断；「一键诊断」默认带 15 秒 IPv6 阻断采样
+- 服务自动停止排查
+  - `service.sh` start/stop/restart、watchdog、配置 apply 增加 PID 目录锁；watchdog 拿锁后二次检查状态，修复停止后仍被拉起/重建规则的竞态
+  - WiFi 黑名单查询失败时保持现状，不再把空 SSID 当成非黑名单；开机延迟 start 与 WiFi 监控竞争时由 `service.sh` 再次校验黑名单
+  - 服务异常消失时自动写 `tmp/auto-stop.<bin>.*.log`，`diagnose.sh` 增加 `SERVICE-EVENT`、`watchdog.heartbeat`、`oom_score_adj`、MIUI/`logcat` 杀后台取证
+  - 开机不再清空历史 `module.log`，保留 `module.log.boot.1`
+- 配置与 DNS
+  - `setting_api.sh set/setarr` 改为事务副本 + 最后一次原子提交；同批次 DNS 端口冲突按最终值校验，TTL 独立 0-86400
+  - DNS 端口 53 不再删除重定向；`dns.sh check` 补 owner/回环规则校验，关闭 IPv6 阻断时会清理旧链
+  - IP 屏蔽改用 `SAM_BLOCK_IP` 专用链，自检/清理不再依赖单个探针；TUN 改名会清理旧设备规则
+  - AGH/Mihomo 上游在期望链路不可用时回退到真正可用的本地 DNS，并在服务拓扑变化后重写下游配置
+- 广告/备份/更新
+  - 文件类广告恢复保留屏蔽期间新内容到 `.samnew`；恢复失败返回非零，卸载只有全部恢复成功才删除备份清单
+  - 备份覆盖 AGH/SmartDNS/Mihomo 用户数据目录，复制失败返回失败；恢复同样校验结果
+  - 组件下载优先校验 `.sha256`，tar 拒绝绝对路径/`..`/链接，AGH/Mihomo 替换失败回滚，安装解压失败中止
+  - `run.sh` 提权参数改用随机私有目录并校验属主；WebUI 全面按 `errno` 判定执行结果
+- 测试
+  - `test_ad_sh.py` 新增文件类恢复期间新内容不丢断言
+
 # 2026.10.24.17
 - 发布与打包
   - 打包排除 `.workbuddy/` 等会话残留目录，避免内部排查笔记进入 release zip

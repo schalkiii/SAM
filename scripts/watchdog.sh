@@ -20,8 +20,8 @@
 
 source "/data/adb/modules/SAM/scripts/base.sh"
 
-# 防止重复启动
-[ "$(pgrep -f "${SCRIPTS_PATH}/watchdog.sh" | wc -l)" -gt 1 ] && exit 0
+# 防止重复启动：用 PID 锁而不是 pgrep check-then-exit，避免并发时两个实例都退出
+sam_lock_acquire "watchdog_instance" 2 || exit 0
 
 # 服务状态文件(running / stopped)
 STATE_FILE="${TMP_PATH}/service.state"
@@ -51,6 +51,8 @@ agh_config_skip_logged=0
 # 异常死亡意味着系统的网络状态可能已经被判成无网络，
 # 恢复后需要重新验证一次网络，否则表现为"服务起来了但还是没网"。
 recovered_abnormal=0
+# 服务拓扑变化后是否需要重写 AGH/Mihomo 上游并重启下游
+need_chain_refresh=0
 
 # 至少有一个 DNS 服务在跑，才值得去重建规则
 any_dns_service(){
@@ -110,16 +112,46 @@ rotate_all_logs(){
     rotate_append_log "${TMP_PATH}/${SMARTDNS_BIN}.out"
 }
 
+# 服务异常消失时抓一份系统侧证据，区分 LMKD/小米杀后台与模块主动停止
+capture_auto_stop_snapshot(){
+    snapshot_bin="${1}"
+    snapshot_stamp="${TMP_PATH}/auto-stop.${snapshot_bin}.stamp"
+    snapshot_now=$(date +%s)
+    if [ -f "${snapshot_stamp}" ]; then
+        snapshot_last=$(cat "${snapshot_stamp}" 2>/dev/null)
+        [ -n "${snapshot_last}" ] && [ $((snapshot_now - snapshot_last)) -lt 300 ] && return 0
+    fi
+    date +%s > "${snapshot_stamp}" 2>/dev/null
+    snapshot_file="${TMP_PATH}/auto-stop.${snapshot_bin}.$(date '+%Y%m%d-%H%M%S').log"
+    {
+        echo "time=$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "bin=${snapshot_bin}"
+        echo "state=$(cat "${STATE_FILE}" 2>/dev/null)"
+        echo "abnormal=$(cat "${TMP_PATH}/service.abnormal" 2>/dev/null)"
+        echo "watchdog_heartbeat=$(cat "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null)"
+        echo "--- processes ---"
+        ps -A 2>/dev/null | grep -E "smartdns|AdGuardHome|mihomo|watchdog|wifi.monitor" | grep -v grep
+        echo "--- recent service events ---"
+        grep "SERVICE-EVENT" "${LOG_FILE}" 2>/dev/null | tail -n 20
+        echo "--- logcat kill/lmkd ---"
+        logcat -d -t 300 2>/dev/null | grep -iE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping|Scheduling restart" | tail -n 30
+    } > "${snapshot_file}" 2>/dev/null
+    record_service_event "auto-stop snapshot ${snapshot_file}"
+}
+
 # 服务掉线则拉起(只处理已启用的服务)
 ensure_service(){
     if [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN}; then
         if [ ${sd_backoff} -le 0 ]; then
+            capture_auto_stop_snapshot "${SMARTDNS_BIN}"
+            record_service_event "watchdog restart ${SMARTDNS_BIN}"
             log "i" "守护: ${SMARTDNS_BIN} 未运行，重新启动"
             ${SERVICE_PATH}/sd.sh start
             sd_backoff=${BACKOFF_ROUNDS}
             # 只有真正起来才算异常恢复；起不来就不刷新网络
             if isRun ${SMARTDNS_BIN}; then
                 recovered_abnormal=1
+                need_chain_refresh=1
                 service_state_changed=1
             fi
         else
@@ -140,11 +172,14 @@ ensure_service(){
         else
             agh_config_skip_logged=0
             if [ ${agh_backoff} -le 0 ]; then
+                capture_auto_stop_snapshot "${AGH_BIN}"
+                record_service_event "watchdog restart ${AGH_BIN}"
                 log "i" "守护: ${AGH_BIN} 未运行，重新启动"
                 ${SERVICE_PATH}/agh.sh start
                 agh_backoff=${BACKOFF_ROUNDS}
                 if isRun ${AGH_BIN}; then
                     recovered_abnormal=1
+                need_chain_refresh=1
                     service_state_changed=1
                 fi
             else
@@ -159,11 +194,14 @@ ensure_service(){
     # Mihomo 没有订阅时本身起不来，不反复重试刷日志；直通模式下停用
     if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ] && ! isRun ${MIHOMO_BIN}; then
         if [ ${mihomo_backoff} -le 0 ]; then
+            capture_auto_stop_snapshot "${MIHOMO_BIN}"
+            record_service_event "watchdog restart ${MIHOMO_BIN}"
             log "i" "守护: ${MIHOMO_BIN} 未运行，重新启动"
             ${SERVICE_PATH}/mihomo.sh start
             mihomo_backoff=${BACKOFF_ROUNDS}
             if isRun ${MIHOMO_BIN}; then
                 recovered_abnormal=1
+                need_chain_refresh=1
                 service_state_changed=1
             fi
         else
@@ -215,6 +253,18 @@ ensure_dns_rules(){
             log "i" "守护: IPv6 DNS 阻断规则丢失，重新添加"
             ${IPTABLES_PATH}/dns.sh enable
         }
+        # 只有跳转存在还不够：链体为空时等于没有阻断
+        if ${ip6tables_w} -t filter -L BLOCK_IPV6_DNS > /dev/null 2>&1; then
+            ${ip6tables_w} -t filter -L BLOCK_IPV6_DNS -n 2>/dev/null | grep -qE "DROP|REJECT" || {
+                log "i" "守护: IPv6 DNS 阻断链为空，重新添加"
+                ${IPTABLES_PATH}/dns.sh enable
+            }
+        fi
+    else
+        ${ip6tables_w} -t filter -C OUTPUT -j BLOCK_IPV6_DNS > /dev/null 2>&1 && {
+            log "i" "守护: IPv6 DNS 阻断已关闭，清理旧规则"
+            ${IPTABLES_PATH}/dns.sh disable
+        }
     fi
 }
 
@@ -236,6 +286,20 @@ ensure_tun_rules(){
     ${IPTABLES_PATH}/mihomo.sh add
 }
 
+# IP 屏蔽规则自愈
+ensure_ip_rules(){
+    if [ "${IP_IPTABLES}" = "true" ]; then
+        if ! ${iptables_w} -C OUTPUT -j SAM_BLOCK_IP > /dev/null 2>&1 || \
+           ! ${iptables_w} -L SAM_BLOCK_IP -n 2>/dev/null | grep -q "DROP"; then
+            log "i" "守护: IP 屏蔽规则缺失，重新添加"
+            ${IPTABLES_PATH}/ip.sh enable
+        fi
+    else
+        ${iptables_w} -C OUTPUT -j SAM_BLOCK_IP > /dev/null 2>&1 && \
+            ${IPTABLES_PATH}/ip.sh disable
+    fi
+}
+
 # 初始状态: 没有状态文件时视为运行中
 [ -f "${STATE_FILE}" ] || echo running > "${STATE_FILE}"
 
@@ -252,15 +316,34 @@ ad_cleanup_counter=0
 # 配置文件修改时间戳: 没变就不重复解析，减少每 5 秒一次的磁盘写入
 setting_file="/data/adb/modules/SAM/setting.conf"
 setting_stamp=""
+setting_sum=""
 
 log "i" "守护循环已启动(每 5 秒自检)"
+date +%s > "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null
 
 while true; do
     loop_count=$((loop_count + 1))
+    date +%s > "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null
 
     # 手动停止 / WiFi 黑名单触发的停止，都不自动拉起
     case "$(cat "${STATE_FILE}" 2>/dev/null)" in
         stopped*)
+            sleep 5
+            continue
+            ;;
+    esac
+
+    # 所有会修改服务/规则的动作都必须与 service.sh 的 start/stop/restart 互斥。
+    # 不能只在循环开头看一次 stopped：stop 可能在本轮执行过程中发生。
+    if ! sam_lock_acquire "service" 5; then
+        sleep 5
+        continue
+    fi
+
+    # 拿到锁后再确认一次状态，避免刚好在等待锁时用户停止
+    case "$(cat "${STATE_FILE}" 2>/dev/null)" in
+        stopped*)
+            sam_lock_release "service"
             sleep 5
             continue
             ;;
@@ -284,14 +367,17 @@ while true; do
     fi
 
     # 每轮检查设置是否变化，变了才重新解析(load_setting 会写临时文件，不宜每 5 秒跑一次)
+    # 同秒多次写入时 mtime 不变，必须叠加 cksum，避免永久漏掉最终配置
     if has_cmd stat; then
         new_stamp=$(stat -c "%Y" "${setting_file}" 2>/dev/null)
     else
         new_stamp=""
     fi
-    if [ -z "${new_stamp}" ] || [ "${new_stamp}" != "${setting_stamp}" ]; then
+    new_sum=$(cksum "${setting_file}" 2>/dev/null)
+    if [ -z "${new_stamp}" ] || [ "${new_stamp}" != "${setting_stamp}" ] || [ "${new_sum}" != "${setting_sum}" ]; then
         load_setting "${setting_file}"
         setting_stamp="${new_stamp}"
+        setting_sum="${new_sum}"
     fi
 
     # 直通模式: 撤销 DNS 劫持，停掉 Mihomo，服务进程与 WebUI 保持运行
@@ -307,6 +393,7 @@ while true; do
             mihomo_backoff=0
         fi
         ensure_service
+        sam_lock_release "service"
         sleep 5
         continue
     fi
@@ -320,10 +407,26 @@ while true; do
 
     ensure_service
 
+    # 服务拓扑变化后重写下游上游，避免 AGH/Mihomo 仍指向已死亡的本地 DNS
+    if [ ${need_chain_refresh} -eq 1 ]; then
+        need_chain_refresh=0
+        ${UPDATE_PATH}/agh.sh > /dev/null 2>&1
+        ${UPDATE_PATH}/mihomo.sh > /dev/null 2>&1
+        if [ "${AGH_ENABLE}" = "true" ]; then
+            ${SERVICE_PATH}/agh.sh stop > /dev/null 2>&1
+            ${SERVICE_PATH}/agh.sh start > /dev/null 2>&1
+        fi
+        if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+            ${SERVICE_PATH}/mihomo.sh stop > /dev/null 2>&1
+            ${SERVICE_PATH}/mihomo.sh start > /dev/null 2>&1
+        fi
+    fi
+
     # 服务刚被拉起、模式刚切换时立即重建规则；其余情况每 10 秒检查一次
     if [ ${service_state_changed} -eq 1 ] || [ $((loop_count % 2)) -eq 0 ]; then
         ensure_dns_rules
         ensure_tun_rules
+        ensure_ip_rules
         service_state_changed=0
     fi
 
@@ -342,5 +445,6 @@ while true; do
         fi
     fi
 
+    sam_lock_release "service"
     sleep 5
 done

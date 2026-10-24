@@ -432,9 +432,10 @@
                 <div class="tool-grid">
                     <button class="tool-btn" data-script="manual.sh" data-args="activate">激活待更新版本</button>
                     <button class="tool-btn" data-script="manual.sh" data-args="status">查看模块状态</button>
-                    <button class="tool-btn" data-script="diagnose.sh" data-args="">一键诊断</button>
+                    <button class="tool-btn" data-script="diagnose.sh" data-args="--watch 15">一键诊断（15 秒采样）</button>
+                    <button class="tool-btn" data-script="diagnose.sh" data-args="--auto-stop">自动停止分析</button>
                 </div>
-                <div class="setting-desc">「激活待更新版本」只用于刚刷入、还在 modules_update 的情况；查看状态会核对服务、DNS 规则端口与模块目录。一键诊断只读采集服务/端口/配置校验/防火墙/DNS/MTU，建议在 WiFi 与 5G 下各跑一次。</div>
+                <div class="setting-desc">「激活待更新版本」只用于刚刷入、还在 modules_update 的情况。「一键诊断」只读采集服务/端口/配置校验/防火墙/DNS/MTU，并采样 15 秒 IPv6 阻断增量；「自动停止分析」直接判断是手动/WiFi 停止、watchdog 拉起，还是系统/小米杀后台，并列出 auto-stop 取证。</div>
             </div>
 
             <div class="content-section">

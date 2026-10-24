@@ -45,6 +45,16 @@ function err(result) {
     return String((result && result.stderr) || "").trim();
 }
 
+function isOk(result) {
+    return !!result && Number(result.errno) === 0;
+}
+
+function resultMessage(result) {
+    if (isOk(result)) return "";
+    const message = err(result);
+    return message || ("命令执行失败(errno=" + String(result && result.errno) + ")");
+}
+
 // 获取服务状态
 function getServiceStatus(id, status) {
     const control = document.getElementById(id);
@@ -409,11 +419,14 @@ async function saveSettings() {
 
         const value = String(el.value).trim();
 
-        // 端口必须是 1-65535 的数字
+        // 端口必须是 1-65535 的数字；TTL 单独按 0-86400 校验
         if (el.type === "number") {
-            const port = Number(value);
-            if (!value || !/^[0-9]+$/.test(value) || port < 1 || port > 65535) {
-                invalid = key + " 必须是 1-65535 之间的数字";
+            const valueNumber = Number(value);
+            const isTtl = key === "SMARTDNS_TTL_MIN";
+            const min = isTtl ? 0 : 1;
+            const max = isTtl ? 86400 : 65535;
+            if (!value || !/^[0-9]+$/.test(value) || valueNumber < min || valueNumber > max) {
+                invalid = key + " 必须是 " + min + "-" + max + " 之间的数字";
                 return;
             }
         }
@@ -437,16 +450,18 @@ async function saveSettings() {
     try {
         toast("正在保存配置......");
         const setResult = await runShellArgs("setting_api.sh", ["set"].concat(scalars));
-        if (err(setResult)) {
-            showToast("保存失败: " + err(setResult), 6000);
+        const setErr = resultMessage(setResult);
+        if (setErr) {
+            showToast("保存失败: " + setErr, 6000);
             return;
         }
 
         for (let i = 0; i < arrays.length; i++) {
             const item = arrays[i];
             const arrResult = await runShellArgs("setting_api.sh", ["setarr", item.key].concat(item.values));
-            if (err(arrResult)) {
-                showToast("保存失败: " + err(arrResult), 6000);
+            const arrErr = resultMessage(arrResult);
+            if (arrErr) {
+                showToast("保存失败: " + arrErr, 6000);
                 return;
             }
         }
@@ -454,6 +469,11 @@ async function saveSettings() {
         toast("正在应用配置，请稍等......");
         const applyResult = await runShell("setting_api.sh", "apply");
         await updateServiceStatus();
+        const applyErr = resultMessage(applyResult);
+        if (applyErr) {
+            showToast("应用失败: " + applyErr, 6000);
+            return;
+        }
         setSettingsDirty(false);
         showToast(out(applyResult) || "已保存并应用", 4000);
     } finally {
@@ -482,9 +502,10 @@ async function runToolButton(button) {
 
     try {
         const result = await runShell(script, args);
+        const commandErr = resultMessage(result);
         const parts = [];
         if (out(result)) parts.push(out(result));
-        if (err(result)) parts.push("[stderr] " + err(result));
+        if (commandErr) parts.push("[stderr] " + commandErr);
         const text = parts.join(newlineChar());
 
         if (view) {
@@ -492,7 +513,9 @@ async function runToolButton(button) {
             view.scrollTop = 0;
         }
         // 卸载后模块目录已经被删除，不能再调用 webui.sh 刷新状态
-        if (isUninstall) {
+        if (commandErr) {
+            showToast("执行失败: " + commandErr, 6000);
+        } else if (isUninstall) {
             showToast("已卸载，可关闭此页面", 6000);
         } else {
             showToast(text ? "执行完成" : "执行完成(无输出)", 3000);
@@ -545,7 +568,9 @@ function initToolButtons() {
             dns_rule_action.disabled = true;
             dns_rule_action.textContent = "重建中...";
             try {
-                await runShellArgs("iptables/dns.sh", ["enable"]);
+                const rebuildResult = await runShellArgs("iptables/dns.sh", ["enable"]);
+                const rebuildErr = resultMessage(rebuildResult);
+                if (rebuildErr) throw new Error(rebuildErr);
                 showToast("DNS 规则已重建", 3000);
                 await updateServiceStatus();
             } catch (error) {
@@ -596,8 +621,13 @@ async function serviceControls(text, cmd) {
     serviceActionBusy = true;
     try {
         toast(`正在${text}，请稍等......`);
-        await runShell("service.sh", cmd);
+        const actionResult = await runShell("service.sh", cmd);
+        const actionErr = resultMessage(actionResult);
         await updateServiceStatus();
+        if (actionErr) {
+            showToast(text + "失败: " + actionErr, 6000);
+            return;
+        }
         var outNumber = parseInt(lastStatus.process, 10) || 0;
         var serNumber = parseInt(lastStatus.service, 10) || 0;
         if ( outNumber < serNumber && ( cmd == "start" || cmd == "restart" )) {
@@ -627,19 +657,31 @@ async function mountControls(){
         var host_mount_status = await runShell("webui.sh", "mount");
         if ( out(host_mount_status) == "已挂载" ) {
             const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=false"]);
-            if (err(saved)) {
-                showToast("保存设置失败: " + err(saved), 6000);
+            const saveErr = resultMessage(saved);
+            if (saveErr) {
+                showToast("保存设置失败: " + saveErr, 6000);
                 return;
             }
-            await runCommand("umount /system/etc/hosts");
+            const unmountResult = await runCommand("umount /system/etc/hosts");
+            const unmountErr = resultMessage(unmountResult);
+            if (unmountErr) {
+                showToast("卸载失败: " + unmountErr, 6000);
+                return;
+            }
             showToast(`Host 未挂载`);
         } else {
             const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=true"]);
-            if (err(saved)) {
-                showToast("保存设置失败: " + err(saved), 6000);
+            const saveErr = resultMessage(saved);
+            if (saveErr) {
+                showToast("保存设置失败: " + saveErr, 6000);
                 return;
             }
-            await runCommand(`mount -o bind ${module_path}/etc/hosts /system/etc/hosts`);
+            const mountResult = await runCommand(`mount -o bind ${module_path}/etc/hosts /system/etc/hosts`);
+            const mountErr = resultMessage(mountResult);
+            if (mountErr) {
+                showToast("挂载失败: " + mountErr, 6000);
+                return;
+            }
             showToast(`Host 已挂载`);
         }
         await updateServiceStatus();
@@ -657,11 +699,26 @@ async function monitorControls(text) {
     monitorActionBusy = true;
     try {
         var pid_status = await runShell("webui.sh", `monitor ${text}`);
+        const monitorErr = resultMessage(pid_status);
+        if (monitorErr) {
+            showToast("查询监控状态失败: " + monitorErr, 6000);
+            return;
+        }
         if ( out(pid_status) == "已运行" ) {
-            await runShell("webui.sh", `kill ${text}`);
+            const killResult = await runShell("webui.sh", `kill ${text}`);
+            const killErr = resultMessage(killResult);
+            if (killErr) {
+                showToast("禁用失败: " + killErr, 6000);
+                return;
+            }
             showToast(text == "module" ? "模块未监控" : text == "wifi" ? "WiFi未监控" : "host未监控");
         } else {
-            await runShell("webui.sh", `start ${text}`);
+            const startResult = await runShell("webui.sh", `start ${text}`);
+            const startErr = resultMessage(startResult);
+            if (startErr) {
+                showToast("启用失败: " + startErr, 6000);
+                return;
+            }
             showToast(text == "module" ? "模块已监控" : text == "wifi" ? "WiFi已监控" : "host已监控");
         }
         await updateServiceStatus();
@@ -683,7 +740,7 @@ async function resumeModule() {
         // 统一走 resume；manual.sh 检测到待激活包时会先 activate
         const result = await runShell("manual.sh", "resume");
         await updateServiceStatus();
-        const message = err(result);
+        const message = resultMessage(result);
         if (message) {
             showToast((pending ? "激活恢复失败: " : "恢复失败: ") + message, 6000);
             return;

@@ -27,6 +27,26 @@ has_abnormal_service(){
 
 # 启动
 start(){
+    # WiFi 黑名单优先于手动/自动启动，避免黑名单网络下被 boot/watchdog 拉起
+    wifi_blacklist_state
+    wifi_state_rc=$?
+    if [ ${wifi_state_rc} -eq 0 ]; then
+        echo "stopped-by-wifi" > "${STATE_FILE}"
+        record_service_event "start skipped: WiFi blacklist matched"
+        log "i" "当前 WiFi 在黑名单中，跳过启动"
+        return 0
+    elif [ ${wifi_state_rc} -eq 2 ]; then
+        case "$(cat "${STATE_FILE}" 2>/dev/null)" in
+            stopped-by-wifi*)
+                record_service_event "start blocked: WiFi state unknown while stopped-by-wifi"
+                log "e" "WiFi 状态未知且此前因黑名单停止，保持停止"
+                return 0
+                ;;
+        esac
+        record_service_event "start warning: WiFi state unknown"
+        log "e" "WiFi 状态未知，仍尝试启动；若当前应在黑名单请检查 WiFi 查询权限"
+    fi
+
     # 补齐 SmartDNS 的软链接(软重启/临时 root 下开机脚本不会执行)
     ensure_module_links
 
@@ -138,6 +158,15 @@ start(){
             fi
         fi
     fi
+
+    # 明确返回健康状态，供 apply/update 判断，不能永远返回成功
+    [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && return 1
+    [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && return 1
+    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ] && ! isRun ${MIHOMO_BIN}; then
+        return 1
+    fi
+    record_service_event "start complete"
+    return 0
 }
 
 # 停止
@@ -179,6 +208,13 @@ stop(){
     ${SERVICE_PATH}/crontabs.sh stop
     # 更新描述
     ${UPDATE_PATH}/desc.sh
+
+    if isRun ${SMARTDNS_BIN} || isRun ${AGH_BIN} || isRun ${MIHOMO_BIN}; then
+        record_service_event "stop incomplete: service process still running"
+        return 1
+    fi
+    record_service_event "stop complete"
+    return 0
 }
 
 # 添加指令
@@ -187,31 +223,44 @@ case "$1" in
     start)
         # 不再 rm -rf tmp/*: 会把其他进程正在用的 setting.clean.* 一起删掉，
         # 表现为"设置文件语法错误 ... no such file or directory"
+        sam_lock_acquire "service" 30 || { log "e" "服务操作正在进行，跳过 start"; exit 1; }
         log "i" "start >>>"
         start
+        start_rc=$?
         log "i" "<<< start"
+        sam_lock_release "service"
+        exit ${start_rc}
         ;;
     # 停止
     stop)
         # 不再清空日志: 之前的实现直接截断 module.log，
         # 恰好把"服务为什么掉线"的证据一起抹掉了(停止时正是最需要看日志的时候)。
         # 改为保留上一份日志为 module.log.1，当前日志重新开始。
+        sam_lock_acquire "service" 30 || { log "e" "服务操作正在进行，跳过 stop"; exit 1; }
         if [ -s "${LOG_FILE}" ]; then
             mv -f "${LOG_FILE}" "${LOG_FILE}.1"
         fi
         : > "${LOG_FILE}"
         # 支持停止原因: sh service.sh stop stopped-by-wifi
         stop_reason="${2:-stopped}"
+        record_service_event "stop requested reason=${stop_reason}"
         log "i" "stop >>>"
         stop
+        stop_rc=$?
         log "i" "<<< stop"
+        sam_lock_release "service"
+        exit ${stop_rc}
         ;;
     # 重启
     restart)
+        sam_lock_acquire "service" 60 || { log "e" "服务操作正在进行，跳过 restart"; exit 1; }
         log "i" "restart >>>"
         stop
         start
+        restart_rc=$?
         log "i" "<<< restart"
+        sam_lock_release "service"
+        exit ${restart_rc}
         ;;
     # 刷新网络(手动开关一次飞行模式)
     refresh)

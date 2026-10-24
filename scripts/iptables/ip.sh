@@ -239,47 +239,66 @@ REJECT_IP_LIST="
 "
 
 # 拦截 ip
-# 代表性规则: 用来快速判断整组规则是否存在(名单调整时不要删除这个 IP)
-IP_RULE_PROBE="116.205.193.167"
+# 使用专用链，整组规则原子重建/清理；不再依赖单个探针 IP 判断整组是否存在
+IP_CHAIN="SAM_BLOCK_IP"
 
-ip_rule_exists(){
-    ${iptables_w} -C OUTPUT -d "${IP_RULE_PROBE}" -j DROP > /dev/null 2>&1
-}
-
-reject_ip(){
-    action="${1}"
+add_ip_rules(){
     for ip in ${REJECT_IP_LIST}
     do
-        # 跳过注释/空行；保留 CIDR 完整写法，不能再用 grep 截成单个 IP
+        # 跳过注释/空行；保留 CIDR 完整写法
         case "${ip}" in
             ''|\#*) continue ;;
             *[!0-9./]*) continue ;;
         esac
-        ${iptables_w} ${action} OUTPUT -d "${ip}" -j DROP > /dev/null 2>&1
+        ${iptables_w} -A ${IP_CHAIN} -d "${ip}" -j DROP > /dev/null 2>&1
     done
+}
+
+# 清理历史版本直接写在 OUTPUT 上的旧规则
+remove_legacy_rules(){
+    for ip in ${REJECT_IP_LIST}
+    do
+        case "${ip}" in
+            ''|\#*) continue ;;
+            *[!0-9./]*) continue ;;
+        esac
+        while ${iptables_w} -C OUTPUT -d "${ip}" -j DROP > /dev/null 2>&1; do
+            ${iptables_w} -D OUTPUT -d "${ip}" -j DROP > /dev/null 2>&1 || break
+        done
+    done
+}
+
+ip_chain_ready(){
+    ${iptables_w} -t filter -L ${IP_CHAIN} > /dev/null 2>&1 && \
+    ${iptables_w} -C OUTPUT -j ${IP_CHAIN} > /dev/null 2>&1 && \
+    ${iptables_w} -L ${IP_CHAIN} -n 2>/dev/null | grep -q "DROP"
 }
 
 # 添加指令
 case "${1}" in
     # 添加
     enable)
-        # 幂等: 先清掉上一次留下的规则，避免重复 start 叠加成多份
-        if ip_rule_exists; then
-            reject_ip "-D"
+        ${iptables_w} -N ${IP_CHAIN} 2>/dev/null
+        ${iptables_w} -F ${IP_CHAIN} 2>/dev/null
+        add_ip_rules
+        ${iptables_w} -C OUTPUT -j ${IP_CHAIN} > /dev/null 2>&1 || \
+            ${iptables_w} -I OUTPUT -j ${IP_CHAIN}
+        remove_legacy_rules
+        if ip_chain_ready; then
+            log "i" "已添加屏蔽 IP 规则"
+        else
+            log "e" "屏蔽 IP 规则创建失败"
+            exit 1
         fi
-        reject_ip "-A"
-        log "i" "已添加屏蔽 IP 规则"
         ;;
     # 删除
     disable)
-        # 没有规则时直接返回，避免每次 stop 都空跑 200 次 iptables
-        ip_rule_exists || exit 0
-        # 最多清 3 轮，兼容历史版本重复添加留下的多份规则
-        clean_round=0
-        while ip_rule_exists && [ ${clean_round} -lt 3 ]; do
-            reject_ip "-D"
-            clean_round=$((clean_round + 1))
+        while ${iptables_w} -C OUTPUT -j ${IP_CHAIN} > /dev/null 2>&1; do
+            ${iptables_w} -D OUTPUT -j ${IP_CHAIN} > /dev/null 2>&1 || break
         done
+        ${iptables_w} -F ${IP_CHAIN} 2>/dev/null
+        ${iptables_w} -X ${IP_CHAIN} 2>/dev/null
+        remove_legacy_rules
         log "i" "已删除屏蔽 IP 规则"
         ;;
 esac

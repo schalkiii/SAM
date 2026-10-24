@@ -33,14 +33,16 @@ reset_conf(){
 
     # 按当前 setting.conf 重写端口、上游、监听与缓存开关
     if ! sh "${SCRIPTS_PATH}/update/agh.sh"; then
-        echo "按 setting.conf 重写配置失败；模板已保留，请检查设置"
+        echo "按 setting.conf 重写配置失败，恢复原配置"
+        [ -f "${AGH_CONF}.bak.${reset_stamp}" ] && cp -f "${AGH_CONF}.bak.${reset_stamp}" "${AGH_CONF}"
         return 1
     fi
 
     reset_check_output=$("${AGH_BIN}" --check-config -c "${AGH_CONF}" -w "${AGH_PATH}" 2>&1)
     if [ $? -ne 0 ]; then
-        echo "模板校验失败:"
+        echo "模板校验失败，恢复原配置:"
         printf '%s\n' "${reset_check_output}" | tail -n 5
+        [ -f "${AGH_CONF}.bak.${reset_stamp}" ] && cp -f "${AGH_CONF}.bak.${reset_stamp}" "${AGH_CONF}"
         return 1
     fi
 
