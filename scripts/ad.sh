@@ -676,7 +676,19 @@ cleanup_removed(){
                 continue
             fi
         else
-            rm -f "${hold_line}" 2>/dev/null
+            # 与目录分支同语义: 空壳才删；非空说明锁定期间仍有内容写入，
+            # 改名到 .samnew 保留，避免把用户数据当空壳删掉
+            if [ -s "${hold_line}" ]; then
+                if mv "${hold_line}" "${hold_line}.samnew" 2>/dev/null; then
+                    log "e" "已解除锁定但文件非空，已另存: ${hold_line}.samnew"
+                else
+                    log "e" "已解除锁定但文件非空且无法另存，保留: ${hold_line}"
+                    skip_number=$((skip_number + 1))
+                    continue
+                fi
+            else
+                rm -f "${hold_line}" 2>/dev/null
+            fi
         fi
         clean_number=$((clean_number + 1))
         log "i" "已解除已卸载 App 的锁定: ${hold_line}"

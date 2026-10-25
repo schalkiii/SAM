@@ -1,3 +1,19 @@
+# 2026.10.25.11（未发布）
+- 第五轮审计遗留项推进（`docs/AUDIT-REPORT-2026-10-25-5.md` S-5-8~S-5-10）
+  - 测试: 新增 `test_setting_keys.py`（15 项），静态校验 27 个配置键在
+    `setting.conf` / `setting.sh` 默认值 / `setting_api.sh` 分类与 `get_all` /
+    `customize.sh` 迁移列表 / WebUI `data-key` 五处完全一致；CI 增加对应步骤。
+    十二套件合计 414 项（CI/mksh），Windows 本机 383 项
+  - 门禁: `check_version_sync.py` 由 6 项扩到 9 项，新增 `desc.sh` / `customize.sh` /
+    WebUI 服务页的凭据与 `smartdns.conf` 比对；改密码漏改界面文案会直接失败
+  - 修复: `manual.sh install` 解压前校验 zip 成员（拒绝绝对路径与 `..` 穿越），
+    并保留 `etc/crontabs/root` 与 `etc/mihomo/rule_provider`，免重启安装不再丢定时任务
+  - 修复: `ad.sh cleanup` 文件分支与目录分支同语义：锁定期间写入的非空内容改名
+    `.samnew` 保留，不再当空壳删除
+  - 优化: WebUI 挂载状态改用 `hosts_mounted` 判定；`update.sh` 的 AGH 自检与版本提取
+    合并为一次 `--version`
+  - 文档: AGENTS 同步十二套件计数与凭据门禁范围
+
 # 2026.10.25.10
 - 第五轮审计修复（`docs/AUDIT-REPORT-2026-10-25-5.md` S-5-1~S-5-7）
   - 修复: WebUI「禁用 WiFi 监控」实际无效。`wifi.monitor.sh` 的 trap 只设置处理器不 `exit`，

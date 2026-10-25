@@ -3,10 +3,11 @@
 
 manual.sh 的 activate / repair 决定"用哪个目录激活、包能不能激活、会不会被
 下次重启删掉"，是整条免重启链路里唯一不可逆的判定，此前只靠人工验证。
-本测试从脚本原样抽取三个纯判定函数(不复制实现):
+本测试从脚本原样抽取四个纯判定函数(不复制实现):
   - detect_source:        待激活目录优先于 active，都不存在时输出空
   - validate_module_dir:  必需文件/可执行位/脚本语法缺一不可
   - clear_module_markers: 删掉 update/remove/disable/skip_mount 标记
+  - zip_members_safe:     解压前拒绝绝对路径与 .. 穿越成员
 
 测试用最小假模块目录；service.sh 里刻意放一段数组展开，验证语法自检走的是
 mksh(GNU bash 也可以)，而不是把数组判成语法错误的 dash。
@@ -17,6 +18,7 @@ mksh(GNU bash 也可以)，而不是把数组判成语法错误的 dash。
 """
 
 import argparse
+import os
 import pathlib
 import shutil
 import subprocess
@@ -36,6 +38,15 @@ UPDATE_DIR="${TEST_UPDATE_DIR}"
 ACTIVE_DIR="${TEST_ACTIVE_DIR}"
 MANUAL_SYNTAX_SHELL="sh"
 command -v mksh > /dev/null 2>&1 && MANUAL_SYNTAX_SHELL="mksh"
+
+# zip_members_safe 只调用 unzip -l；列表内容由测试环境变量提供
+unzip(){
+    [ "${TEST_UNZIP_FAIL:-0}" = "1" ] && return 1
+    case "${1}" in
+        -l) printf '%s\\n' "${TEST_ZIP_LISTING}" ;;
+        *) return 1 ;;
+    esac
+}
 '''
 
 
@@ -43,11 +54,14 @@ def shell_name():
     return shutil.which('mksh') or shutil.which('sh') or 'sh'
 
 
-def run_shell(base, script):
+def run_shell(base, script, extra_env=None):
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         [shell_name(), '-c', script],
         capture_output=True, text=True, encoding='utf-8', errors='replace',
-        cwd=base.as_posix(),
+        cwd=base.as_posix(), env=env,
     )
 
 
@@ -70,6 +84,7 @@ def build_defs():
         extract_function(manual, 'detect_source'),
         extract_function(manual, 'validate_module_dir'),
         extract_function(manual, 'clear_module_markers'),
+        extract_function(manual, 'zip_members_safe'),
     ]
     return '\n'.join(parts) + '\n'
 
@@ -217,6 +232,32 @@ def main():
         c.check('四个标记全部删除',
                 [m for m in ('update', 'remove', 'disable', 'skip_mount') if (full_dir / m).exists()], [])
         c.check('module.prop 保留', (full_dir / 'module.prop').is_file(), True)
+
+        print('[4] zip_members_safe: 解压前拒绝越界成员')
+        listing_head = 'Archive:  fake.zip\n  Length      Date    Time    Name\n---------  ---------- -----   ----\n'
+
+        def check_zip(label, body, expected):
+            r = run_shell(base, defs + '\nzip_members_safe fake.zip && echo SAFE || echo UNSAFE\n',
+                          {'TEST_ZIP_LISTING': listing_head + body})
+            c.check(label, r.stdout.strip(), expected)
+
+        check_zip('正常成员 -> 允许',
+                  '      123  2020-01-01 00:00   module.prop\n'
+                  '      456  2020-01-01 00:00   scripts/service.sh\n', 'SAFE')
+        check_zip('.. 穿越 -> 拒绝',
+                  '      123  2020-01-01 00:00   ../evil.sh\n', 'UNSAFE')
+        check_zip('绝对路径 -> 拒绝',
+                  '      123  2020-01-01 00:00   /system/etc/hosts\n', 'UNSAFE')
+        check_zip('中间 .. -> 拒绝',
+                  '      123  2020-01-01 00:00   a/../../b\n', 'UNSAFE')
+        r = run_shell(base, defs + '\nzip_members_safe fake.zip && echo SAFE || echo UNSAFE\n',
+                      {'TEST_UNZIP_FAIL': '1'})
+        c.check('无法读取成员列表 -> 拒绝', r.stdout.strip(), 'UNSAFE')
+
+        print('[5] install_zip 保留范围: 定时任务与规则提供者')
+        manual_text = (REPO / 'scripts' / 'manual.sh').read_text(encoding='utf-8')
+        c.check('保留 etc/crontabs/root', 'etc/crontabs/root' in manual_text, True)
+        c.check('保留 etc/mihomo/rule_provider', 'etc/mihomo/rule_provider' in manual_text, True)
 
         return c.report()
     finally:

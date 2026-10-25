@@ -111,7 +111,8 @@ get_all_status(){
     echo "smartdns=${smartdns_running}"
     echo "agh=${agh_running}"
     echo "mihomo=${mihomo_running}"
-    mount | grep -q "/system/etc/hosts" && echo "host=已挂载" || echo "host=未挂载"
+    # 与 hosts_mounted 同一判定(带空格边界)，避免把 /system/etc/hosts.bak 之类误判为已挂载
+    hosts_mounted && echo "host=已挂载" || echo "host=未挂载"
 
     wifi_pid=$(get_monitor_pid wifi)
     host_pid=$(get_monitor_pid host)

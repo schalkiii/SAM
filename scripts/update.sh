@@ -276,14 +276,14 @@ agh_download(){
     chmod 755 "${BIN_PATH}/${AGH_BIN}"
     chown "${SAM_USER}:${DNS_GROUP}" "${BIN_PATH}/${AGH_BIN}"
 
-    new_agh_ver=$("${BIN_PATH}/${AGH_BIN}" --version | sed -n 's/^.*version[[:space:]]\(.*\)$/\1/p')
-
-    if ! "${BIN_PATH}/${AGH_BIN}" --version > /dev/null 2>&1; then
+    # 一次 --version 同时完成"能不能运行"自检与版本提取，避免对 30MB+ 二进制跑两遍
+    if ! agh_version_output=$("${BIN_PATH}/${AGH_BIN}" --version 2>/dev/null); then
         log "e" "新 AdGuardHome 无法运行，回滚"
         restore_bak "${BIN_PATH}/${AGH_BIN}"
         rm -rf "${TMP_PATH}/${AGH_BIN}"
         return 1
     fi
+    new_agh_ver=$(printf '%s\n' "${agh_version_output}" | sed -n 's/^.*version[[:space:]]\(.*\)$/\1/p')
     # 自检通过后删除 .bak，避免常驻占用 30MB+
     rm -f "${BIN_PATH}/${AGH_BIN}.bak"
     log "i" "AdGuardHome 版本: ${agh_ver} -> ${new_agh_ver}；配置 schema ${agh_schema_ver:-未知}"

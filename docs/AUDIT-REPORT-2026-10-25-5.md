@@ -8,7 +8,9 @@
 > **执行状态（2026-10-25）**：P0/P1 项已实施并验证。十一套件由 371/340 增至
 > **392 项（CI/mksh）/ 361 项（Windows 本机）**；新增覆盖集中在组件下载降级、
 > WebUI DNS 规则快检、watchdog 拓扑刷新与常驻脚本信号处理。
-> P2/P3 项保留为建议，未在本轮改动。
+> **后续推进（同日）**：S-5-8~S-5-10 与 C-5-8~C-5-10 已实施，新增
+> `test_setting_keys.py`（15 项）并把 `check_version_sync` 扩到 9 项；
+> 十二套件 **414 项（CI/mksh）/ 383 项（Windows 本机）**。
 
 ## 一、现状描述（可观察事实）
 
@@ -294,25 +296,41 @@
   - `test_watchdog_logic.py`：20 → 27。
 - **验证方式**：Windows 361 项、WSL/CI 392 项全绿；三个新分组在 `-v` 下逐项通过。
 
-### S-5-8（中，保留）27 键跨文件一致性测试
+### S-5-8（中，已实施）27 键跨文件一致性测试
 
-- **做法**：见 T-5-3。新增 `tools/test_setting_keys.py`，并加入 CI。
-- **文件清单**：新增测试文件、`.github/workflows/check.yml`、AGENTS/README/changelog 计数。
-- **验证方式**：故意从 `customize.sh` 删一个键 → 用例必须变红。
+- **做法**：新增 `tools/test_setting_keys.py`（15 项），静态解析五处键集合并要求完全一致：
+  `setting.conf`、`setting.sh` 的 `setting_default`、`setting_api.sh` 的六个分类列表与
+  `get_all`、`customize.sh` 的迁移列表、`webroot/index.html` 的 `data-key`；
+  同时断言配置键与 `data-key` 无重复、`get_all` 下发 TTL 边界。
+- **文件清单**：新增测试文件、`.github/workflows/check.yml`、AGENTS/changelog 计数。
+- **验证方式**：已实测 15/15 通过；故意从 `customize.sh` 删一个键时键集合不等，用例会变红。
 
-### S-5-9（低，保留）凭据文案门禁扩展到全部可视面
+### S-5-9（低，已实施）凭据文案门禁扩展到全部可视面
 
-- **做法**：`check_version_sync.py` 增加从 `desc.sh`、`customize.sh`、`webroot/index.html`
-  提取账号/密码并与 `smartdns.conf` 比对。
+- **做法**：`check_version_sync.py` 从 6 项扩到 9 项，新增从 `desc.sh`、`customize.sh`、
+  `webroot/index.html` 提取 (账号, 密码) 并与 `smartdns.conf` 的 `user/password` 比对；
+  README/AGENTS 原有密码检查保留。
 - **文件清单**：`tools/check_version_sync.py`、`AGENTS.md`。
-- **验证方式**：临时把 `desc.sh` 的密码改成别的值 → 门禁必须失败。
+- **验证方式**：已实测 9/9 通过（三处均解析为 `root/root`）；改任一处文案会与配置不等而失败。
 
-### S-5-10（低，保留）`manual.sh install_zip` 保留范围与 zip 成员校验
+### S-5-10（低，已实施）`manual.sh install_zip` 保留范围与 zip 成员校验
 
-- **做法**：保留清单补 `etc/crontabs/root`、`etc/mihomo/rule_provider`；
-  解压前用 `unzip -l` 拒绝以 `/` 开头或含 `..` 的成员。
+- **做法**：新增 `zip_members_safe`，解压前用 `unzip -l` 去掉前三列后检查成员名，
+  拒绝以 `/` 开头或含 `..` 的成员（读取失败也拒绝）；保留清单补
+  `etc/crontabs/root` 与 `etc/mihomo/rule_provider`。
 - **文件清单**：`scripts/manual.sh`、`tools/test_manual_repair.py`。
-- **验证方式**：构造含 `../evil` 成员的 zip → 安装必须中止；带自定义 crontab 的旧版 → 安装后保留。
+- **验证方式**：`test_manual_repair.py` 新增 7 项：正常成员放行、`../`、中间 `..`、
+  绝对路径、成员列表读取失败四种拒绝，以及两个保留清单的静态断言；20/20 通过。
+
+### S-5-11（低，已实施）其余代码项收敛（C-5-8/C-5-9/C-5-10）
+
+- **做法**：
+  - `ad.sh cleanup` 文件分支与目录分支同语义：非空内容改名 `.samnew`，不再 `rm -f`；
+  - `webui.sh` 的挂载状态改用 `hosts_mounted`，与字段判定同口径；
+  - `update.sh` 的 AGH 自检与版本提取合并为一次 `--version`，避免 30MB+ 二进制跑两遍。
+- **文件清单**：`scripts/ad.sh`、`scripts/webui.sh`、`scripts/update.sh`。
+- **验证方式**：`test_ad_sh.py` 27/27 不回归；WebUI 状态页与 `webui.sh mount` 输出一致；
+  `update.sh` 语法检查通过。
 
 ## 四、优先级与并行性
 
@@ -325,14 +343,15 @@
 | P1 | S-5-5 网络探测 `-k` | 已实施 | 与 S-5-2 同碰 `base.sh`，串行 |
 | P2 | S-5-6 文档/安装目录 | 已实施 | 独立 |
 | P2 | S-5-7 测试补强 | 已实施 | 依赖 S-5-1~S-5-5 完成后一次跑 |
-| P3 | S-5-8 配置键一致性测试 | 保留 | 独立，可与下轮任意项并行 |
-| P3 | S-5-9 凭据门禁扩展 | 保留 | 独立 |
-| P3 | S-5-10 免重启安装保护 | 保留 | 与 `manual.sh` 其他改动串行 |
+| P2 | S-5-8 配置键一致性测试 | 已实施（后续推进） | 独立，可与下轮任意项并行 |
+| P2 | S-5-9 凭据门禁扩展 | 已实施（后续推进） | 独立 |
+| P2 | S-5-10 免重启安装保护 | 已实施（后续推进） | 与 `manual.sh` 其他改动串行 |
+| P3 | S-5-11 其余代码项收敛 | 已实施（后续推进） | 独立 |
 
 **验证命令（每组完成后）**：
 `python -X utf8 tools/pack_module.py --check --no-write`、
 `python -X utf8 tools/check_version_sync.py`、
-全部套件（Windows 361 / WSL 392）、`node --check webroot/js/main.js webroot/js/kernelsu.js`、
+全部套件（Windows 383 / WSL 414）、`node --check webroot/js/main.js webroot/js/kernelsu.js`、
 `git diff --check`。
 
 ## 五、审计边界说明
@@ -341,4 +360,6 @@
 - 第三方二进制与 `etc/*/wwwroot|webui` 前端资源不在范围内。
 - 第三方前端资源与 LICENSE 的 CRLF 保持现状（设备执行不受影响，整文件转 LF 只会制造无意义 diff）。
 - 第四轮明确不实施且本轮维持结论：`main.js` 拆分、`setting_api.sh replace_line` 批量合并。
-- 本轮未改动的保留项：C-5-7、C-5-8、T-5-3、S-5-8~S-5-10，均已在文中标注「保留」。
+- 后续推进已覆盖 C-5-1~C-5-10、T-5-1~T-5-4、S-5-8~S-5-11；仍保留的取舍：
+  `main.js` 拆分、`replace_line` 批量合并、pack 文本规范化扩大到 vendor/LICENSE、
+  CI 直接产出发布 zip、测试计数自动生成。

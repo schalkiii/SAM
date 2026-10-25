@@ -41,6 +41,10 @@ jobs:
       - name: 配置事务回归测试
         run: python tools/test_setting_transaction.py
 
+      # 27 个配置键必须同时存在于 setting.conf / 默认值 / API 分类 / 迁移列表 / WebUI
+      - name: 配置键五处一致性测试
+        run: python tools/test_setting_keys.py
+
       - name: 定时任务校验回归测试
         run: python tools/test_cron_validate.py
 

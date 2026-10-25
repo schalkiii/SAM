@@ -460,6 +460,17 @@ uninstall_module(){
     ok "模块已卸载(无需重启)"
 }
 
+# 校验 zip 成员名: 拒绝绝对路径与 .. 穿越
+# 与 update.sh 的 safe_tar_extract 同口径；unzip -l 的成员名在长度/日期/时间之后，
+# 这里去掉前三列再判断，兼容成员名里带空格的情况。解压前校验，避免先删待激活目录
+zip_members_safe(){
+    zip_listing=$(unzip -l "${1}" 2>/dev/null) || return 1
+    printf '%s\n' "${zip_listing}" | \
+        awk 'NR > 3 && $1 ~ /^[0-9]+$/ { $1 = $2 = $3 = ""; sub(/^[[:space:]]+/, ""); print }' | \
+        grep -qE '(^/|(^|/)\.\.(/|$))' && return 1
+    return 0
+}
+
 # 从本地 zip 安装
 install_zip(){
     zip_file="${1}"
@@ -467,6 +478,7 @@ install_zip(){
     [ -f "${zip_file}" ] || die "文件不存在: ${zip_file}"
     need_root
     command -v unzip > /dev/null 2>&1 || die "缺少 unzip，请先准备 busybox，或改用管理器刷入"
+    zip_members_safe "${zip_file}" || die "压缩包包含绝对路径或 .. 成员，拒绝安装"
 
     warn "清理旧的待激活目录: ${UPDATE_DIR}"
     rm -rf "${UPDATE_DIR}"
@@ -484,12 +496,12 @@ install_zip(){
     # 先备份并保留旧配置，否则激活时删除旧目录会把订阅/设置一起丢掉
     if [ -d "${ACTIVE_DIR}" ]; then
         [ -f "${ACTIVE_DIR}/scripts/backup.sh" ] && sh "${ACTIVE_DIR}/scripts/backup.sh" save > /dev/null 2>&1
-        for preserve_file in setting.conf etc/app_blacklist.prop etc/app_whitelist.prop etc/hosts etc/AdGuardHome/AdGuardHome.yaml; do
+        for preserve_file in setting.conf etc/app_blacklist.prop etc/app_whitelist.prop etc/hosts etc/crontabs/root etc/AdGuardHome/AdGuardHome.yaml; do
             [ -f "${ACTIVE_DIR}/${preserve_file}" ] || continue
             mkdir -p "$(dirname "${UPDATE_DIR}/${preserve_file}")" 2>/dev/null
             cp -f "${ACTIVE_DIR}/${preserve_file}" "${UPDATE_DIR}/${preserve_file}" 2>/dev/null
         done
-        for preserve_dir in etc/AdGuardHome/data etc/SmartDNS/data etc/mihomo/proxy_provider; do
+        for preserve_dir in etc/AdGuardHome/data etc/SmartDNS/data etc/mihomo/proxy_provider etc/mihomo/rule_provider; do
             [ -d "${ACTIVE_DIR}/${preserve_dir}" ] || continue
             mkdir -p "${UPDATE_DIR}/${preserve_dir}" 2>/dev/null
             cp -R -f "${ACTIVE_DIR}/${preserve_dir}/." "${UPDATE_DIR}/${preserve_dir}" 2>/dev/null

@@ -12,7 +12,8 @@ OTA 认为无需升级，zipUrl 没跟上则下载 404。这个脚本把「三�
   3. update.json 的 zipUrl 资产名 == SAM_<version>_release.zip
   4. changelog 存在该版本的节(version 20261025.3 对应 "# 2026.10.25.3")
   5. README.md / AGENTS.md 声明的默认密码 == smartdns.conf 的 smartdns-ui.password
-  6. module.prop 的 description 不能是占位值「模块未启动」
+  6. desc.sh / customize.sh / WebUI 服务页的凭据文案 == smartdns.conf 的 user/password
+  7. module.prop 的 description 不能是占位值「模块未启动」
 
 用法:
     python tools/check_version_sync.py        # 校验并在失败时 exit 1
@@ -58,6 +59,11 @@ def first_backticked(text, keyword):
     """取 keyword 之后第一个反引号包裹的值(同一行内)"""
     match = re.search(keyword + r'[^`\n]*`([^`]+)`', text)
     return match.group(1) if match else ''
+
+
+def credential_pairs(text, pattern):
+    """按 pattern 提取 (账号, 密码) 并去重；提取不到时返回空列表"""
+    return sorted(set(re.findall(pattern, text)))
 
 
 def main():
@@ -128,6 +134,10 @@ def main():
     conf_password = conf_match.group(1) if conf_match else ''
     if not conf_password:
         failures.append('无法从 etc/SmartDNS/smartdns.conf 读取 smartdns-ui.password')
+    conf_user_match = re.search(r'^smartdns-ui\.user\s+(\S+)', conf_text, re.M)
+    conf_user = conf_user_match.group(1) if conf_user_match else ''
+    if not conf_user:
+        failures.append('无法从 etc/SmartDNS/smartdns.conf 读取 smartdns-ui.user')
 
     readme_path = REPO / 'README.md'
     readme_password = first_backticked(readme_path.read_text(encoding='utf-8'), '默认密码') \
@@ -140,6 +150,30 @@ def main():
           actual_label='README', expected_label='smartdns.conf')
     check('AGENTS 默认密码与 SmartDNS 配置一致', agents_password, conf_password,
           actual_label='AGENTS', expected_label='smartdns.conf')
+
+    # 凭据的可视文案不止 README/AGENTS: 模块描述、安装提示与 WebUI 服务页
+    # 也会告诉用户账号密码。v20261025.7 已发生过文档与配置不一致，这里把
+    # 其余三个可视面也纳入门禁，避免只改了文档却漏掉界面文案。
+    expected_pairs = [(conf_user, conf_password)]
+    desc_text = (REPO / 'scripts' / 'update' / 'desc.sh').read_text(encoding='utf-8') \
+        if (REPO / 'scripts' / 'update' / 'desc.sh').is_file() else ''
+    desc_pairs = credential_pairs(desc_text, r'面板账号:\s*([^\s/（(]+)\s*/\s*([^\s（(]+)')
+    check('desc.sh 面板凭据与 SmartDNS 配置一致', desc_pairs, expected_pairs,
+          actual_label='desc.sh', expected_label='smartdns.conf')
+
+    customize_text = (REPO / 'customize.sh').read_text(encoding='utf-8') \
+        if (REPO / 'customize.sh').is_file() else ''
+    customize_pairs = credential_pairs(
+        customize_text, r'账号:\s*([^\s|]+)\s*\|\s*密码:\s*([^\s)]+)')
+    check('customize.sh 安装提示凭据与 SmartDNS 配置一致', customize_pairs, expected_pairs,
+          actual_label='customize.sh', expected_label='smartdns.conf')
+
+    webui_path = REPO / 'webroot' / 'index.html'
+    webui_text = webui_path.read_text(encoding='utf-8') if webui_path.is_file() else ''
+    webui_pairs = credential_pairs(
+        webui_text, r'默认账号\s*([^\s/（(]+)\s*/\s*([^\s（(]+)')
+    check('WebUI 服务页凭据与 SmartDNS 配置一致', webui_pairs, expected_pairs,
+          actual_label='webroot/index.html', expected_label='smartdns.conf')
 
     # 发版包里的 module.prop 不能是占位描述: 首次启动前模块列表显示的就是它
     description = props.get('description', '').strip()
