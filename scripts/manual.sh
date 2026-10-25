@@ -133,6 +133,12 @@ fix_symlink(){
     fix_one_link "${target_dir}/etc/SmartDNS/lib/ld-linux.so" "ld-musl-aarch64.so.1"
 }
 
+# 语法自检用哪个解释器
+# manual.sh 不 source base.sh(激活阶段 base.sh 可能还不可用)，所以规则在这里独立探测:
+# 设备 sh 就是 mksh，scripts/service.sh 里的数组展开在 dash 下会被误判成语法错误
+MANUAL_SYNTAX_SHELL="sh"
+command -v mksh > /dev/null 2>&1 && MANUAL_SYNTAX_SHELL="mksh"
+
 # 校验模块目录结构：不能只看 module.prop，否则半截包会被当成可激活
 validate_module_dir(){
     target_dir="${1}"
@@ -143,8 +149,8 @@ validate_module_dir(){
     [ -x "${target_dir}/bin/AdGuardHome" ] || return 1
     [ -x "${target_dir}/etc/SmartDNS/smartdns" ] || return 1
     [ -x "${target_dir}/bin/mihomo" ] || return 1
-    sh -n "${target_dir}/scripts/service.sh" >/dev/null 2>&1 || return 1
-    sh -n "${target_dir}/scripts/manual.sh" >/dev/null 2>&1 || return 1
+    "${MANUAL_SYNTAX_SHELL}" -n "${target_dir}/scripts/service.sh" >/dev/null 2>&1 || return 1
+    "${MANUAL_SYNTAX_SHELL}" -n "${target_dir}/scripts/manual.sh" >/dev/null 2>&1 || return 1
     return 0
 }
 

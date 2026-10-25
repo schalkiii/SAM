@@ -1,3 +1,18 @@
+# 2026.10.25.9
+- 第四轮审计优化（`docs/AUDIT-REPORT-2026-10-25-4.md` S-4-1~S-4-5）
+  - 优化: 语法解释器改为加载期缓存 `SETTING_SYNTAX_SHELL`。原每次自检都 `$(...)` 探测一次，
+    WebUI 一次保存 27 个键会多开 27 层子 shell
+  - 优化: `service/{sd,agh,mihomo,crontabs}.sh` 退出码语义修正: 正常态（未启用 / 已运行 / 已停止）
+    返回 0，真实失败（配置非法 / 二进制缺失 / 进程未起 / kill 失败）返回 1。
+    此前语义相反（正常态返回 1、启动失败落到 0），任何用 rc 判断结果的调用方都会得到相反结论
+  - 优化: `manual.sh` 的模块结构校验改用与设备一致的 mksh（文件内独立探测，不依赖 base.sh），
+    避免 dash 环境把 `scripts/service.sh` 的数组展开误判成语法错误而拒绝激活
+  - 文档: `setting.sh` / `setting_api.sh` 里"sh -n 自检"的旧措辞同步为 `SETTING_SYNTAX_SHELL`
+  - 测试: 新增 `test_manual_repair.py`（16 项：`detect_source` / `validate_module_dir` /
+    `clear_module_markers`；Windows 因 MSYS 的 shebang 规则跳过不可执行位 3 项）。
+    十套件合计 351 项（CI/mksh），Windows 本机 320 项
+  - 修正: 上一版文档里的测试计数笔误（九套件实为 335 项 CI / 307 项 Windows，此前写成 344/325）
+
 # 2026.10.25.8
 - 审计第三轮修复（`docs/AUDIT-REPORT-2026-10-25-3.md` 的 S-2~S-11）
   - 修复: 下游上游选择收敛为 `base.sh dns_chain_upstream`。原 `update/mihomo.sh` 与
@@ -30,7 +45,7 @@
     lsattr/chattr，MSYS 的 sh 会把 `/usr/bin` 前置导致模拟失效、本机 26/27 伪失败；现恢复 27/27
   - 测试: 新增 `test_setting_transaction.py`（31 项，set/setarr 事务、端口批量校验、边界键只读）；
     `test_dns_entry` 扩到 107 项（下游上游链路 + check_dns_chain 的 `--to-ports` 参数级断言）；
-    `test_module_links` 增加开机脚本静态断言。九套件合计 344 项（CI/mksh 环境；Windows 本机 325 项）
+    `test_module_links` 增加开机脚本静态断言。九套件合计 335 项（CI/mksh 环境；Windows 本机 307 项）
   - 门禁: `check_version_sync.py` 增加 README/AGENTS 默认密码与 `smartdns.conf` 同值、
     `module.prop` description 非占位两项检查
   - 打包: `pack_module.py` 跳过 `docs/`，审计报告不再随模块包分发

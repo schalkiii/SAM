@@ -4,23 +4,23 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 启动
 start(){
-    # 判断 Mihomo 未启用，则退出
+    # 返回码语义: 0 = 正常(含"未启用/无订阅/已运行")，1 = 真正失败
     if [ "${MIHOMO_ENABLE}" = false ]; then
         log "i" "${MIHOMO_BIN} 未启用"
-        return 1
+        return 0
     fi
 
     # 本地短路: 没订阅时 Mihomo 起不来。外部"是否该运行"的判定统一用
     # base.sh 的 mihomo_expected(启用 + 有订阅 + 非直通)，这里只做启动前检查
     if [ ${#SUB_URL[@]} = 0 ]; then
         log "i" "未填写订阅地址，无法启动 ${MIHOMO_BIN}"
-        return 1
+        return 0
     fi
 
     # 判断 Mihomo 已运行，则退出
     isRun ${MIHOMO_BIN} && {
         log "i" "${MIHOMO_BIN} 已运行"
-        return 1
+        return 0
     }
 
     # 更新 Mihomo 配置
@@ -59,18 +59,25 @@ start(){
         if [ -f "${TMP_PATH}/${MIHOMO_BIN}.log" ]; then
             log "e" "${MIHOMO_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${MIHOMO_BIN}.log" 2>/dev/null)"
         fi
+        return 1
     fi
 }
 
 # 停止
+# 返回码语义: 0 = 已停止(含本来就没运行)，1 = kill 失败
 stop(){
     # 判断 Mihomo 未运行，则退出
     isRun ${MIHOMO_BIN} || {
         log "i" "${MIHOMO_BIN} 已停止"
-        return 1
+        return 0
     }
     # 杀死 Mihomo 进程
-    kill_process ${MIHOMO_BIN} && log "i" "${MIHOMO_BIN} 停止成功" || log "e" "${MIHOMO_BIN} 停止失败"
+    if kill_process ${MIHOMO_BIN}; then
+        log "i" "${MIHOMO_BIN} 停止成功"
+        return 0
+    fi
+    log "e" "${MIHOMO_BIN} 停止失败"
+    return 1
 }
 
 # 添加指令

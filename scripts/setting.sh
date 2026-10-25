@@ -15,14 +15,11 @@ SMARTDNS_TTL_CEIL=86400
 # 语法自检用哪个解释器
 # 设备上 /system/bin/sh 就是 mksh，SUB_URL=() 这类数组赋值是合法语法；
 # 开发机/CI 的 /bin/sh 常是 dash，遇到数组会直接报 Syntax error "(" unexpected，
-# 把合法配置误判成坏配置(写入被拒 / 加载走抢救分支)。有 mksh 就优先用它
-setting_syntax_shell(){
-    if command -v mksh > /dev/null 2>&1; then
-        echo "mksh"
-    else
-        echo "sh"
-    fi
-}
+# 把合法配置误判成坏配置(写入被拒 / 加载走抢救分支)。
+# 加载期算一次存进变量: 每次自检都 $(...) 探测会多开一层子 shell，
+# WebUI 一次保存要对 27 个键做自检，累计开销可观
+SETTING_SYNTAX_SHELL="sh"
+command -v mksh > /dev/null 2>&1 && SETTING_SYNTAX_SHELL="mksh"
 
 # 默认设置(与 setting.conf 保持一致)
 setting_default(){
@@ -72,7 +69,7 @@ setting_sanitize(){
     # 去除行尾 CR
     # 原用 sed -i 's/\n$//'，但 \n 作为 sed 替换文本里的换行符只有 GNU sed 保证支持，
     # busybox / toybox sed 的行为依版本而异 —— 一旦不生效，CRLF 残留会让
-    # 下面的 sh -n 预检直接失败，把好配置误判成坏配置。
+    # 下面的语法预检直接失败，把好配置误判成坏配置。
     # tr -d 八进制 CR 去掉所有回车，语义明确且各实现一致，还少一次进程(不需要 sed -i 的临时文件)。
     # 注意: 必须用八进制写法，不要用反斜杠 r —— 那种转义经编辑器/脚本多层传递容易被破坏。
     # 曾经被破坏成 tr -d 换行符，把整个配置文件的换行全删掉，导致设置全部读成默认值。
@@ -86,7 +83,7 @@ setting_salvage(){
     SETTING_SALVAGE="${TMP_PATH}/setting.salvage.$$"
     grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "${1}" > "${SETTING_SALVAGE}" 2>/dev/null
 
-    salvage_syntax="$(setting_syntax_shell)"
+    salvage_syntax="${SETTING_SYNTAX_SHELL}"
     while IFS= read -r setting_line; do
         case "${setting_line}" in
             ''|'#'*) continue ;;
@@ -315,7 +312,7 @@ load_setting(){
         return 1
     fi
 
-    load_syntax="$(setting_syntax_shell)"
+    load_syntax="${SETTING_SYNTAX_SHELL}"
     if "${load_syntax}" -n "${SETTING_CLEAN}" 2>"${TMP_PATH}/setting.error.$$"; then
         . "${SETTING_CLEAN}"
     else

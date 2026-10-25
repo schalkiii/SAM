@@ -4,16 +4,17 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 启动
 start(){
-    # 判断 SmartDNS 未启用，则退出
+    # 返回码语义: 0 = 正常(含"未启用/已运行")，1 = 真正失败。
+    # 正常态返回 1 会让任何用 rc 判断结果的调用方得到相反结论
     if [ "${SMARTDNS_ENABLE}" = false ]; then
         log "i" "${SMARTDNS_BIN} 未启用"
-        return 1
+        return 0
     fi
 
     # 判断 SmartDNS 已运行，则退出
     isRun ${SMARTDNS_BIN} && {
         log "i" "${SMARTDNS_BIN} 已运行"
-        return 1
+        return 0
     }
 
     # 启动前清理 BOM/CR；UTF-16 明确报错，不自动转换
@@ -136,18 +137,25 @@ start(){
         if [ -f "${TMP_PATH}/${SMARTDNS_BIN}.log" ]; then
             log "e" "${SMARTDNS_BIN} 详细日志: $(tail -n 5 "${TMP_PATH}/${SMARTDNS_BIN}.log" 2>/dev/null | tr '\n' ' ')"
         fi
+        return 1
     fi
 }
 
 # 停止
+# 返回码语义: 0 = 已停止(含本来就没运行)，1 = kill 失败
 stop(){
     # 判断 SmartDNS 未运行，则退出
     isRun ${SMARTDNS_BIN} || {
         log "i" "${SMARTDNS_BIN} 已停止"
-        return 1
+        return 0
     }
     # 杀死 SmartDNS 进程
-    kill_process ${SMARTDNS_BIN} && log "i" "${SMARTDNS_BIN} 停止成功" || log "e" "${SMARTDNS_BIN} 停止失败"
+    if kill_process ${SMARTDNS_BIN}; then
+        log "i" "${SMARTDNS_BIN} 停止成功"
+        return 0
+    fi
+    log "e" "${SMARTDNS_BIN} 停止失败"
+    return 1
 }
 
 # 添加指令

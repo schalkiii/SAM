@@ -12,16 +12,16 @@ mark_agh_config_bad(){
 
 # 启动
 start(){
-    # 判断 AdGuardHome 未启用，则退出
+    # 返回码语义: 0 = 正常(含"未启用/已运行")，1 = 真正失败
     if [ "${AGH_ENABLE}" = false ]; then
         log "i" "${AGH_BIN} 未启用"
-        return 1
+        return 0
     fi
 
     # 判断 AdGuardHome 已运行，则退出
     isRun ${AGH_BIN} && {
         log "i" "${AGH_BIN} 已运行"
-        return 1
+        return 0
     }
 
     # 启动前清理 BOM/CR；UTF-16 明确报错，不自动转换
@@ -82,18 +82,25 @@ start(){
         if [ -f "${TMP_PATH}/${AGH_BIN}.log" ]; then
             log "e" "${AGH_BIN} 日志: $(tail -n 1 "${TMP_PATH}/${AGH_BIN}.log" 2>/dev/null)"
         fi
+        return 1
     fi
 }
 
 # 停止
+# 返回码语义: 0 = 已停止(含本来就没运行)，1 = kill 失败
 stop(){
     # 判断 AdGuardHome 未运行，则退出
     isRun ${AGH_BIN} || {
         log "i" "${AGH_BIN} 已停止"
-        return 1
+        return 0
     }
     # 杀死 AdGuardHome 进程
-    kill_process ${AGH_BIN} && log "i" "${AGH_BIN} 停止成功" || log "e" "${AGH_BIN} 停止失败"
+    if kill_process ${AGH_BIN}; then
+        log "i" "${AGH_BIN} 停止成功"
+        return 0
+    fi
+    log "e" "${AGH_BIN} 停止失败"
+    return 1
 }
 
 # 添加指令

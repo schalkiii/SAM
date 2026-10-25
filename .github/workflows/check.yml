@@ -65,3 +65,7 @@ jobs:
       # SmartDNS 依赖的三条软链: 相对目标 + 悬空链重建(更新后 mv 目录的坑)
       - name: 模块软链回归测试
         run: python tools/test_module_links.py
+
+      # 免重启激活的判定逻辑(目录选择/结构校验/标记清理)
+      - name: 免重启激活判定回归测试
+        run: python tools/test_manual_repair.py

@@ -5,7 +5,7 @@
 #   1. 读: 输出 KEY=VALUE；数组输出 KEY[count]=N 与 KEY[i]=v
 #   2. 写: 只替换目标行，保留全部注释、顺序与空行
 #   3. 校验: 布尔 / 数字 / 枚举逐项校验，非法值直接拒绝，不写坏文件
-#   4. 安全: 写前清洗 BOM/CRLF，写后先 sh -n 自检再原子替换
+#   4. 安全: 写前清洗 BOM/CRLF，写后用与设备一致的 shell(mksh) 做语法自检再原子替换
 #
 # 用法:
 #   setting_api.sh get
@@ -204,9 +204,9 @@ replace_line(){
     rm -f "${line_file}"
 
     # 写后自检: 语法不通过就丢弃本次修改，保持原文件不变
-    # 解释器与设备一致(setting.sh 的 setting_syntax_shell 优先 mksh):
+    # 解释器与设备一致(setting.sh 的 SETTING_SYNTAX_SHELL 优先 mksh):
     # 开发机/CI 的 /bin/sh 可能是 dash，不支持 SUB_URL=() 这类数组赋值
-    if [ ! -s "${tmp_file}" ] || ! "$(setting_syntax_shell)" -n "${tmp_file}" 2>/dev/null; then
+    if [ ! -s "${tmp_file}" ] || ! "${SETTING_SYNTAX_SHELL}" -n "${tmp_file}" 2>/dev/null; then
         rm -f "${tmp_file}"
         echo "写入失败: ${target_key} 会导致配置文件语法错误" >&2
         return 1
