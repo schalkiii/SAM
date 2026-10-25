@@ -1,3 +1,10 @@
+# Unreleased
+- 配置锁契约统一: `setting_api.sh cron set` 与 `set`/`setarr`/`apply` 一致走 setting 锁
+  - 修复前定时任务保存是唯一不持锁的 WebUI 写入口，与文档「进程内互斥，避免 WebUI 与命令行
+    同时写导致互相覆盖」的契约不一致；成功与失败(整批拒绝)路径都确保释放锁
+  - `tools/test_cron_validate.py` 增补锁接线用例（19 → 29 项）：成功释放、陈旧锁自动恢复、
+    失败路径释放、`cron get` 读路径不取锁（记录型 stub 验证 acquire/release 调用序列）
+
 # 2026.10.25.2
 - 热修复: `backup.sh list` 在「没有任何完整备份」时输出为空
   - 行尾追加标记的 sed 写成 `s/$| (未完成)/`，少一个闭合分隔符，GNU/busybox sed 均报

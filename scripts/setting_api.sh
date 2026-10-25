@@ -12,6 +12,7 @@
 #   setting_api.sh set KEY=VALUE [KEY=VALUE ...]
 #   setting_api.sh setarr SUB_URL "url1" "url2"
 #   setting_api.sh apply
+#   setting_api.sh cron get | cron set <行>...
 
 # 加载基础脚本；屏蔽加载过程中的日志输出，避免污染 get 的结果
 source "/data/adb/modules/SAM/scripts/base.sh" > /dev/null 2>&1
@@ -554,8 +555,14 @@ case "${1}" in
             set)
                 # 不带任何行 = 清空全部定时任务(WebUI 清空文本框就是这个场景)；
                 # crontabs/root 每天自动备份，误清也能找回
+                # 与 set/setarr/apply 一致走配置锁: WebUI 所有写入口同一互斥语义，
+                # 避免定时任务保存与其他配置写操作交叉时互相覆盖
                 shift 2
+                acquire_lock || { echo "获取配置锁失败" >&2; exit 1; }
                 cron_set "$@"
+                cron_rc=$?
+                release_lock
+                exit ${cron_rc}
                 ;;
             *)
                 echo "用法: setting_api.sh cron get | set <行>..." >&2
