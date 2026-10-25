@@ -52,7 +52,9 @@ out_content+=" 🌐Host: "
 out_content+=" ⏰定时: "
 [ "${CRONTAB_ENABLE}" = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
 
-out_content+=" 📢注意: 所有服务默认账号和密码都是root"
+# 凭据必须写实：默认 root/root（AGH 模板与 SmartDNS 面板同源），
+# 改默认值时要同步这两处配置 + 本文案 + README
+out_content+=" 📢面板账号: root / root（Mihomo 无鉴权）"
 
 # 写回模块描述
 # 原实现用 sed "s/description=.*/description=${out_content}/g"，

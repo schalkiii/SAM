@@ -16,10 +16,10 @@ http:
   address: 127.0.0.1:3000
   session_ttl: 30d
 users:
-  # 默认密码 sam123456(bcrypt cost 12)；不再使用 root/root 这种全网皆知的默认值。
-  # 面板默认只听回环，LAN_ACCESS=true 开放局域网前务必先改掉
+  # 默认密码 root(bcrypt cost 12，与 SmartDNS 面板一致)。
+  # 面板默认只听回环；LAN_ACCESS=true 开放到局域网前务必先改掉
   - name: root
-    password: $2b$12$IFRWPVK6wGTGgTRGaIzBIOylhzx4xtQmyALdZsyhB2c5yHLHzcG8G
+    password: $2b$12$TwEE99Opm8sVEP3WD2izfef2LGPRGdwDxSfCJfcNxM7gf6iakD0BG
 auth_attempts: 5
 block_auth_min: 15
 http_proxy: ""

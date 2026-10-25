@@ -143,9 +143,9 @@ if [ -f "${MODPATH}/module.prop" ]; then
     mv -f "${pending_prop_tmp}" "${MODPATH}/module.prop" 2>/dev/null
 fi
 
-ui_print "🌐 SmartDNS ( 账号: root | 密码: sam123456 )"
+ui_print "🌐 SmartDNS ( 账号: root | 密码: root )"
 ui_print "🌐 SmartDNS ( WebUI: 127.0.0.1:6080 )"
-ui_print "🔰 AdGuardHome ( 账号: root | 密码: sam123456 )"
+ui_print "🔰 AdGuardHome ( 账号: root | 密码: root )"
 ui_print "🔰 AdGuardHome ( WebUI: 127.0.0.1:3000 )"
 ui_print "✈️ Mihomo ( WebUI: 127.0.0.1:9090/ui/ )"
 ui_print "💡 面板默认只听回环；开放局域网(LAN_ACCESS)前请先修改默认密码"

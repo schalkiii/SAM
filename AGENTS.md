@@ -53,13 +53,15 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - WebUI「工具」页是各脚本命令的图形入口：新增带子命令的脚本时，同步在 `webroot/index.html` 加 `data-script` / `data-args` 按钮
 - 配置真身只有 `setting.conf`，注释即文档。**新增配置键必须同步五处**：
   `scripts/setting.sh` 默认值与校验 → `scripts/setting_api.sh` 的 KEY 列表**与 `get_all` 输出** → `customize.sh` 升级迁移列表 → WebUI 的 `data-key`
+- **面板凭据只有两处真身**：AGH 在 `etc/AdGuardHome/AdGuardHome.template.yaml` 的 `users`（bcrypt，重置配置用它恢复），SmartDNS 在 `etc/SmartDNS/smartdns.conf` 的 `smartdns-ui.user/password`；默认均为 `root` / `root`（AGH 用 bcrypt cost 12 存储）。改默认值必须同时改这两处 + `scripts/update/desc.sh` 的模块描述文案 + README，否则用户会拿旧默认值反复登录失败（已发生过）
+- **SmartDNS 面板登录保持**：登录令牌存浏览器 localStorage，有效期由 `smartdns-ui.token-expire`（秒）决定，当前 2592000（30 天）；令牌过期或清浏览器数据才会重新要求登录。开放局域网时应收紧该值并改密码
 - **缓存只有一层**：`AdGuardHome` 的 DNS 缓存保持关闭，缓存职责由上游 SmartDNS 独占（`prefetch-domain` / `serve-expired` / `cache-persist`）。再叠一层 AGH 缓存会吃双份内存，还会把 SmartDNS 选出的最优 IP 冻结住、绕过测速选优
 - 行尾统一 LF；`.gitattributes` 已固定 `* text=auto eol=lf`，不要在 Windows 下关闭；脚本 0755；不要提交 `dist/`
 - **写 shell 里的反斜杠转义要用八进制**（`\015` = CR、`\012` = LF），不要写 `\n` / `\n`：这类转义经编辑工具多层传递会被破坏，且破坏后语法检查依然通过，只能靠回读字节发现
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261025.3**（tag 与资产已推送，CI 通过）；**v20261025.6 已在本地构建**（`dist/SAM_20261025.6_release.zip`），尚未推送 tag / 创建 GitHub Release。v20261025.6 = v20261025.5（SmartDNS 软链悬空修复 + 输出窗口全选复制）+ 自动停止分析误判修复（不再把 `IOMEM: handleLmkdMessage` 当击杀证据，新增启动失败统计与 oom/内存压力/内核 OOM/服务自身日志取证）；v20261025.4 为中间构建，已被取代。v20261025.4 内容：第二轮审计 S-2~S-9（restore 清中断残留、TTL 常量、版本一致性门禁、锁阻塞用例、watchdog 测试、Mihomo 判定收敛）+ DNS 入口链合一，测试 137 → 233 项（CI 241 项）；v20261025.3 是热修复版：① `backup.sh restore` 持 setting 锁覆盖文件写入期（与 `set`/`cron set` 互斥，锁不握过服务重启），文件写入改同目录临时文件 + `mv` 原子替换并加 `-f` 守卫（mv 对目录目标是"移入"而非报错）；② `setting_api.sh cron set` 补配置锁统一 WebUI 写入口互斥语义；③ 测试增补 24 项断言（备份语义 31→43、定时任务 19→29，五文件合计 137 项）；v20261025.2 为备份列表 sed 热修复 + 4 个新测试文件 88 项断言；v20261025.1 包含 v20261024.18 回归修复 + 二次 review 修复 + 定时任务/备份/默认密码增强 + 第三轮复审修复（sd.sh bind-tcp 单次插入、owner_supported 残留链清理、端口标签 key 修正、pack 清单补 proxy.sh）
+- 发布状态：线上最新 Release 为 **v20261025.3**（tag 与资产已推送，CI 通过）；**v20261025.7 已在本地构建**（`dist/SAM_20261025.7_release.zip`），尚未推送 tag / 创建 GitHub Release。v20261025.7 = 软链悬空修复（SmartDNS 起不来）+ WebUI 输出窗口全选复制 + 自动停止分析误判修复（不再把 `IOMEM: handleLmkdMessage` 当击杀证据）+ 默认凭据纠正为 root/root（AGH 模板 bcrypt 同源）+ 作者改为 Schalkiii + SmartDNS 面板登录保持 30 天（`smartdns-ui.token-expire`）。
 - v20261024.18 回归（`is_port_listening` 曾要求 TCP+UDP 同时监听，SmartDNS 只有 UDP bind 被误判未监听 → 计数为零）已于 v20261025.1 修复并发布：恢复「任一协议监听即可用」+ SmartDNS 补 `bind-tcp`；`dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；watchdog 的 `BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
 - **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（与 `dns.sh select_dns_port` 同序），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
 - **服务锁等待**：`service.sh stop/restart` 锁等待 120/180 秒，匹配守护循环持锁做服务恢复的最坏时长；用户停止操作不会因等不到锁而静默失败
@@ -71,7 +73,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - **定时任务**：`setting_api.sh cron get|set` 一行一条参数传入，逐行校验时间字段（`@daily` 类支持，非法整批拒绝）；WebUI 工具页「定时任务」卡片编辑保存，busybox crond 下一分钟自动生效；清空全部行需确认
 - **WebUI 读路径全部按 errno**：allstatus/设置/日志/广告清单/挂载状态失败时明确报错；设置读取失败不填表单（防止空值覆盖后误保存）；服务页端口说明用 `data-port-label` 动态显示（`webui.sh` 输出 `smartdns_port`）
 - **`run.sh` 属主校验降级**：`stat -c %u` 不可用时跳过校验而不是拒绝所有命令
-- **默认密码**：SmartDNS/AGH 默认密码 `sam123456`（AGH 模板为对应 bcrypt 哈希）；`SMARTDNS_TTL_MIN` 下限 60 秒（WebUI/API/加载三处一致）
+- **默认密码**：SmartDNS/AGH 默认密码 `root`（AGH 模板为 bcrypt cost 12 哈希，与 SmartDNS 明文同源）；`SMARTDNS_TTL_MIN` 下限 60 秒（WebUI/API/加载三处一致）
 - 广告屏蔽为可逆设计（改名保留而非删除），设计与踩坑记录见 `docs/ad-block-hold-design.md`
 - 模块描述由 `desc.sh` 动态更新；待激活包单独标记。管理器缓存旧列表时，返回/刷新模块页即可
 - WiFi 慢/5G 正常的隔离排查步骤见 README「WiFi 慢 / 5G 正常」；常见原因是 IPv6 DNS 被静默丢弃、SmartDNS 冷查询、gvisor CPU 与 TUN MTU

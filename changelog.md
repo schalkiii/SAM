@@ -1,3 +1,22 @@
+# 2026.10.25.7
+- 默认凭据恢复 root/root，并纠正模块描述里的错误文案
+  - 默认密码在 v20261025.1 被改成 `sam123456`，但模块描述仍写「所有服务默认
+    账号和密码都是root」——用户照着描述登录必然失败。本版按用户要求**恢复
+    root/root**，并把描述改成「面板账号: root / root（Mihomo 无鉴权）」，
+    文案与实际保持同一份真值
+  - AGH 模板的 `users[].password` 重新生成 bcrypt(cost 12) 哈希（AGH 只接受
+    bcrypt，不能写明文）；SmartDNS 面板 `smartdns-ui.password root`
+  - WebUI 服务卡片补默认账号提示（SmartDNS / AGH 各一行）
+- 改进: SmartDNS 面板登录保持 30 天（原来 10 分钟就要重登）
+  - `smartdns-ui.token-expire` 600 → 2592000 秒；登录令牌存在浏览器
+    localStorage，有效期够长就等于保持登录（关掉面板再开不再要求登录）
+  - 令牌过期、清浏览器数据或改密码后才会重新要求登录；开放局域网时
+    建议把该值缩回 600-3600 秒并改密码
+- 模块信息: 作者改为 **Schalkiii**
+- 文档: README 补「改密码」路径（AGH 面板内改 / SmartDNS 改
+  `smartdns-ui.password` 后重启服务）；AGENTS 记录「面板凭据只有两处真身」
+  与改动时必须同步的四处
+
 # 2026.10.25.6
 - 修复: 「自动停止分析」会把厂商日志误判成"被系统杀/OOM"
   - 旧逻辑只要取证文件里出现 `lmkd` 字样就判定"倾向系统/小米杀后台或 OOM"，
