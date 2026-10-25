@@ -11,7 +11,9 @@
         触发"校验失败→5 秒后重试"的死循环
 
 从 watchdog.sh 抽取真实函数(不复制实现)，mock isRun，用真实文件与
-真实 cksum 驱动。不启动守护循环本身。
+真实 cksum 驱动。不启动守护循环本身。另含两类结构断言:
+  - ensure_service 在服务恢复时置 need_chain_refresh(入口不变也要重写上游)
+  - 常驻/长任务脚本的信号 trap 必须显式 exit，否则 kill 停不掉
 
 用法:
     python tools/test_watchdog_logic.py            # 跑全部用例
@@ -217,6 +219,51 @@ def main():
         bad_marker.write_text('', encoding='utf-8')
         out = run_case(driver, base, make_env(base))
         c.check('空标记文件不阻塞', out.get('blocked'), '1')
+
+        # ---- 拓扑刷新: 服务恢复也必须触发下游上游重写 ----
+        # 只看 53 入口会漏掉"模式 1 下 AGH 一直在跑、Mihomo 恢复"这类情况:
+        # 入口没变，但 AGH 的上游应从 SmartDNS 改回 Mihomo
+        ensure_body = extract_function(REPO / 'scripts' / 'watchdog.sh', 'ensure_service')
+        c.check('ensure_service 三类服务恢复都触发链路刷新',
+                ensure_body.count('need_chain_refresh=1'), 3)
+
+        # ---- 信号: 常驻/长任务脚本必须能真的被 kill 停掉 ----
+        # 只写 trap ... HUP INT TERM 而不 exit 时，处理器返回后循环继续，
+        # WebUI「禁用监控」会看起来成功但进程仍在(已实测 mksh)
+        trap_files = [
+            REPO / 'scripts' / 'wifi.monitor.sh',
+            REPO / 'scripts' / 'ad.sh',
+            REPO / 'scripts' / 'update.sh',
+            REPO / 'scripts' / 'update' / 'mihomo.sh',
+        ]
+        for trap_file in trap_files:
+            signal_traps = [line for line in trap_file.read_text(encoding='utf-8').splitlines()
+                            if line.strip().startswith('trap ') and 'HUP INT TERM' in line]
+            c.check(f'{trap_file.name} 的信号 trap 显式 exit',
+                    bool(signal_traps) and all('exit' in line for line in signal_traps), True)
+
+        # 动态验证 wifi.monitor 的信号处理: 放真实 trap 行 + 桩函数，自投 TERM
+        monitor_text = (REPO / 'scripts' / 'wifi.monitor.sh').read_text(encoding='utf-8')
+        monitor_trap = next(line for line in monitor_text.splitlines()
+                            if line.strip().startswith('trap ') and 'HUP INT TERM' in line)
+        signal_script = base / 'signal_driver.sh'
+        signal_script.write_text(
+            '#!/bin/sh\n'
+            'sam_lock_release(){ :; }\n'
+            'release_ad_lock(){ :; }\n'
+            'release_update_lock(){ :; }\n'
+            'mihomo_cleanup(){ :; }\n'
+            f'{monitor_trap}\n'
+            '( sleep 0.1; kill -TERM $$ ) &\n'
+            'sleep 1\n'
+            'echo ALIVE\n',
+            encoding='utf-8', newline='\n')
+        shell = shutil.which('mksh') or shutil.which('sh') or 'sh'
+        signal_run = subprocess.run([shell, signal_script.name], cwd=base.as_posix(),
+                                    capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=10)
+        c.check('wifi.monitor 收到 TERM 后退出', 'ALIVE' in signal_run.stdout, False)
+        c.check('wifi.monitor 信号退出码为 0', signal_run.returncode, 0)
 
         return c.report()
     finally:

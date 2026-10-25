@@ -52,6 +52,8 @@ agh_config_skip_logged=0
 # 恢复后需要重新验证一次网络，否则表现为"服务起来了但还是没网"。
 recovered_abnormal=0
 # 服务拓扑变化后是否需要重写 AGH/Mihomo 上游并重启下游
+# 服务恢复本身也算拓扑变化: 53 入口可能不变(如模式 1 下 AGH 一直在跑)，
+# 但链内下游的上游选择会随服务恢复而改变，只看入口会漏掉"绕过刚恢复的一级"
 need_chain_refresh=0
 
 # 至少有一个 DNS 服务在跑，才值得去重建规则
@@ -178,6 +180,7 @@ ensure_service(){
             if isRun ${SMARTDNS_BIN}; then
                 recovered_abnormal=1
                 service_state_changed=1
+                need_chain_refresh=1
             fi
         else
             sd_backoff=$((sd_backoff - 1))
@@ -205,6 +208,7 @@ ensure_service(){
                 if isRun ${AGH_BIN}; then
                     recovered_abnormal=1
                     service_state_changed=1
+                    need_chain_refresh=1
                 fi
             else
                 agh_backoff=$((agh_backoff - 1))
@@ -226,6 +230,7 @@ ensure_service(){
             if isRun ${MIHOMO_BIN}; then
                 recovered_abnormal=1
                 service_state_changed=1
+                need_chain_refresh=1
             fi
         else
             mihomo_backoff=$((mihomo_backoff - 1))
@@ -463,8 +468,9 @@ while true; do
         log "i" "守护: DNS 入口变化 ${dns_entry_before} -> ${dns_entry_after}，重写下游上游"
     fi
 
-    # 服务拓扑变化后重写下游上游，避免 AGH/Mihomo 仍指向已死亡的本地 DNS
-    # 重启也按配置内容是否变化来决定: update 脚本在内容不变时只做等价重写，
+    # 服务拓扑变化(入口变化，或链内服务恢复)后重写下游上游:
+    # 既避免仍指向已死亡的本地 DNS，也避免绕过刚恢复的那一级
+    # 重启仍按配置内容是否变化来决定: update 脚本在内容不变时只做等价重写，
     # 此时重启纯粹是清缓存与统计，必须跳过
     if [ ${need_chain_refresh} -eq 1 ]; then
         need_chain_refresh=0

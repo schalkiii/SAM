@@ -25,7 +25,9 @@ sam_lock_acquire "update" 60 || {
 release_update_lock(){
     sam_lock_release "update"
 }
-trap release_update_lock EXIT HUP INT TERM
+# 信号必须显式退出: 只释放锁会让脚本在收到 TERM/HUP 后继续替换内核
+trap release_update_lock EXIT
+trap 'release_update_lock; exit 1' HUP INT TERM
 
 # SmartDNS 版本
 smartdns_ver=$(cd ${SMARTDNS_PATH} && SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec ${SMARTDNS_BIN} -v | sed -n 's/^.*[[:space:]]\(.*\)[[:space:]].*/\1/p')
@@ -41,7 +43,8 @@ get_download_url(){
     # API 地址
     api_url="https://api.github.com/repos/${1}/releases"
     # API 内容
-    api_content=$(curl --connect-timeout 10 -m 15 -s -f ${api_url})
+    # 与 hosts 更新同源: 部分 ROM 没有 curl，直接调 curl 会让所有组件更新 100% 失败
+    api_content=$(fetch_url "${api_url}" 15)
 
     # release tag 与当前版本一致时直接跳过，避免 AGH 这类固定资产名每次重复停服替换
     release_tag=$(printf '%s\n' "${api_content}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1 | sed 's/^[vV]//')
@@ -86,7 +89,7 @@ get_download_url(){
 # 必须有连接/总时长超时，否则网络卡住时 WebUI 会一直等
 download_file(){
     save_file="${TMP_PATH}/$(echo ${download_url} | sed 's/^.*\///g')"
-    curl -f -L -# --connect-timeout 15 -m 300 -o "${save_file}" "${download_url}" || {
+    fetch_file "${download_url}" "${save_file}" 300 || {
         rm -f "${save_file}"
         log "e" "下载失败: ${download_url}"
         return 1
@@ -98,7 +101,7 @@ download_file(){
 verify_download_checksum(){
     checksum_url="${1}.sha256"
     checksum_file="${TMP_PATH}/download.sha256.$$"
-    if ! curl -f -L --connect-timeout 10 -m 30 -s -o "${checksum_file}" "${checksum_url}"; then
+    if ! fetch_url "${checksum_url}" 30 > "${checksum_file}"; then
         rm -f "${checksum_file}"
         log "i" "发布未提供 .sha256，无法做下载摘要校验"
         return 0

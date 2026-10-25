@@ -6,8 +6,10 @@
   2. 开机 10 秒后网络常未就绪 —— 一次性拉取全源失败，规则被拖到下次启动
   3. 直连 raw 在国内移动网络被墙/污染 —— 代理源必须排在前面且真的被逐个尝试
 
-测试从脚本原样抽取 fetch_url / wait_network / get_host (不复制实现)，
-用 driver 内函数覆盖 curl/wget/is_network_ready，断言降级与校验逻辑。
+测试从脚本原样抽取 fetch_url / fetch_file / wait_network / get_host
+(不复制实现)，用 driver 内函数覆盖 curl/wget/is_network_ready，
+断言降级与校验逻辑。组件更新(update.sh)与 hosts 属于同一失败类:
+设备缺 curl 时两者都必须能退回 wget。
 
 用法:
     python tools/test_host_sources.py            # 跑全部用例
@@ -17,6 +19,7 @@
 import os
 import argparse
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -38,17 +41,46 @@ has_cmd(){
     esac
 }
 curl(){
+    # fetch_url 走 stdout；fetch_file 走 -o <文件>
+    test_curl_out=""
+    test_curl_prev=""
+    for test_curl_arg in "$@"; do
+        [ "${test_curl_prev}" = "-o" ] && test_curl_out="${test_curl_arg}"
+        test_curl_prev="${test_curl_arg}"
+    done
     for test_curl_arg in "$@"; do
         case "${test_curl_arg}" in
-            *"${TEST_OK_MATCH:-__none__}"*) cat "${TEST_OK_BODY}" 2>/dev/null; return 0 ;;
+            *"${TEST_OK_MATCH:-__none__}"*)
+                if [ -n "${test_curl_out}" ]; then
+                    cat "${TEST_OK_BODY}" > "${test_curl_out}" 2>/dev/null
+                else
+                    cat "${TEST_OK_BODY}" 2>/dev/null
+                fi
+                return 0
+                ;;
         esac
     done
     return 22
 }
 wget(){
+    # fetch_url 走 stdout；fetch_file 走 -O <文件>
+    test_wget_out=""
+    test_wget_prev=""
+    for test_wget_arg in "$@"; do
+        [ "${test_wget_prev}" = "-O" ] && test_wget_out="${test_wget_arg}"
+        test_wget_prev="${test_wget_arg}"
+    done
     for test_wget_arg in "$@"; do
         case "${test_wget_arg}" in
-            *"${TEST_OK_MATCH:-__none__}"*) cat "${TEST_OK_BODY}" 2>/dev/null; return 0 ;;
+            *"${TEST_OK_MATCH:-__none__}"*)
+                # fetch_url 用 -O - 表示 stdout，不能把 "-" 当成文件名
+                if [ -n "${test_wget_out}" ] && [ "${test_wget_out}" != "-" ]; then
+                    cat "${TEST_OK_BODY}" > "${test_wget_out}" 2>/dev/null
+                else
+                    cat "${TEST_OK_BODY}" 2>/dev/null
+                fi
+                return 0
+                ;;
         esac
     done
     return 22
@@ -82,6 +114,7 @@ def build_defs():
     parts = [
         DRIVER_HEADER,
         extract_function(base, 'fetch_url'),
+        extract_function(base, 'fetch_file'),
         extract_function(base, 'wait_network'),
         extract_function(host, 'get_host'),
     ]
@@ -198,7 +231,25 @@ def main():
         c.check('旧 IP 已移除', '1.2.3.4 github.com' in content, False)
         c.check('section 不重复', content.count('# start > GitHub'), 1)
 
-        print('[7] 静态: 候选源顺序与下载实现')
+        print('[7] fetch_file: 组件下载同样 curl -> wget -> 失败')
+        download_curl = base / 'download_curl.bin'
+        r = run_shell(base, defs + f'\nfetch_file https://a.example/bin "{download_curl.as_posix()}" 30\n',
+                      {'TEST_HAS_CURL': '1', 'TEST_OK_MATCH': 'bin',
+                       'TEST_OK_BODY': good_body.as_posix()})
+        c.check('curl 下载到文件', download_curl.is_file() and
+                download_curl.read_text(encoding='utf-8').startswith('1.2.3.4 github.com'), True)
+        download_wget = base / 'download_wget.bin'
+        r = run_shell(base, defs + f'\nfetch_file https://a.example/bin "{download_wget.as_posix()}" 30\n',
+                      {'TEST_HAS_CURL': '0', 'TEST_HAS_WGET': '1', 'TEST_OK_MATCH': 'bin',
+                       'TEST_OK_BODY': good_body.as_posix()})
+        c.check('缺 curl 时用 wget 下载到文件', download_wget.is_file(), True)
+        download_none = base / 'download_none.bin'
+        r = run_shell(base, defs + f'\nfetch_file https://a.example/bin "{download_none.as_posix()}" 30\n',
+                      {'TEST_HAS_CURL': '0', 'TEST_HAS_WGET': '0'})
+        c.check('两个工具都没有 -> 失败且不产出文件',
+                r.returncode != 0 and not download_none.exists(), True)
+
+        print('[8] 静态: 候选源顺序与下载实现')
         host_script = (REPO / 'scripts' / 'update' / 'host.sh').read_text(encoding='utf-8')
         github_block = host_script.split('GITHUB_HOST_SOURCES="', 1)[1].split('"', 1)[0]
         fcm_block = host_script.split('FCM_HOST_SOURCES="', 1)[1].split('"', 1)[0]
@@ -208,6 +259,16 @@ def main():
                 fcm_block.strip().splitlines()[0].startswith('https://ghfast.top/'), True)
         c.check('host.sh 不再直接调用 curl', 'curl -m' in host_script, False)
         c.check('host.sh 统一下载走 fetch_url', 'fetch_url "${i}"' in host_script, True)
+
+        # 组件更新与 hosts 是同一类失败: 设备缺 curl 时 update.sh 也必须能降级。
+        # 这里锁定"脚本里不再出现裸 curl 调用"，防止以后又加回去
+        update_script = (REPO / 'scripts' / 'update.sh').read_text(encoding='utf-8')
+        c.check('update.sh 不再直接调用 curl',
+                bool(re.search(r'^\s*curl\b', update_script, re.M)), False)
+        c.check('update.sh 的 API 请求走 fetch_url',
+                'api_content=$(fetch_url "${api_url}" 15)' in update_script, True)
+        c.check('update.sh 的二进制下载走 fetch_file',
+                'fetch_file "${download_url}" "${save_file}" 300' in update_script, True)
 
         return c.report()
     finally:

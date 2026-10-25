@@ -4,7 +4,11 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 
 # 防止重复启动：PID 锁避免并发启动时两个实例互相误判退出
 sam_lock_acquire "wifi_monitor_instance" 2 || exit 0
-trap 'sam_lock_release "wifi_monitor_instance"' EXIT HUP INT TERM
+# 只释放实例锁；信号必须显式退出。
+# 只写 trap ... HUP INT TERM 而不 exit 时，处理器返回后 shell 会继续跑循环，
+# kill(TERM) 停不掉监控，WebUI「禁用」看起来成功、进程却一直在运行。
+trap 'sam_lock_release "wifi_monitor_instance"' EXIT
+trap 'sam_lock_release "wifi_monitor_instance"; exit 0' HUP INT TERM
 
 # 获取当前连接 WIFI 的 SSID
 # cmd wifi status 的输出比 dumpsys connectivity 小一个数量级，优先使用

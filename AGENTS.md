@@ -10,7 +10,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 卸载（不需要重启）：`sh scripts/manual.sh uninstall`
 - 打包：`python tools/pack_module.py`；只检查用 `--check`；不改源文件用 `--no-write`；打包会跳过 `tools/`、`docs/`、`dist/`、`.workbuddy/` 等非模块内容
 - 广告屏蔽回归测试：`python tools/test_ad_sh.py`（改 `scripts/ad.sh` 后必跑，27 项断言）
-- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_setting_transaction.py`（setting_api.sh 的 set/setarr 事务与端口批量校验，31 项）、`test_backup_semantics.py`（backup.sh，48/52 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34/38 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口/下游上游选择 + check_dns_chain 参数，107 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞，20 项）、`test_module_links.py`（SmartDNS 三条软链 + 开机脚本复用 ensure_module_links，22 项）、`test_manual_repair.py`（manual.sh 的目录选择/结构校验/标记清理，16 项）、`test_host_sources.py`（hosts 抓取降级与源顺序，20 项）。十一套件合计 371 项（CI/mksh 环境）；Windows 本机 340 项（软链行为、锁阻塞与不可执行位用例按环境门控跳过）。语法自检统一走 `setting.sh` 的 `SETTING_SYNTAX_SHELL`（加载期优先 mksh）——dash 不支持 `SUB_URL=()`，会让合法配置被判成语法错误
+- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_setting_transaction.py`（setting_api.sh 的 set/setarr 事务与端口批量校验，31 项）、`test_backup_semantics.py`（backup.sh，48/52 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34/38 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口/下游上游选择 + check_dns_chain 参数 + WebUI 快检，115 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞/拓扑刷新/信号处理，27 项）、`test_module_links.py`（SmartDNS 三条软链 + 开机脚本复用 ensure_module_links，22 项）、`test_manual_repair.py`（manual.sh 的目录选择/结构校验/标记清理，16 项）、`test_host_sources.py`（hosts/组件下载降级与源顺序，26 项）。十一套件合计 392 项（CI/mksh 环境）；Windows 本机 361 项（软链行为、锁阻塞与不可执行位用例按环境门控跳过）。语法自检统一走 `setting.sh` 的 `SETTING_SYNTAX_SHELL`（加载期优先 mksh）——dash 不支持 `SUB_URL=()`，会让合法配置被判成语法错误
 - 发布前用 WSL 复跑一遍全部套件（`wsl -- python3 tools/test_*.py`）：本机 Windows 会跳过软链行为/锁阻塞/不可执行位用例，WSL 的 mksh 与 CI 一致
 - 版本/文档一致性：`python tools/check_version_sync.py`（module.prop / update.json / changelog 版本对齐 + README/AGENTS 默认密码与 smartdns.conf 同值 + description 非占位，CI 每次 push 跑）
 - 测试编写约定（照现有任一测试为范例）：driver 搭临时模块目录/路径重写、或从脚本**原样抽取真实函数体**（不复制实现，重构会立刻失败）；mock 优先用 **driver 内函数覆盖**，不要用 PATH 注入的假可执行文件（MSYS 的 sh 会把 `/usr/bin` 前置，假程序永远排不上号，test_ad_sh 曾因此出现伪失败）；Checker 类统一输出「通过 N 项, 失败 M 项」；shell 函数不能当变量用（mksh 里 `${fn}` 展开为空）；依赖 PID 可见性的用例用 `live_pid_visible()` 门控（本机 sh.EXE 的 `kill -0` 看不到任何进程）
@@ -27,15 +27,16 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - `scripts/agh_reset.sh`：备份后用 `etc/AdGuardHome/AdGuardHome.template.yaml` 重置 AGH 配置，再跑 `update/agh.sh`、`--check-config` 并按服务状态重启；WebUI「危险操作 → 重置 AGH 配置」调用它
 - `etc/AdGuardHome/AdGuardHome.template.yaml` 是重置模板，不是运行时配置；改 AGH 默认字段时同步模板（schema 需与内置二进制匹配）
 - **WebUI 语义**：服务页的「启动/停止/重启全部服务」只控制服务；「软重启后恢复」额外重挂 hosts、启动监控并按设置刷新网络；存在待激活包时按钮变为「激活并恢复新版」并会先激活。工具页只放一次性维护命令，不要再加「恢复运行」。监控页显示「DNS 入口」（当前 53 实际转到哪个服务），规则正常 ≠ 有查询经过
-- `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后 `sh -n` 再原子替换，临时文件放 `tmp/`）；`get` 必须覆盖 WebUI 所有 `data-key`；`cron get|set` 负责定时任务文件（一行一条参数，逐行校验时间字段，`@daily` 类快捷键支持）
+- `scripts/setting_api.sh` 是 WebUI 唯一写配置入口（有锁、有校验、写后用 `SETTING_SYNTAX_SHELL`（优先 mksh）语法自检再原子替换，临时文件放 `tmp/`）；`get` 必须覆盖 WebUI 所有 `data-key`；`cron get|set` 负责定时任务文件（一行一条参数，逐行校验时间字段，`@daily` 类快捷键支持）
 - `scripts/manual.sh` 免重启运维；`scripts/run.sh` 提权包装（参数走临时文件，避免二次解释）
 - **配置文件清洗**：`base.sh` 的 `sanitize_config` 在 AGH/SmartDNS 启动前清理 UTF-8 BOM 与 CR；UTF-16 明确报错不自动转换。AGH 启动前跑 `--check-config`，失败写 `tmp/agh.config.bad`（内容 cksum）和 `agh.config.bad.reason`（`yaml`/`schema`/`encoding`/`generate`），守护循环据此暂停自动拉起，配置内容变化或手动重启后才重试
 - **服务用户降级**：三服务统一经 `base.sh` 的 `service_exec` 启动；`busybox setuidgid` 或独立 `setuidgid` 不可用时以 root 启动并在 `module.log` 记录 ERROR，避免临时 root 下三服务一起静默失败。当前 `SAM_USER=root`，只降组不降 UID，控制面仍需依赖回环监听和默认密码提醒。
 - **服务启停互斥**：`service.sh start/stop/restart`、watchdog 的服务/规则恢复、`setting_api apply` 共用 `base.sh` 的 PID 目录锁；watchdog 拿锁后会再次检查 `service.state`，避免停止屏障失效。WiFi 查询失败时保持现状，不把空 SSID 当成非黑名单。
+- **常驻脚本信号**：HUP/INT/TERM 的 trap 必须显式 `exit`（只 `trap ... HUP INT TERM` 时处理器返回后循环继续，`kill` 停不掉进程）；`wifi.monitor.sh`、`ad.sh`、`update.sh`、`update/mihomo.sh` 均按「EXIT 释放锁 + 信号释放后退出」两行拆开。
 - **配置事务写入**：`setting_api.sh set/setarr` 先写临时副本，全部校验通过后一次 `mv`；端口冲突按同一批最终候选值校验，TTL 边界 60-86400 由 `setting.sh` 的 `SMARTDNS_TTL_FLOOR/CEIL` 单一定义，并通过 `get` 下发（`SMARTDNS_TTL_FLOOR/CEIL` 两行只读字段），WebUI 不再硬编码。
 - **服务自动停止取证**：watchdog 在服务异常消失时写 `tmp/auto-stop.<bin>.*.log`，`diagnose.sh` 汇总 `SERVICE-EVENT`、`watchdog.heartbeat`、`oom_score_adj`、MIUI/`logcat` 杀进程线索。
 - **广告恢复保护**：文件类路径屏蔽期间的新内容改名到 `.samnew`，恢复失败返回非零；卸载只有全部恢复成功才删除 `/data/adb/SAM-ad-hold.list`。
-- **更新与安装安全**：组件下载优先校验 `.sha256`，tar 拒绝绝对路径/`..`/链接；AGH/Mihomo 替换失败会回滚；`customize.sh` 解压或关键文件失败会中止安装。
+- **更新与安装安全**：组件下载优先校验 `.sha256`，下载统一走 `fetch_url`/`fetch_file`（缺 curl 退回 wget）；tar 拒绝绝对路径/`..`/链接；AGH/Mihomo 替换失败会回滚；`customize.sh` 解压或关键文件失败会中止安装。
 - **hosts 更新**：内容必须逐行是 `IP 域名`，更新使用 PID 锁与唯一临时文件，失败不覆盖原 hosts。下载统一走 `base.sh` 的 `fetch_url`（curl 优先，**缺 curl 退回 wget**——部分 ROM 没有 curl）；候选源 ghfast.top 优先、raw 直连备用、jsdelivr 兜底；更新前 `wait_network 60`（开机网络常晚于服务就绪），未取全的规则 30 秒后补拉一次；`etc/hosts` 出厂预置最新 GitHub/FCM 规则，断网首启也有解析
 - **IPv6 DNS 阻断**：`iptables/dns.sh` 优先用 REJECT（UDP `icmp6-port-unreachable`、TCP `tcp-reset`），内核不支持时回退 DROP；探测结果写入 `tmp/ipv6.block.mode`，避免守护循环反复删加规则
 - SmartDNS 启动失败时把 `tmp/smartdns.log` 最后 5 行写入 module.log（`smartdns.out` 只有 wrapper 提示）
@@ -54,7 +55,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - WebUI「工具」页是各脚本命令的图形入口：新增带子命令的脚本时，同步在 `webroot/index.html` 加 `data-script` / `data-args` 按钮
 - 配置真身只有 `setting.conf`，注释即文档。**新增配置键必须同步五处**：
   `scripts/setting.sh` 默认值与校验 → `scripts/setting_api.sh` 的 KEY 列表**与 `get_all` 输出** → `customize.sh` 升级迁移列表 → WebUI 的 `data-key`
-- **面板凭据只有两处真身**：AGH 在 `etc/AdGuardHome/AdGuardHome.template.yaml` 的 `users`（bcrypt，重置配置用它恢复），SmartDNS 在 `etc/SmartDNS/smartdns.conf` 的 `smartdns-ui.user/password`；默认均为 `root` / `root`（AGH 用 bcrypt cost 12 存储）。改默认值必须同时改这两处 + `scripts/update/desc.sh` 的模块描述文案 + README，否则用户会拿旧默认值反复登录失败（已发生过）
+- **面板凭据只有两处真身**：AGH 在 `etc/AdGuardHome/AdGuardHome.template.yaml` 的 `users`（bcrypt，重置配置用它恢复），SmartDNS 在 `etc/SmartDNS/smartdns.conf` 的 `smartdns-ui.user/password`；默认均为 `root` / `root`（AGH 用 bcrypt cost 12 存储）。改默认值必须同时改这两处 + `scripts/update/desc.sh` + `customize.sh` 安装提示 + `webroot/index.html` 服务页 + README，否则用户会拿旧默认值反复登录失败（已发生过）；`check_version_sync.py` 目前只比对 README/AGENTS 与 `smartdns.conf`
 - **SmartDNS 面板登录保持**：登录令牌存浏览器 localStorage，有效期由 `smartdns-ui.token-expire`（秒）决定，当前 2592000（30 天）；令牌过期或清浏览器数据才会重新要求登录。开放局域网时应收紧该值并改密码
 - **缓存只有一层**：`AdGuardHome` 的 DNS 缓存保持关闭，缓存职责由上游 SmartDNS 独占（`prefetch-domain` / `serve-expired` / `cache-persist`）。再叠一层 AGH 缓存会吃双份内存，还会把 SmartDNS 选出的最优 IP 冻结住、绕过测速选优
 - 行尾统一 LF；`.gitattributes` 已固定 `* text=auto eol=lf`，不要在 Windows 下关闭；脚本 0755；不要提交 `dist/`
@@ -62,10 +63,10 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261025.9**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
+- 发布状态：线上最新 Release 为 **v20261025.10**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
 - **端口监听判定**：任一协议（TCP 或 UDP）在监听即可用，不能要求同时监听——SmartDNS 默认只有 UDP bind，收紧会把运行中的服务判成未监听、计数归零。`is_port_listening` 因此按「任一协议」实现
 - `iptables/dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；`BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
-- **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（薄包装 `base.sh dns_entry_port`，SmartDNS 端口从 `smartdns.conf` 解析后实测监听，不依赖调用方预置变量），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
+- **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（薄包装 `base.sh dns_entry_port`，SmartDNS 端口从 `smartdns.conf` 解析后实测监听，不依赖调用方预置变量），入口变化**或链内服务被守护循环成功拉起**时跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留。只看入口会漏掉「模式 1 下 AGH 一直在跑、Mihomo 恢复」这类入口不变但上游选择已变的情况
 - **下游上游选择只有一处**：`base.sh dns_chain_upstream <consumer>` 按 `MODULE_DNS_MODE` 的链路（模式 1 = AGH→Mihomo→SmartDNS，模式 2 = Mihomo→AGH→SmartDNS）向后找第一个可用节点，**绝不回头**（回头会让两级服务互指形成转发环）；`update/agh.sh` 与 `update/mihomo.sh` 都必须用它，不允许各写回退链
 - **SmartDNS 软链只有一套规则**：`base.sh ensure_module_links`（相对目标 + 悬空链删掉重建）。开机脚本 `service.sh`、`service.sh start`、`manual.sh` 激活路径全部复用它，禁止再写 `ln -s` 的第二份实现（v20261025.5 的故障源）
 - **服务锁等待**：`service.sh stop/restart` 锁等待 120/180 秒，匹配守护循环持锁做服务恢复的最坏时长；用户停止操作不会因等不到锁而静默失败

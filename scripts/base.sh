@@ -47,12 +47,36 @@ fetch_url(){
     return 1
 }
 
+# 下载 URL 到指定文件: 与 fetch_url 同一套降级顺序
+# 组件更新要下载数十 MB 的二进制，不能走 fetch_url 的 stdout(整份内容会进管道/内存)，
+# 也不能假设设备带 curl —— 部分 ROM 只有 busybox wget，缺工具时更新会 100% 静默失败
+fetch_file(){
+    fetch_file_url="${1}"
+    fetch_file_target="${2}"
+    fetch_file_timeout="${3:-300}"
+    if has_cmd curl; then
+        curl -f -L -# --connect-timeout 15 -m "${fetch_file_timeout}" -o "${fetch_file_target}" "${fetch_file_url}"
+        return $?
+    fi
+    if has_cmd wget; then
+        wget -T "${fetch_file_timeout}" -q -O "${fetch_file_target}" "${fetch_file_url}"
+        return $?
+    fi
+    if has_cmd busybox && busybox wget --help > /dev/null 2>&1; then
+        busybox wget -T "${fetch_file_timeout}" -q -O "${fetch_file_target}" "${fetch_file_url}"
+        return $?
+    fi
+    return 1
+}
+
 # 网络是否可用: HTTPS 握手成功即可(不要求特定响应码)
 # 用 IP 直连(223.5.5.5 阿里 DoH)绕过 DNS: 开机早期往往 DNS 还没就绪，
 # 而 hosts 更新正是要在这种时刻判断"能不能联网"
+# -k: 目的是判断"能不能连出去"，不是验证证书；按 IP 访问时证书校验
+#     可能因缺少 IP SAN 直接失败，把可达网络误判成未就绪
 is_network_ready(){
     if has_cmd curl; then
-        curl -m 5 -s -o /dev/null "https://223.5.5.5/" 2>/dev/null && return 0
+        curl -k -m 5 -s -o /dev/null "https://223.5.5.5/" 2>/dev/null && return 0
     fi
     ping -c 1 -W 2 223.5.5.5 > /dev/null 2>&1 && return 0
     return 1

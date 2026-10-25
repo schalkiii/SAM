@@ -119,13 +119,17 @@ if [ -e "${MODULE_PATH}/setting.conf" ]; then
         fi
     fi
     # 复制 SmartDNS 使用缓存
+    # 新包不一定带 data/ 目录，cp 到不存在的目标会静默失败，先建出来
+    mkdir -p "${MODPATH}/etc/SmartDNS/data"
     cp -R -f "${MODULE_PATH}/etc/SmartDNS/data/." "${MODPATH}/etc/SmartDNS/data"
     # 复制 AdGuardHome 使用缓存与 data/filters 下的自定义过滤器
     mkdir -p "${MODPATH}/etc/AdGuardHome/data"
     cp -R -f "${MODULE_PATH}/etc/AdGuardHome/data/." "${MODPATH}/etc/AdGuardHome/data"
     # 复制 Mihomo 使用缓存
+    # 两个目录在新包里可能不存在，先建目标目录，避免 cp 静默失败
+    mkdir -p "${MODPATH}/etc/mihomo/proxy_provider" "${MODPATH}/etc/mihomo/rule_provider"
     cp -R -f "${MODULE_PATH}/etc/mihomo/proxy_provider/." "${MODPATH}/etc/mihomo/proxy_provider"
-    cp -R -f "${MODULE_PATH}/etc/mihomo/rule_provider/." "${MODPATH}/etc/mihomo/rule_provider"    
+    cp -R -f "${MODULE_PATH}/etc/mihomo/rule_provider/." "${MODPATH}/etc/mihomo/rule_provider"
     cp -f "${MODULE_PATH}/etc/mihomo/cache.db" "${MODPATH}/etc/mihomo/cache.db"
 fi
 

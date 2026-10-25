@@ -20,7 +20,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **全量配置备份**：卸载/更新/恢复前自动备份到 `/data/adb/SAM-backup/<时间>/`（root-only，含 AGH/SmartDNS/Mihomo 用户数据目录、crontabs 与广告屏蔽清单；任一复制失败会返回失败并保留清单，避免假备份）。备份带完成标记，`list`/`restore` 只认完整备份；`restore` 前会先自动留存一份当前配置快照，还原可回退；守护循环每天自动备份一次
 - **定时任务 WebUI**：工具页「定时任务」卡片可直接编辑 `/etc/crontabs/root`（一行一条，保存时逐行校验时间字段），busybox crond 下一分钟自动生效，无需重启服务
 - **默认仅回环监听**：AGH 面板/DNS、SmartDNS、Mihomo 控制台与代理端口默认只听 127.0.0.1；需要局域网使用时打开「允许局域网访问」，仅开放 AGH 面板/DNS 与 SmartDNS DNS，Mihomo 控制台与代理端口始终保持本机
-- **组件安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
+- **组件安全更新**：先停服务再替换，自检失败自动回滚，下载有超时；缺 curl 的设备自动退回 wget
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
 - **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC、`mksh -n` 校验；`.gitattributes` 保证 Windows 检出也是 LF
 - **一键诊断**：WebUI「工具 → 一键诊断」或 `scripts/diagnose.sh` 只读采集服务、端口、AGH 配置校验、防火墙、DNS、MTU 与 IPv6 阻断方式/计数
@@ -35,7 +35,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## ⚠️ 当前已知问题与发布状态
 
-- 线上最新 Release 为 **v20261025.9**：第四轮审计优化（服务脚本退出码语义、语法解释器缓存、`manual.sh` 结构校验对齐）+ **GitHub/FCM hosts 抓取修复**（ghfast.top 优先、缺 curl 退回 wget、等网重试、出厂预置最新规则）；十一套件 371 项全部通过。刷入后需完整重启，或用「工具 → 激活待更新版本」免重启激活。
+- 线上最新 Release 为 **v20261025.10**：第五轮审计修复（WiFi 监控禁用失效、组件更新缺 curl 降级、WebUI DNS 规则快检补 OUTPUT 跳转、watchdog 服务恢复后重写下游上游、安装目录补齐）；十一套件 392 项全部通过。刷入后需完整重启，或用「工具 → 激活待更新版本」免重启激活。
 - 逐版变更、历史修复与已知问题的处理记录只维护在 [changelog.md](changelog.md)。本段不重复版本叙事，避免与 changelog 二次维护后漂移。
 
 ## ⚙️功能

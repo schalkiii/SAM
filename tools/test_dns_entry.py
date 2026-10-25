@@ -14,6 +14,7 @@ webui.sh resolve_dns_entry，靠注释保证一致(审计 A-1，v20261024.18 已
   - 三处结论永远一致(这是 A-1 的核心属性: 规则、监控、显示同一个入口)
   - 下游上游选择(dns_chain_upstream)沿链路向后、绝不回头(防转发环)
   - check_dns_chain 真正把端口传给 iptables 的 --to-ports(参数级断言)
+  - WebUI 的 check_dns_rule 与 check_dns_chain 同口径(含 OUTPUT 跳转)
 
 用法:
     python tools/test_dns_entry.py            # 跑全部用例
@@ -99,6 +100,25 @@ owner_supported(){
 '''
 
 
+# WebUI 的 DNS 规则快检(check_dns_rule): 用命令记录器模拟 iptables，
+# TEST_MISSING 指定"哪条规则不存在"，其余一律成功
+WEBUI_CHECK_HEADER = '''#!/bin/sh
+dns_check_port="${TEST_CHECK_PORT}"
+BYPASS_ENABLE="${TEST_BYPASS:-false}"
+iptables_w="ipt"
+ipt(){
+    echo "$*" >> "${TEST_IPT_LOG}"
+    case "${TEST_MISSING:-}" in
+        output) case "$*" in *"-C OUTPUT -j REDIRECT_DNS"*) return 1 ;; esac ;;
+        chain)  case "$*" in *"-L REDIRECT_DNS"*) return 1 ;; esac ;;
+        udp)    case "$*" in *"-p udp"*) return 1 ;; esac ;;
+        tcp)    case "$*" in *"-p tcp"*) return 1 ;; esac ;;
+    esac
+    return 0
+}
+'''
+
+
 def extract_function(script_path, func_name):
     """从脚本中原样抽取函数体(测试真实实现，改动/重命名会立刻失败)"""
     lines = script_path.read_text(encoding='utf-8').splitlines()
@@ -131,6 +151,16 @@ def build_chain_driver(base):
     parts.append(extract_function(REPO / 'scripts' / 'iptables' / 'dns.sh', 'check_dns_chain'))
     parts.append('check_dns_chain v4 REDIRECT_DNS\necho "rc=$?"\n')
     driver = base / 'chain_driver.sh'
+    driver.write_text('\n\n'.join(parts) + '\n', encoding='utf-8', newline='\n')
+    return driver
+
+
+def build_webui_check_driver(base):
+    """搭 WebUI DNS 规则快检 driver"""
+    parts = [WEBUI_CHECK_HEADER]
+    parts.append(extract_function(REPO / 'scripts' / 'webui.sh', 'check_dns_rule'))
+    parts.append('echo "rule=$(check_dns_rule)"\n')
+    driver = base / 'webui_check_driver.sh'
     driver.write_text('\n\n'.join(parts) + '\n', encoding='utf-8', newline='\n')
     return driver
 
@@ -240,6 +270,7 @@ def main():
     try:
         driver = build_driver(base)
         chain_driver = build_chain_driver(base)
+        webui_check_driver = build_webui_check_driver(base)
         c = Checker(verbose=args.verbose)
 
         for label, mode, agh_run, agh_listen, mihomo_run, mihomo_listen, sd_run, sd_listen in SCENARIOS:
@@ -320,6 +351,36 @@ def main():
             redirect_index = recorded.find('--to-ports')
             c.check(f'[规则参数] {test_port} 回环放行先于重定向',
                     loop_index >= 0 and redirect_index >= 0 and loop_index < redirect_index, True)
+
+        # WebUI 的 DNS 规则快检必须与 dns.sh check_dns_chain 同口径:
+        # 链存在但 OUTPUT 没有跳转时，重定向规则永远收不到查询，不能显示"正常"
+        webui_log = base / 'webui_ipt.log'
+
+        def run_webui_check(missing='', port='5300', bypass='false'):
+            if webui_log.exists():
+                webui_log.unlink()
+            result = run_case(webui_check_driver, base, {
+                'TEST_CHECK_PORT': port,
+                'TEST_BYPASS': bypass,
+                'TEST_MISSING': missing,
+                'TEST_IPT_LOG': webui_log.as_posix(),
+            })
+            recorded = webui_log.read_text(encoding='utf-8') if webui_log.is_file() else ''
+            return result.get('rule', '<缺失>'), recorded
+
+        rule, recorded = run_webui_check()
+        c.check('[WebUI 快检] 全部规则存在 -> 正常', rule, '正常')
+        rule, recorded = run_webui_check(missing='output')
+        c.check('[WebUI 快检] OUTPUT 跳转缺失 -> 异常', rule, '异常')
+        c.check('[WebUI 快检] 确实检查了 OUTPUT 跳转',
+                '-C OUTPUT -j REDIRECT_DNS' in recorded, True)
+        for missing_kind in ('chain', 'udp', 'tcp'):
+            rule, _ = run_webui_check(missing=missing_kind)
+            c.check(f'[WebUI 快检] {missing_kind} 规则缺失 -> 异常', rule, '异常')
+        rule, _ = run_webui_check(port='')
+        c.check('[WebUI 快检] 端口未监听 -> 端口未监听', rule, '端口未监听')
+        rule, _ = run_webui_check(bypass='true')
+        c.check('[WebUI 快检] 直通模式不判异常', rule, '直通模式')
 
         return c.report()
     finally:

@@ -9,7 +9,9 @@ MIHOMO_CONF="${TMP_PATH}/mihomo.yaml.$$"
 mihomo_cleanup(){
     rm -f "${MIHOMO_CONF}"
 }
-trap mihomo_cleanup EXIT HUP INT TERM
+# 信号必须显式退出: 只清临时文件会让配置生成在收到 TERM/HUP 后继续写回
+trap mihomo_cleanup EXIT
+trap 'mihomo_cleanup; exit 1' HUP INT TERM
 
 # 读取配置内容
 content=$(cat "${MIHOMO_PATH}/base.yaml")

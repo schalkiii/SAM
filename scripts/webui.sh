@@ -208,7 +208,10 @@ check_dns_rule(){
         return 0
     }
 
+    # 链存在且规则正确不代表查询会进来: OUTPUT 没有跳转时链是死规则。
+    # 这里必须与 dns.sh 的 check_dns_chain 一样校验跳转，否则界面会误报"正常"
     if ${iptables_w} -t nat -L REDIRECT_DNS > /dev/null 2>&1 && \
+       ${iptables_w} -t nat -C OUTPUT -j REDIRECT_DNS > /dev/null 2>&1 && \
        ${iptables_w} -t nat -C REDIRECT_DNS -p udp --dport 53 -j REDIRECT --to-ports ${dns_check_port} > /dev/null 2>&1 && \
        ${iptables_w} -t nat -C REDIRECT_DNS -p tcp --dport 53 -j REDIRECT --to-ports ${dns_check_port} > /dev/null 2>&1; then
         echo "正常"

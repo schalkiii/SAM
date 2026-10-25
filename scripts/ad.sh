@@ -881,7 +881,9 @@ release_ad_lock(){
     sam_lock_release "ad"
 }
 
-trap release_ad_lock EXIT HUP INT TERM
+# 信号必须显式退出: trap 返回后脚本会继续改名/写清单，可能做一半
+trap release_ad_lock EXIT
+trap 'release_ad_lock; exit 1' HUP INT TERM
 # 拿不到锁说明已有 block/recovery/cleanup 在跑: 清单是「读-改-写」，
 # 放行会让两个实例互相覆盖清单，必须退出而不是带病执行
 if ! acquire_ad_lock; then

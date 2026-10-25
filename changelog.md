@@ -1,3 +1,27 @@
+# 2026.10.25.10
+- 第五轮审计修复（`docs/AUDIT-REPORT-2026-10-25-5.md` S-5-1~S-5-7）
+  - 修复: WebUI「禁用 WiFi 监控」实际无效。`wifi.monitor.sh` 的 trap 只设置处理器不 `exit`，
+    收到 TERM 后 mksh/dash 会继续跑循环；`ad.sh` / `update.sh` / `update/mihomo.sh` 同类问题
+    一并改为「EXIT 释放/清理 + 信号处理后退出」
+  - 修复: 组件更新在缺 curl 的设备上 100% 失败（与上一版 hosts 抓取同一根因）。`base.sh`
+    新增 `fetch_file`（curl → wget → busybox wget），`update.sh` 的 API / 二进制 / `.sha256`
+    全部改走共享 helper；README 同步说明
+  - 修复: WebUI「DNS 规则」快检漏校验 OUTPUT 跳转，链在但跳转缺失时会误报「正常」；
+    现与 `dns.sh check_dns_chain` 同口径
+  - 修复: watchdog 只在 53 入口变化时重写下游上游。服务恢复（入口不变）时也会漏掉
+    「模式 1 下 Mihomo 恢复后 AGH 仍直连 SmartDNS」这类偏差；现在链内任一服务成功拉起
+    都会重写配置，仍按 cksum 决定是否重启下游（缓存与统计保留）
+  - 修复: `is_network_ready` 的 HTTPS 探测加 `-k`，避免 IP 证书缺少 SAN 时误判网络未就绪
+  - 修复: `customize.sh` 向不存在的 SmartDNS `data/` 与 Mihomo provider 目录复制会静默失败，
+    现先 `mkdir -p`
+  - 文档: `BACKUP_CONF` 的说明改为 `/data/adb/SAM-backup/<时间>/` 全量快照
+    （`setting.conf` + WebUI）；AGENTS 补默认凭据文案清单、常驻脚本信号约束与
+    watchdog 刷新条件，并修正 `setting_api.sh` 的 `sh -n` 旧措辞
+  - 测试: 既有套件补 21 项（hosts 20→26、DNS 入口 107→115、watchdog 20→27）：
+    `fetch_file` 三态与 `update.sh` 无裸 curl、WebUI 规则快检 8 种分支、
+    信号 trap 结构断言 + 自投 TERM 动态断言。十一套件合计 392 项（CI/mksh），
+    Windows 本机 361 项
+
 # 2026.10.25.9
 - 第四轮审计优化（`docs/AUDIT-REPORT-2026-10-25-4.md` S-4-1~S-4-5）
   - 优化: 语法解释器改为加载期缓存 `SETTING_SYNTAX_SHELL`。原每次自检都 `$(...)` 探测一次，
