@@ -301,3 +301,15 @@ hold)
   `resmanager_resource_*` 这类通配符二次命中。
 - 广告备份清单路径改为 `config.sh` 的 `AD_HOLD_LIST`，供 `service.sh` 在关闭
   开关时自动执行恢复。
+
+## 14. v20261025.1 行为修正（覆盖第 13 节首条）
+
+- **「有旧备份但未锁定」不再挪成 `.samhold.prev.<时间戳>`**：那样清单会指向空壳，
+  之后 recovery 还原出来的是空内容，原数据反而成了没有索引的 `.prev.*`。
+  现在 `block_ad` 遇到这种情况**跳过屏蔽**并记 ERROR 提示先执行 `recovery`，
+  由用户确认后再屏蔽。第 13 节首条的 `.prev.*` 方案由此废弃。
+- `is_locked` 以 `AD_HOLD_LIST` 清单为权威（`lsattr` 属性列只作辅助），
+  不再把路径当正则匹配；`chattr +i` 失败时占位目录/文件按原属主权限重建，
+  并以 `700`/`600` 兜底并记 ERROR。
+- 备份清单 `/data/adb/SAM-ad-hold.list` 纳入模块备份（`extra/` 子目录），
+  卸载/恢复前自动留存，清单丢失也能从备份找回。
