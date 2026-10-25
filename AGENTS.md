@@ -63,7 +63,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261025.10**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
+- 发布状态：线上最新 Release 为 **v20261025.11**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
 - **端口监听判定**：任一协议（TCP 或 UDP）在监听即可用，不能要求同时监听——SmartDNS 默认只有 UDP bind，收紧会把运行中的服务判成未监听、计数归零。`is_port_listening` 因此按「任一协议」实现
 - `iptables/dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；`BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
 - **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（薄包装 `base.sh dns_entry_port`，SmartDNS 端口从 `smartdns.conf` 解析后实测监听，不依赖调用方预置变量），入口变化**或链内服务被守护循环成功拉起**时跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留。只看入口会漏掉「模式 1 下 AGH 一直在跑、Mihomo 恢复」这类入口不变但上游选择已变的情况

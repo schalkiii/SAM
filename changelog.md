@@ -1,4 +1,4 @@
-# 2026.10.25.11（未发布）
+# 2026.10.25.11
 - 第五轮审计遗留项推进（`docs/AUDIT-REPORT-2026-10-25-5.md` S-5-8~S-5-10）
   - 测试: 新增 `test_setting_keys.py`（15 项），静态校验 27 个配置键在
     `setting.conf` / `setting.sh` 默认值 / `setting_api.sh` 分类与 `get_all` /
