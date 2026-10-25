@@ -26,6 +26,10 @@ jobs:
       - name: 检查模块
         run: python tools/pack_module.py --check --no-write
 
+      # 发版要同时改 module.prop/update.json/changelog，漏一处则 OTA 拿不到新版
+      - name: 版本号一致性检查
+        run: python tools/check_version_sync.py
+
       - name: WebUI JavaScript 语法检查
         run: node --check webroot/js/main.js && node --check webroot/js/kernelsu.js
 
