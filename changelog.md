@@ -1,4 +1,4 @@
-# Unreleased
+# 2026.10.25.4
 - 修复与加固（第二轮审计 S-2~S-9）
   - restore 在拷贝前无条件清理上次被中断留下的 `${target}.restore.*` 临时文件：残留的 `etc/crontabs/root.restore.<pid>` 会被 busybox crond 当作 crontab 加载并重复执行其中的 cron 行（`crond -c` 加载目录下所有文件）
   - 补注释说明 restore 的目标选取有意在锁外——并发双重 restore 是幂等的（都恢复同一目标）；挪进锁内会变成「后一次恢复前一次的快照」
@@ -12,7 +12,7 @@
   - 新增 `base.sh dns_entry_port()`：按 `MODULE_DNS_MODE` 逐级回退（模式 2 Mihomo→AGH→SmartDNS，模式 1 AGH→Mihomo→SmartDNS），判定口径统一为 `isRun` + `is_port_listening`（进程活着不代表端口可用），输出「名称:端口」或空
   - 三处消费方改为调用共享函数，只保留各自格式化：`iptables/dns.sh select_dns_port`（解析端口/名称建规则，删除 `set_dns_entry`）、`watchdog.sh current_dns_entry`（拓扑比对，空时输出 none）、`webui.sh resolve_dns_entry`（状态页显示，保留直通模式分支；SmartDNS 端口来源从配置解析改为设置项，与建规则一方同源）
   - 新增 `tools/test_dns_entry.py`（66 项）：抽取三个真实函数，mock `isRun`/`is_port_listening` 驱动 16 组场景矩阵 + 独立算盘交叉验证 + 三处消费方一致性断言；变异验证（对调回退顺序即 8 项失败）
-  - CI 增加该测试步骤；六套件合计 203 项断言
+  - CI 增加该测试步骤（现为七套件 233 项断言，CI 环境 241 项）
 
 # 2026.10.25.3
 - 热修复: `backup.sh restore` 与 WebUI 配置写操作的竞态
