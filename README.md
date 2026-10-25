@@ -35,12 +35,8 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## ⚠️ 当前已知问题与发布状态
 
-- 线上最新 Release 为 **v20261025.9**（第四轮审计优化 + hosts 抓取修复）。v20261025.9 = 服务脚本退出码语义修正（正常态 0 / 真失败 1）、语法解释器加载期缓存、`manual.sh` 结构校验与解释器规则对齐、**GitHub/FCM hosts 抓取修复**（ghfast.top 优先 + 缺 curl 退回 wget + 等网重试 + 预置最新规则）、新增 `test_manual_repair.py` 与 `test_host_sources.py`（十一套件 371 项）。v20261025.8 = 第三轮审计修复：下游上游链路合一（杜绝 AGH↔Mihomo 互指转发环）、DNS 入口端口解析修正、配置语法自检改用 mksh、watchdog 空端口清理语义修正、开机软链复用 `ensure_module_links`、WebUI 挂载失败回滚与部分保存提示、出厂 crontab 高危任务默认注释、TTL 边界服务端下发。v20261025.7 = 默认凭据恢复 root/root + 作者改为 Schalkiii + SmartDNS 面板登录保持 30 天。
-- v20261025.4 汇总第二轮审计 S-2~S-9 与 DNS 入口合一：restore 清理中断残留（防 crond 重复执行定时任务）、TTL 默认值与范围单一定义、Mihomo 判定五处收敛、版本一致性 CI 门禁、watchdog 纯逻辑测试（20 项）；测试合计 137 → 233 项（CI 环境 241 项，含本机跳过的锁阻塞用例）。
-- v20261025.3 是热修复版：① `backup.sh restore` 此前后不持锁且原地覆盖，与 WebUI「恢复最近备份」按钮交叉时会互相覆盖设置、并发读取可能看到半截文件——现在 restore 持配置锁覆盖文件写入期，文件写入改为同目录临时文件 + `mv` 原子替换（目标意外是目录时 mv 会"假成功"，已加 `-f` 守卫）；② `setting_api.sh cron set` 补上配置锁，与 `set`/`setarr`/`apply` 统一互斥语义；③ 测试增补 24 项断言（备份语义 31→43、定时任务 19→29，合计 137 项）。
-- v20261025.2 是 v20261025.1 的热修复版：`backup.sh list_backup` 的行尾 sed 少一个闭合分隔符（`s|$| (未完成)/` 应为 `s/$/ (未完成)/`），导致未完成备份列表为空；该问题由新增测试用例逮出并修复，同时增补 4 个测试文件共 88 项断言（定时任务校验、tar 解包安全、owner 探测降级、备份语义），测试总数达 115 项。
-- v20261024.18 的已知问题均已在 v20261025.1 修复：`is_port_listening` 曾改为要求 TCP 与 UDP 同时监听；SmartDNS 默认只有 `bind`（UDP），会被误判为“未监听”。表现：开启直通再关闭后 SmartDNS 计数一直为零而 AGH 计数持续增长（查询全部走了 AGH）。修复版改回「任一协议在监听即可用」并给 SmartDNS 补 `bind-tcp`；卸载残留（`SAM.previous`/`SAM-activate.sh` 导致 repair 复活已卸载模块）也已一并清理。
-- v20261025.1 同时包含：watchdog 过度重启修复（同名端口恢复不再重启 AGH/Mihomo，缓存与统计保留）、DNS owner 无 xt_owner 降级、IPv6 分支不再误删 IPv4 劫持、广告屏蔽/更新/备份/卸载加固、定时任务 WebUI、每日自动备份、默认密码与 TTL 下限调整、直通切换不重启服务。
+- 线上最新 Release 为 **v20261025.9**：第四轮审计优化（服务脚本退出码语义、语法解释器缓存、`manual.sh` 结构校验对齐）+ **GitHub/FCM hosts 抓取修复**（ghfast.top 优先、缺 curl 退回 wget、等网重试、出厂预置最新规则）；十一套件 371 项全部通过。刷入后需完整重启，或用「工具 → 激活待更新版本」免重启激活。
+- 逐版变更、历史修复与已知问题的处理记录只维护在 [changelog.md](changelog.md)。本段不重复版本叙事，避免与 changelog 二次维护后漂移。
 
 ## ⚙️功能
 - 两种服务结构:

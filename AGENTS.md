@@ -62,8 +62,9 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261025.9**（tag 与资产已推送，CI 通过）。v20261025.9 = 第四轮审计优化（`docs/AUDIT-REPORT-2026-10-25-4.md` S-4-1~S-4-5 + 用户反馈补充）：服务脚本退出码语义修正（正常态 0 / 真失败 1）、语法解释器加载期缓存（`SETTING_SYNTAX_SHELL`）、`manual.sh` 结构校验与解释器规则对齐、**GitHub/FCM hosts 抓取修复**（`fetch_url` 缺 curl 退回 wget + ghfast.top 优先 + `wait_network 60` + 失败补拉 + `etc/hosts` 预置最新规则）、新增 `test_manual_repair.py` / `test_host_sources.py`（十一套件 371 项）。v20261025.8 = 第三轮审计修复（`docs/AUDIT-REPORT-2026-10-25-3.md` S-2~S-11）：下游上游链路合一（`dns_chain_upstream`，防 AGH↔Mihomo 互指转发环）+ DNS 入口端口解析修正 + 配置语法自检改用 mksh + watchdog 空端口分支改 `disable` + 开机 `service.sh` 复用 `ensure_module_links` + WebUI 挂载失败回滚/部分保存提示 + 出厂 crontab 高危任务默认注释 + TTL 边界由 `get` 下发 + `check_version_sync` 增加凭据/描述检查。v20261025.7 = 默认凭据恢复 root/root（AGH 模板 bcrypt 同源）+ 作者改为 Schalkiii + SmartDNS 面板登录保持 30 天。
-- v20261024.18 回归（`is_port_listening` 曾要求 TCP+UDP 同时监听，SmartDNS 只有 UDP bind 被误判未监听 → 计数为零）已于 v20261025.1 修复并发布：恢复「任一协议监听即可用」+ SmartDNS 补 `bind-tcp`；`dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；watchdog 的 `BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
+- 发布状态：线上最新 Release 为 **v20261025.9**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
+- **端口监听判定**：任一协议（TCP 或 UDP）在监听即可用，不能要求同时监听——SmartDNS 默认只有 UDP bind，收紧会把运行中的服务判成未监听、计数归零。`is_port_listening` 因此按「任一协议」实现
+- `iptables/dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；`BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
 - **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（薄包装 `base.sh dns_entry_port`，SmartDNS 端口从 `smartdns.conf` 解析后实测监听，不依赖调用方预置变量），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
 - **下游上游选择只有一处**：`base.sh dns_chain_upstream <consumer>` 按 `MODULE_DNS_MODE` 的链路（模式 1 = AGH→Mihomo→SmartDNS，模式 2 = Mihomo→AGH→SmartDNS）向后找第一个可用节点，**绝不回头**（回头会让两级服务互指形成转发环）；`update/agh.sh` 与 `update/mihomo.sh` 都必须用它，不允许各写回退链
 - **SmartDNS 软链只有一套规则**：`base.sh ensure_module_links`（相对目标 + 悬空链删掉重建）。开机脚本 `service.sh`、`service.sh start`、`manual.sh` 激活路径全部复用它，禁止再写 `ln -s` 的第二份实现（v20261025.5 的故障源）

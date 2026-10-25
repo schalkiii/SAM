@@ -101,7 +101,7 @@
 
 #### T-4-2（低）变异验证仍无记录
 
-- **位置**：九套件。
+- **位置**：全部套件。
 - **描述**：仅 v20261025.3 对 `restore` 的 `-f` 守卫做过一次"改坏实现必须变红"的验证。本周期新增的 `dns_chain_upstream`、`setting_syntax_shell` 都没有做。
 - **严重程度**：低。
 
@@ -110,7 +110,7 @@
 #### R-4-1（低）Windows 本机仍跑不到软链行为与锁阻塞用例
 
 - **位置**：`test_module_links`（本机仅静态 2 项）、`test_cron_validate` / `test_backup_semantics`（锁阻塞跳过）。
-- **描述**：本周期已用 WSL 的 mksh 复跑九套件（344 项全绿），证明 CI 结论可在本地复现；但日常工作流仍以 Windows 为准，`SKIP` 行容易被忽略。
+- **描述**：本周期已用 WSL 的 mksh 复跑全部套件（335 项全绿），证明 CI 结论可在本地复现；但日常工作流仍以 Windows 为准，`SKIP` 行容易被忽略。
 - **建议**：保持 `SKIP` 文案明确（已写"静态断言仍已执行"），并在 AGENTS 里写明"发布前用 WSL 复跑一次"。
 - **严重程度**：低。
 
@@ -154,7 +154,7 @@
 
 ### S-4-5（低，对应 R-4-1/T-4-2）流程性建议
 
-- **做法**：AGENTS 的「怎么跑」补一句"发布前在 WSL 用 mksh 复跑九套件（`wsl -- python3 tools/test_*.py`）"；对 `dns_chain_upstream` 做一次"改坏必须变红"的手工变异验证并记入 changelog。
+- **做法**：AGENTS 的「怎么跑」补一句"发布前在 WSL 用 mksh 复跑全部套件（`wsl -- python3 tools/test_*.py`）"；对 `dns_chain_upstream` 做一次"改坏必须变红"的手工变异验证并记入 changelog。
 - **文件清单**：`AGENTS.md`、`changelog.md`。
 - **验证方式**：文档通读；变异验证记录一行。
 
