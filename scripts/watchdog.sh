@@ -41,6 +41,28 @@ fi
 # 守护循环自身也要免被回收，否则没人拉起掉线的服务
 protect_process "$$"
 
+# 记录本次启动时的系统 boot_count
+# 软重启/系统框架重启不会重新执行模块开机脚本，watchdog 与服务会被一起杀掉；
+# 下次诊断对比 boot_count 就能区分「系统重启」与「整组进程被清理」。
+# 若发现 boot_count 变化，把旧值留在 boot.count.previous 并写一条 SERVICE-EVENT，
+# 这样用户恢复后日志里仍有证据。
+record_boot_count(){
+    boot_now=$(settings get global boot_count 2>/dev/null)
+    case "${boot_now}" in
+        ''|null|*[!0-9]*) return 0 ;;
+    esac
+    boot_prev=$(cat "${TMP_PATH}/boot.count" 2>/dev/null)
+    case "${boot_prev}" in
+        ''|null|*[!0-9]*) boot_prev="" ;;
+    esac
+    if [ -n "${boot_prev}" ] && [ "${boot_prev}" != "${boot_now}" ]; then
+        printf '%s\n' "${boot_prev}" > "${TMP_PATH}/boot.count.previous" 2>/dev/null
+        record_service_event "boot count changed ${boot_prev} -> ${boot_now} (system/framework restarted)"
+    fi
+    printf '%s\n' "${boot_now}" > "${TMP_PATH}/boot.count" 2>/dev/null
+}
+record_boot_count
+
 sd_backoff=0
 agh_backoff=0
 mihomo_backoff=0

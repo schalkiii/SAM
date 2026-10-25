@@ -3,7 +3,7 @@
   - 测试: 新增 `test_setting_keys.py`（15 项），静态校验 27 个配置键在
     `setting.conf` / `setting.sh` 默认值 / `setting_api.sh` 分类与 `get_all` /
     `customize.sh` 迁移列表 / WebUI `data-key` 五处完全一致；CI 增加对应步骤。
-    十二套件合计 414 项（CI/mksh），Windows 本机 383 项
+    十二套件合计 423 项（CI/mksh），Windows 本机 392 项
   - 门禁: `check_version_sync.py` 由 6 项扩到 9 项，新增 `desc.sh` / `customize.sh` /
     WebUI 服务页的凭据与 `smartdns.conf` 比对；改密码漏改界面文案会直接失败
   - 修复: `manual.sh install` 解压前校验 zip 成员（拒绝绝对路径与 `..` 穿越），
@@ -12,7 +12,18 @@
     `.samnew` 保留，不再当空壳删除
   - 优化: WebUI 挂载状态改用 `hosts_mounted` 判定；`update.sh` 的 AGH 自检与版本提取
     合并为一次 `--version`
-  - 文档: AGENTS 同步十二套件计数与凭据门禁范围
+  - 修复: 自动停止结论误判（用户反馈「还是有 auto-stop」）。`diagnose.sh --auto-stop`
+    原来按整份日志里的历史 `stop requested` 次数判成「模块主动停止」，即使之后已经
+    `start complete`、当前是 watchdog 与服务同时消失。现在按「当前 `service.state` +
+    日志时间顺序 + `boot_count`」判定，软重启/整组清理/模块主动停止分开；auto-stop
+    取证文件改为完整打印
+  - 取证: watchdog 启动时记录系统 `boot_count` 到 `tmp/boot.count`，发现变化时保留
+    `.previous` 并写 SERVICE-EVENT；软重启（boot_count 变化）与厂商整组清理（未变化）
+    可以区分
+  - 测试: `test_watchdog_logic.py` 增加 9 项自动停止结论用例（软重启/整组清理/
+    boot_count 未知/模块停止/WiFi/启动失败/击杀证据/失去守护/证据不足）
+  - 文档: AGENTS 同步十二套件计数与凭据门禁范围；README 重写「服务过一段时间自动停止」
+    排查顺序，明确历史 stop requested 不等于当前停止
 
 # 2026.10.25.10
 - 第五轮审计修复（`docs/AUDIT-REPORT-2026-10-25-5.md` S-5-1~S-5-7）

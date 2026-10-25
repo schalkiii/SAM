@@ -9,8 +9,10 @@
 > **392 项（CI/mksh）/ 361 项（Windows 本机）**；新增覆盖集中在组件下载降级、
 > WebUI DNS 规则快检、watchdog 拓扑刷新与常驻脚本信号处理。
 > **后续推进（同日）**：S-5-8~S-5-10 与 C-5-8~C-5-10 已实施，新增
-> `test_setting_keys.py`（15 项）并把 `check_version_sync` 扩到 9 项；
-> 十二套件 **414 项（CI/mksh）/ 383 项（Windows 本机）**。
+> `test_setting_keys.py`（15 项）并把 `check_version_sync` 扩到 9 项。
+> **真机反馈追加**：自动停止诊断误判（S-5-12）已修复，`diagnose.sh` 改用
+> “当前状态 + 日志顺序 + boot_count”判定并完整打印取证；
+> 十二套件 **423 项（CI/mksh）/ 392 项（Windows 本机）**。
 
 ## 一、现状描述（可观察事实）
 
@@ -332,6 +334,29 @@
 - **验证方式**：`test_ad_sh.py` 27/27 不回归；WebUI 状态页与 `webui.sh mount` 输出一致；
   `update.sh` 语法检查通过。
 
+### S-5-12（高，已实施）自动停止诊断误判：历史 stop requested 不等于当前停止
+
+- **位置**：`scripts/diagnose.sh` 的 `analyze_auto_stop`。
+- **问题（用户真机日志）**：23:43 的诊断显示 `service.state=running`、watchdog 心跳 310s 前、
+  三服务全部未运行、`service.abnormal` 为空；结论却因为 21:54 有一条历史
+  `stop requested reason=stopped` 判成「模块主动停止」。该停止之后已有
+  `start complete`，且 watchdog 与服务是**同时**消失，说明不是模块停的。
+- **根因**：
+  1. 结论按整份日志里的 `stop requested` 次数判断，不区分事件时间；
+  2. 日志按 `module.log → module.log.1 → module.log.boot.1` 拼接，最新事件反而落在中间；
+  3. 取证文件只 `ls -l` 和少量 grep，用户看不到 snapshot 里的进程/OOM/logcat。
+- **修复**：
+  - 结论改为纯函数 `diag_conclusion`，只看“当前 `service.state` + watchdog 是否死亡 +
+    服务是否缺失 + 心跳年龄 + `boot_count`”，历史 stop 不再参与；
+  - 日志按 `boot.1 → .1 → 当前` 从旧到新拼接；
+  - 完整打印 `auto-stop.*.log`（head 40 行）；
+  - `watchdog.sh` 启动时记录 `tmp/boot.count`，变化时留 `.previous` 并写 SERVICE-EVENT：
+    boot_count 变化 = 系统框架重启（软重启不会执行模块开机脚本）；未变化 = 整组被清理。
+- **文件清单**：`scripts/diagnose.sh`、`scripts/watchdog.sh`、`README.md`、`AGENTS.md`、
+  `tools/test_watchdog_logic.py`。
+- **验证方式**：`diag_conclusion` 9 个分支用例（软重启/整组清理/boot_count 未知/模块停止/
+  WiFi/启动失败/击杀/失去守护/证据不足）全绿；mksh 语法检查通过。
+
 ## 四、优先级与并行性
 
 | 优先级 | 建议 | 状态 | 依赖 / 并行性 |
@@ -347,11 +372,12 @@
 | P2 | S-5-9 凭据门禁扩展 | 已实施（后续推进） | 独立 |
 | P2 | S-5-10 免重启安装保护 | 已实施（后续推进） | 与 `manual.sh` 其他改动串行 |
 | P3 | S-5-11 其余代码项收敛 | 已实施（后续推进） | 独立 |
+| P0 | S-5-12 自动停止诊断误判 | 已实施（真机反馈） | 与 S-5-8~S-5-11 文件不重叠 |
 
 **验证命令（每组完成后）**：
 `python -X utf8 tools/pack_module.py --check --no-write`、
 `python -X utf8 tools/check_version_sync.py`、
-全部套件（Windows 383 / WSL 414）、`node --check webroot/js/main.js webroot/js/kernelsu.js`、
+全部套件（Windows 392 / WSL 423）、`node --check webroot/js/main.js webroot/js/kernelsu.js`、
 `git diff --check`。
 
 ## 五、审计边界说明

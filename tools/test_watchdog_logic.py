@@ -21,6 +21,7 @@
 """
 
 import argparse
+import os
 import pathlib
 import shutil
 import subprocess
@@ -85,6 +86,27 @@ def build_driver(base):
     driver = base / 'driver.sh'
     driver.write_text('\n\n'.join(parts) + '\n', encoding='utf-8', newline='\n')
     return driver
+
+
+def build_diag_driver(base):
+    """搭 diag_conclusion 的 driver：函数体原样抽取，参数按位置传入"""
+    parts = [extract_function(REPO / 'scripts' / 'diagnose.sh', 'diag_conclusion')]
+    parts.append('diag_conclusion "$@"\n')
+    driver = base / 'diag_driver.sh'
+    driver.write_text('\n\n'.join(parts) + '\n', encoding='utf-8', newline='\n')
+    return driver
+
+
+def run_diag(driver, base, args):
+    shell = shutil.which('mksh') or shutil.which('sh') or 'sh'
+    r = subprocess.run(
+        [shell, driver.name] + args,
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        cwd=base.as_posix(), env=dict(os.environ), timeout=10,
+    )
+    if r.returncode != 0:
+        raise SystemExit(f'diag driver 执行失败: {r.stderr}')
+    return r.stdout
 
 
 def run_case(driver, base, env):
@@ -264,6 +286,44 @@ def main():
                                     errors='replace', timeout=10)
         c.check('wifi.monitor 收到 TERM 后退出', 'ALIVE' in signal_run.stdout, False)
         c.check('wifi.monitor 信号退出码为 0', signal_run.returncode, 0)
+
+        # ---- 自动停止结论: 当前状态 + boot_count 优先于历史 stop requested ----
+        # 用户实际日志: 2 小时前有 stop requested，但服务后来已 start complete；
+        # 当前 state=running、watchdog 心跳 310s 前、全部服务不在——旧实现却
+        # 因历史 stop requested 判成"模块主动停止"，把排查方向带偏
+        print('[6] 自动停止结论')
+        diag_driver = build_diag_driver(base)
+
+        def diag_case(label, args, expected):
+            c.check(label, expected in run_diag(diag_driver, base, args), True)
+
+        diag_case('软重启: boot_count 变化',
+                  ['running', '3', '1', '310', 'changed', '0', '', '0'],
+                  '系统框架已重启')
+        diag_case('整组清理: boot_count 未变',
+                  ['running', '3', '1', '310', 'same', '0', '', '0'],
+                  '整组清理')
+        diag_case('boot_count 读取失败',
+                  ['running', '3', '1', '310', 'unknown', '0', '', '0'],
+                  '无法确认系统是否重启')
+        diag_case('state=stopped 判模块停止',
+                  ['stopped', '0', '0', '', 'same', '0', '', '0'],
+                  '模块主动停止')
+        diag_case('state=stopped-by-wifi 判 WiFi 黑名单',
+                  ['stopped-by-wifi', '0', '0', '', 'same', '0', '', '2'],
+                  'WiFi 黑名单')
+        diag_case('启动失败优先',
+                  ['running', '3', '1', '310', 'same', '2', '', '0'],
+                  '启动失败')
+        diag_case('进程级击杀优先',
+                  ['running', '3', '1', '310', 'same', '0', '1', '0'],
+                  '进程级击杀')
+        diag_case('watchdog 死但服务仍在跑',
+                  ['running', '0', '1', '310', 'same', '0', '', '0'],
+                  '失去守护')
+        diag_case('证据不足',
+                  ['running', '3', '0', '30', 'same', '0', '', '0'],
+                  '没有足够证据')
 
         return c.report()
     finally:

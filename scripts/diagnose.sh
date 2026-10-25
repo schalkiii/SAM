@@ -31,12 +31,86 @@ kv(){ printf '%-26s %s\n' "${1}" "${2}"; }
 have(){ command -v "${1}" > /dev/null 2>&1 && echo "yes" || echo "no"; }
 cfg(){ grep -m1 "^${1}=" "${SETTING}" 2>/dev/null | cut -d= -f2-; }
 
+# 自动停止结论(纯函数，供测试抽取；不依赖外部命令)
+# 参数: state services_down watchdog_dead heartbeat_age boot_state
+#       start_fail kill_evidence wifi_stops
+diag_conclusion(){
+    d_state="${1}"
+    d_down="${2}"
+    d_watchdog_dead="${3}"
+    d_age="${4}"
+    d_boot="${5}"
+    d_start_fail="${6}"
+    d_kill="${7}"
+    d_wifi="${8}"
+
+    if [ "${d_start_fail:-0}" -gt 0 ] && [ -z "${d_kill}" ]; then
+        echo "  倾向启动失败/自行退出(不是被系统杀)：module.log 有 ${d_start_fail} 次服务启动失败记录。"
+        echo "  下一步：看 tmp/<服务>.out 最后几行(上面 service own log 段)，那是服务自己吐的失败原因。"
+        echo "  常见原因：软链/解释器缺失、端口被占、配置校验不过、二进制权限。"
+    elif [ -n "${d_kill}" ]; then
+        echo "  存在进程级击杀证据(内核 OOM / ActivityManager / Force stopping)，服务是被外力杀掉的。"
+        echo "  注意：oom_score_adj=-1000 只挡住内核 OOM 与 LMKD 的分数选择，挡不住厂商守护进程与 kill -9。"
+        echo "  建议：设为无限制后台、关闭电池优化、锁定最近任务，并观察 watchdog 心跳。"
+    elif [ "${d_state}" = "running" ] && [ "${d_watchdog_dead}" -eq 1 ] && [ "${d_down}" -gt 0 ]; then
+        echo "  watchdog 与服务同时消失，且没有 SERVICE-EVENT/异常标记：不是模块主动停止。"
+        case "${d_boot}" in
+            changed)
+                echo "  系统框架已重启（boot_count 变化）：软重启不会执行模块开机脚本，"
+                echo "  watchdog 与服务一起被杀。恢复：服务页「软重启后恢复」或 sh scripts/manual.sh resume。"
+                ;;
+            same)
+                echo "  boot_count 未变化：watchdog 与服务被整组清理/强制停止（厂商后台策略、一键清理、kill -9）。"
+                echo "  恢复：服务页「软重启后恢复」；长期：设为无限制后台、关闭电池优化、锁定最近任务。"
+                ;;
+            *)
+                echo "  无法确认系统是否重启（boot_count 读取失败）。若刚做过软重启，"
+                echo "  用服务页「软重启后恢复」；否则按厂商后台清理排查。"
+                ;;
+        esac
+    elif [ "${d_state#stopped}" != "${d_state}" ]; then
+        if [ "${d_wifi:-0}" -gt 0 ]; then
+            echo "  倾向 WiFi 黑名单触发停止：service.state=${d_state}，存在 stopped-by-wifi。"
+        else
+            echo "  服务处于停止状态(${d_state})：模块主动停止（手动/保存配置/卸载/重启流程），不是被系统杀。"
+        fi
+    elif [ "${d_state}" = "running" ] && [ "${d_watchdog_dead}" -eq 1 ]; then
+        echo "  watchdog 未运行：服务已失去守护（当前是否在运行见上面的进程列表）。"
+        echo "  恢复：服务页「软重启后恢复」或 sh scripts/manual.sh resume；长期：无限制后台、锁定最近任务。"
+    elif [ -n "${d_age}" ] && [ "${d_age}" -gt 120 ]; then
+        echo "  watchdog 心跳过期：优先排查 watchdog 自身被杀，服务停止只是结果。"
+    else
+        echo "  当前没有足够证据区分系统杀后台与模块停止，请在下次自动停止后立即重新分析。"
+    fi
+}
+
 # 自动停止分析：把命令行取证收敛成 WebUI 可读的结论
 analyze_auto_stop(){
     sec "服务自动停止分析"
     kv "时间" "$(date '+%Y-%m-%d %H:%M:%S')"
-    kv "service.state" "$(cat "${TMP_PATH}/service.state" 2>/dev/null || echo 无)"
+    service_state=$(cat "${TMP_PATH}/service.state" 2>/dev/null)
+    kv "service.state" "${service_state:-无}"
     kv "service.abnormal" "$(cat "${TMP_PATH}/service.abnormal" 2>/dev/null || echo 无)"
+
+    # watchdog 启动时记录 boot_count；若 watchdog 停机期间系统软重启过，
+    # 这个值会变化。它是区分「软重启」与「整组进程被清理」的关键证据
+    boot_saved=$(cat "${TMP_PATH}/boot.count" 2>/dev/null)
+    boot_now=$(settings get global boot_count 2>/dev/null)
+    case "${boot_saved}" in
+        ''|null|*[!0-9]*) boot_saved="" ;;
+    esac
+    case "${boot_now}" in
+        ''|null|*[!0-9]*) boot_now="" ;;
+    esac
+    if [ -z "${boot_saved}" ] || [ -z "${boot_now}" ]; then
+        boot_state="unknown"
+    elif [ "${boot_saved}" != "${boot_now}" ]; then
+        boot_state="changed"
+    else
+        boot_state="same"
+    fi
+    kv "boot_count" "${boot_now:-未知}（watchdog 启动时 ${boot_saved:-未记录}）"
+    [ "${boot_state}" = "changed" ] && kv "系统重启" "是（boot_count 变化，软重启不会执行模块开机脚本）"
 
     heartbeat=$(cat "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null)
     if [ -n "${heartbeat}" ]; then
@@ -46,6 +120,8 @@ analyze_auto_stop(){
         kv "watchdog.heartbeat" "无"
     fi
 
+    services_down=0
+    watchdog_dead=0
     for service_name in smartdns AdGuardHome mihomo watchdog.sh; do
         service_pid=$(pidof "${service_name}" 2>/dev/null)
         [ -z "${service_pid}" ] && service_pid=$(pgrep -f "${service_name}" 2>/dev/null | head -n 1)
@@ -53,11 +129,18 @@ analyze_auto_stop(){
             kv "${service_name}" "PID ${service_pid}, oom=$(cat "/proc/${service_pid}/oom_score_adj" 2>/dev/null)"
         else
             kv "${service_name}" "未运行"
+            if [ "${service_name}" = "watchdog.sh" ]; then
+                watchdog_dead=1
+            else
+                services_down=$((services_down + 1))
+            fi
         fi
     done
 
     event_log="${TMP_PATH}/diag.events.$$"
-    cat "${TMP_PATH}/module.log" "${TMP_PATH}/module.log.1" "${TMP_PATH}/module.log.boot.1" 2>/dev/null | \
+    # 必须按时间从旧到新拼接: boot.1 < .1 < 当前日志；反过来会让"最新事件"
+    # 落在中间，结论会按几小时前的 stop requested 误判成模块主动停止
+    cat "${TMP_PATH}/module.log.boot.1" "${TMP_PATH}/module.log.1" "${TMP_PATH}/module.log" 2>/dev/null | \
         grep "SERVICE-EVENT" | tail -n 40 > "${event_log}" 2>/dev/null
 
     echo ""
@@ -89,10 +172,9 @@ analyze_auto_stop(){
         [ -f "${snapshot_file}" ] || continue
         snapshot_found=1
         echo "  --- ${snapshot_file##*/} ---"
-        ls -l "${snapshot_file}" 2>/dev/null | sed 's/^/    /'
-        # 服务自身日志尾部最能说明"自己退出"还是"被外力杀掉"
-        grep -E "^(out|log):" "${snapshot_file}" 2>/dev/null | tail -n 3 | sed 's/^/    /'
-        grep -iE "${kill_pattern}" "${snapshot_file}" 2>/dev/null | tail -n 8 | sed 's/^/    /'
+        # 取证文件本身很小(通常 < 2KB)，完整打印：state/进程列表/oom/服务自身日志/
+        # logcat 击杀线索都在里面，只列 ls 等于让用户再手动 cat 一次
+        sed 's/^/    /' "${snapshot_file}" 2>/dev/null | head -n 40
         snapshot_kill=$(grep -icE "${kill_pattern}" "${snapshot_file}" 2>/dev/null)
         [ "${snapshot_kill:-0}" -gt 0 ] && kill_evidence=1
         grep -q "handleLmkdMessage" "${snapshot_file}" 2>/dev/null && lmkd_noise=1
@@ -122,26 +204,11 @@ analyze_auto_stop(){
 
     echo ""
     echo "结论:"
-    if [ "${start_fail_total}" -gt 0 ] && [ -z "${kill_evidence}" ]; then
-        echo "  倾向启动失败/自行退出(不是被系统杀)：module.log 有 ${start_fail_total} 次服务启动失败记录。"
-        echo "  下一步：看 tmp/<服务>.out 最后几行(上面 service own log 段)，那是服务自己吐的失败原因。"
-        echo "  常见原因：软链/解释器缺失、端口被占、配置校验不过、二进制权限。"
-    elif [ -n "${kill_evidence}" ]; then
-        echo "  存在进程级击杀证据(内核 OOM / ActivityManager / Force stopping)，服务是被外力杀掉的。"
-        echo "  注意：oom_score_adj=-1000 只挡住内核 OOM 与 LMKD 的分数选择，挡不住厂商守护进程与 kill -9。"
-        echo "  建议：设为无限制后台、关闭电池优化、锁定最近任务，并观察 watchdog 心跳。"
-    elif [ "${wifi_stops:-0}" -gt 0 ] && [ "${wifi_stops:-0}" -ge "${stop_requested:-0}" ]; then
-        echo "  倾向 WiFi 黑名单触发停止：存在 stopped-by-wifi。"
-    elif [ "${stop_requested:-0}" -gt 0 ]; then
-        echo "  存在模块主动停止记录：优先检查手动停止/保存配置/卸载或 WiFi 黑名单链路。"
-    elif [ "${watchdog_restarts:-0}" -gt 0 ]; then
-        echo "  服务曾异常消失并由 watchdog 拉起，但当前没有系统杀进程证据。"
-        echo "  若自动停止后本报告仍无 auto-stop 文件，说明 watchdog 可能也被一起杀死。"
-    elif [ -n "${heartbeat}" ] && [ ${heartbeat_age:-0} -gt 120 ]; then
-        echo "  watchdog 心跳过期：优先排查 watchdog 自身被杀，服务停止只是结果。"
-    else
-        echo "  当前没有足够证据区分系统杀后台与模块停止，请在下次自动停止后立即重新分析。"
-    fi
+    # 结论只看"当前状态 + 最新日志顺序 + boot_count"，不再按整份日志里的
+    # 历史 stop requested 次数判成模块主动停止（用户报告的实际误判）
+    diag_conclusion "${service_state:-}" "${services_down}" "${watchdog_dead}" \
+        "${heartbeat_age:-}" "${boot_state}" "${start_fail_total}" \
+        "${kill_evidence}" "${wifi_stops:-0}"
 
     # 只出现厂商的 handleLmkdMessage 而没有任何进程级击杀记录时，明确说明
     # 它不算证据，避免下次又按"被系统杀"去调后台策略

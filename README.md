@@ -80,15 +80,26 @@ KernelSU/Magisk 的升级包通常先进入 `/data/adb/modules_update/SAM`，正
 
 ## 服务过一段时间自动停止
 
-按下面顺序区分“系统杀后台”与“模块自身停止”：
+按下面顺序区分“系统杀后台 / 整组清理 / 软重启”与“模块自身停止”。
 
-1. 看 `tmp/module.log` 是否有 `[SERVICE-EVENT] stop requested reason=...`。
-   有 `reason=stopped` / `stopped-by-wifi`：来自用户或 WiFi 黑名单。
-   只有 `watchdog restart ...`、没有 stop requested：更像系统/OOM 杀进程。
-2. 看 `tmp/auto-stop.*.log`。watchdog 在异常消失时会抓 `logcat` 中的 `lmkd/ActivityManager kill/Force stopping` 线索。
-3. 跑 `sh scripts/diagnose.sh`，重点看 `watchdog.heartbeat`、`oom_score_adj`、小米/MIUI 后台限制线索。
-4. 小米设备把模块相关进程设为“无限制后台”、关闭电池优化，并在最近任务中锁定；不要只依赖默认的后台限制策略。
-5. 若诊断显示 `service.state=stopped` 但没有对应 SERVICE-EVENT，再把整段诊断输出回传定位。
+首先强调一点：`tmp/module.log` 里的 `[SERVICE-EVENT] stop requested reason=stopped` 是**历史事件**，
+不代表当前状态。日志会随服务启停累加，几小时/几天前的主动停止会一直留在文件里；
+只看它而不看“停止之后有没有再次 start complete”会误判。诊断结论（`--auto-stop`）已改成
+“当前 `service.state` + 最新日志顺序 + `boot_count`”三要素判定：
+
+1. 跑 `sh scripts/diagnose.sh --auto-stop`（root，或 WebUI「工具 → 自动停止分析」）。
+   - 结论若为「系统框架已重启（boot_count 变化）」：**这是软重启**。软重启不会执行模块开机脚本，
+     watchdog 与服务一起被杀，属正常现象，用服务页「软重启后恢复」即可。
+   - 结论若为「整组清理」：watchdog、服务 **同时**消失但 boot_count 未变，是厂商后台策略 / 一键清理 /
+     kill -9，不是模块自身退出。
+   - 结论若为「模块主动停止」：`service.state` 是 `stopped`（或 `stopped-by-wifi`），才是真的停过。
+     看 `tmp/module.log` 最后一条 SERVICE-EVENT 的时间来定位是谁触发的。
+2. 看 `tmp/auto-stop.*.log`（诊断现已完整打印取件内容）。watchdog 在服务异常消失时会抓
+   `logcat` 里的 `lmkd/ActivityManager kill/Force stopping` 线索。
+3. 小米设备把模块相关进程设为“无限制后台”、关闭电池优化，并在最近任务中锁定；
+   `oom_score_adj=-1000` 只挡内核 OOM/LMKD 的分数选择，挡不住厂商守护进程与 kill -9。
+4. 若诊断显示 `service.state=stopped` 但没有对应 SERVICE-EVENT，或结论仍未定向，
+   把整段诊断输出回传定位。
 
 ## WiFi 慢 / 5G 正常
 
