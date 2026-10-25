@@ -4,6 +4,9 @@
     `update/agh.sh` 各写一份回退链，且模式 1 下 SmartDNS 掉线时会把 Mihomo 的上游设成
     运行中的 AGH——而 AGH 的上游正是 Mihomo，两者互指形成 DNS 转发环（查询一直转发到超时）。
     现在沿链路向后取第一个可用节点，绝不回头
+  - 修复: 配置语法自检改用 mksh（`setting.sh` 的 `setting_syntax_shell`，`setting_api.sh`
+    写入自检同源）。设备 `/system/bin/sh` 就是 mksh，但 CI/开发机的 `/bin/sh` 常是 dash，
+    不支持 `SUB_URL=()` 数组语法，会把合法配置误判成语法错误（写入被拒、加载走抢救分支）
   - 修复: `dns_entry_port` 不再读 `SMARTDNS_PORT` 变量（该变量只有 `iptables/dns.sh` 会设，
     watchdog/webui 里为空 → SmartDNS 永远选不上）。改为从 `smartdns.conf` 解析实际监听端口，
     修复「只有 SmartDNS 在跑时整机 DNS 被判成无入口并清掉重定向」的黑洞
@@ -27,7 +30,7 @@
     lsattr/chattr，MSYS 的 sh 会把 `/usr/bin` 前置导致模拟失效、本机 26/27 伪失败；现恢复 27/27
   - 测试: 新增 `test_setting_transaction.py`（31 项，set/setarr 事务、端口批量校验、边界键只读）；
     `test_dns_entry` 扩到 107 项（下游上游链路 + check_dns_chain 的 `--to-ports` 参数级断言）；
-    `test_module_links` 增加开机脚本静态断言。九套件合计 327 项（本机 Windows 325 项）
+    `test_module_links` 增加开机脚本静态断言。九套件合计 344 项（CI/mksh 环境；Windows 本机 325 项）
   - 门禁: `check_version_sync.py` 增加 README/AGENTS 默认密码与 `smartdns.conf` 同值、
     `module.prop` description 非占位两项检查
   - 打包: `pack_module.py` 跳过 `docs/`，审计报告不再随模块包分发

@@ -204,7 +204,9 @@ replace_line(){
     rm -f "${line_file}"
 
     # 写后自检: 语法不通过就丢弃本次修改，保持原文件不变
-    if [ ! -s "${tmp_file}" ] || ! sh -n "${tmp_file}" 2>/dev/null; then
+    # 解释器与设备一致(setting.sh 的 setting_syntax_shell 优先 mksh):
+    # 开发机/CI 的 /bin/sh 可能是 dash，不支持 SUB_URL=() 这类数组赋值
+    if [ ! -s "${tmp_file}" ] || ! "$(setting_syntax_shell)" -n "${tmp_file}" 2>/dev/null; then
         rm -f "${tmp_file}"
         echo "写入失败: ${target_key} 会导致配置文件语法错误" >&2
         return 1

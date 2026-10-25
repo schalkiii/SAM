@@ -12,6 +12,18 @@ SMARTDNS_TTL_DEFAULT=600
 SMARTDNS_TTL_FLOOR=60
 SMARTDNS_TTL_CEIL=86400
 
+# 语法自检用哪个解释器
+# 设备上 /system/bin/sh 就是 mksh，SUB_URL=() 这类数组赋值是合法语法；
+# 开发机/CI 的 /bin/sh 常是 dash，遇到数组会直接报 Syntax error "(" unexpected，
+# 把合法配置误判成坏配置(写入被拒 / 加载走抢救分支)。有 mksh 就优先用它
+setting_syntax_shell(){
+    if command -v mksh > /dev/null 2>&1; then
+        echo "mksh"
+    else
+        echo "sh"
+    fi
+}
+
 # 默认设置(与 setting.conf 保持一致)
 setting_default(){
     SMARTDNS_ENABLE=true
@@ -74,11 +86,12 @@ setting_salvage(){
     SETTING_SALVAGE="${TMP_PATH}/setting.salvage.$$"
     grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "${1}" > "${SETTING_SALVAGE}" 2>/dev/null
 
+    salvage_syntax="$(setting_syntax_shell)"
     while IFS= read -r setting_line; do
         case "${setting_line}" in
             ''|'#'*) continue ;;
         esac
-        if echo "${setting_line}" | sh -n 2>/dev/null; then
+        if echo "${setting_line}" | "${salvage_syntax}" -n 2>/dev/null; then
             eval "${setting_line}" 2>/dev/null
         else
             log "e" "已跳过非法设置项: ${setting_line}"
@@ -302,7 +315,8 @@ load_setting(){
         return 1
     fi
 
-    if sh -n "${SETTING_CLEAN}" 2>"${TMP_PATH}/setting.error.$$"; then
+    load_syntax="$(setting_syntax_shell)"
+    if "${load_syntax}" -n "${SETTING_CLEAN}" 2>"${TMP_PATH}/setting.error.$$"; then
         . "${SETTING_CLEAN}"
     else
         log "e" "设置文件语法错误: $(head -n 1 "${TMP_PATH}/setting.error.$$" 2>/dev/null)"
