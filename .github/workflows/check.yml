@@ -45,3 +45,8 @@ jobs:
 
       - name: 备份语义回归测试
         run: python tools/test_backup_semantics.py
+
+      # DNS 入口选择链三处消费方(iptables 规则/watchdog 拓扑/webui 显示)
+      # 的一致性: 改动回退顺序或判定口径必须全绿
+      - name: DNS 入口链一致性回归测试
+        run: python tools/test_dns_entry.py

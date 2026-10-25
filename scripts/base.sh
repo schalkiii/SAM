@@ -361,7 +361,32 @@ is_port_listening(){
     return 0
 }
 
-# 等待端口就绪(最多约 5 秒)，避免进程刚 fork 出来还没 bind 就被判定失败
+# 计算当前 DNS 入口: 按 MODULE_DNS_MODE 逐级回退，输出 "名称:端口"，无可用入口时输出空
+# 三处消费方必须同序，否则会出现"规则指向已死端口"或"规则正常但显示异常":
+#   iptables/dns.sh select_dns_port(建重定向规则)
+#   watchdog.sh   current_dns_entry(判断服务拓扑是否真的变了)
+#   webui.sh      resolve_dns_entry(状态页显示入口)
+# 判定口径统一为 isRun + is_port_listening: 进程活着不代表端口可用
+# (端口冲突/配置错误都会出现"进程在、端口死")，重定向规则必须指向真正在监听的端口
+dns_entry_port(){
+    dns_agh_port=""
+    dns_mihomo_port=""
+    dns_smartdns_port=""
+    isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && dns_agh_port=${AGH_DNS_PORT}
+    isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && dns_mihomo_port=${MIHOMO_DNS_PORT}
+    isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}" && dns_smartdns_port=${SMARTDNS_PORT}
+    if [ "${MODULE_DNS_MODE}" = "2" ]; then
+        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
+        [ -n "${dns_mihomo_port}" ] && { echo "Mihomo:${dns_mihomo_port}"; return 0; }
+        [ -n "${dns_agh_port}" ] && { echo "AdGuardHome:${dns_agh_port}"; return 0; }
+    else
+        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
+        [ -n "${dns_agh_port}" ] && { echo "AdGuardHome:${dns_agh_port}"; return 0; }
+        [ -n "${dns_mihomo_port}" ] && { echo "Mihomo:${dns_mihomo_port}"; return 0; }
+    fi
+    [ -n "${dns_smartdns_port}" ] && echo "SmartDNS:${dns_smartdns_port}"
+    return 0
+}
 wait_port(){
     wait_port_value="${1}"
     wait_port_try=0

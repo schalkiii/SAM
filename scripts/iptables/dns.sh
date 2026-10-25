@@ -13,39 +13,20 @@ SMARTDNS_PORT=$(smartdns_port)
 
 # 记录选中的入口，日志与状态检查统一显示"服务名:端口"，
 # 避免只看到 5300 却不知道当前是哪个服务在接 DNS
-set_dns_entry(){
-    [ -n "${1}" ] || return 1
-    DNS_PORT="${1}"
-    DNS_ENTRY="${2}"
-}
-
 # 选择实际可用的 DNS 转发端口
 # 说明: 原实现按"模式 + 启用开关"选端口，一旦被选中的服务没起来
 #       (例如 Mihomo 没填订阅、AdGuardHome 启动失败)，DNS_PORT 就为空，
 #       结果是完全不创建重定向规则，整机 DNS 绕过模块直连运营商。
 #       这里改为按"进程确实在运行"逐级回退，保证至少有一个可用入口。
+# 回退链与 watchdog/webui 共用 base.sh 的 dns_entry_port，只在此解析出
+# 端口与名称供本脚本使用
 select_dns_port(){
     DNS_PORT=""
     DNS_ENTRY=""
-    agh_port=""
-    mihomo_port=""
-    smartdns_port=""
-
-    isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && agh_port=${AGH_DNS_PORT}
-    isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && mihomo_port=${MIHOMO_DNS_PORT}
-    isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}" && smartdns_port=${SMARTDNS_PORT}
-
-    if [ "${MODULE_DNS_MODE}" = "2" ]; then
-        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
-        set_dns_entry "${mihomo_port}" "Mihomo" || \
-        set_dns_entry "${agh_port}" "AdGuardHome" || \
-        set_dns_entry "${smartdns_port}" "SmartDNS"
-    else
-        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
-        set_dns_entry "${agh_port}" "AdGuardHome" || \
-        set_dns_entry "${mihomo_port}" "Mihomo" || \
-        set_dns_entry "${smartdns_port}" "SmartDNS"
-    fi
+    dns_entry=$(dns_entry_port)
+    [ -n "${dns_entry}" ] || return 1
+    DNS_ENTRY="${dns_entry%%:*}"
+    DNS_PORT="${dns_entry##*:}"
 }
 
 select_dns_port

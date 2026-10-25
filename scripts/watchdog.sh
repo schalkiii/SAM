@@ -139,22 +139,13 @@ capture_auto_stop_snapshot(){
     record_service_event "auto-stop snapshot ${snapshot_file}"
 }
 
-# 计算当前 DNS 入口(与 iptables/dns.sh select_dns_port 同一顺序)
+# 计算当前 DNS 入口(与 base.sh dns_entry_port 同一回退链)
 # 用来判断"服务拓扑是否真的变了": 同名端口恢复(如 SmartDNS 重启)时入口不变，
-# 不需要重写下游上游，更不需要重启 AGH/Mihomo(重启会清缓存与统计)
+# 不需要重写下游上游，更不需要重启 AGH/Mihomo(重启会清缓存与统计)。
+# 无可用入口时输出 none
 current_dns_entry(){
-    entry_value=""
-    if [ "${MODULE_DNS_MODE}" = "2" ]; then
-        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
-        isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && entry_value="Mihomo:${MIHOMO_DNS_PORT}"
-        [ -z "${entry_value}" ] && { isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && entry_value="AdGuardHome:${AGH_DNS_PORT}"; }
-    else
-        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
-        isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && entry_value="AdGuardHome:${AGH_DNS_PORT}"
-        [ -z "${entry_value}" ] && { isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && entry_value="Mihomo:${MIHOMO_DNS_PORT}"; }
-    fi
-    [ -z "${entry_value}" ] && { isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}" && entry_value="SmartDNS:${SMARTDNS_PORT}"; }
-    echo "${entry_value:-none}"
+    dns_entry=$(dns_entry_port)
+    echo "${dns_entry:-none}"
 }
 
 # 服务掉线则拉起(只处理已启用的服务)

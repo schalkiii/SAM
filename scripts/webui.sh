@@ -173,44 +173,23 @@ get_process_number_from(){
 }
 
 # 解析当前实际 DNS 入口
-# 顺序必须与 iptables/dns.sh 的 select_dns_port 保持一致，否则会出现
-# "规则其实正常但显示异常"的误报。入口只代表 53 端口被转发到哪里：
-# 下游命中 SmartDNS 缓存时，它的查询计数可能不变，这是正常现象。
+# 解析状态页要显示的 DNS 入口(与 base.sh dns_entry_port 同一回退链)
+# 顺序必须与建规则的一方一致，否则会出现"规则其实正常但显示异常"的误报。
+# 入口只代表 53 端口被转发到哪里：下游命中 SmartDNS 缓存时，它的查询计数
+# 可能不变，这是正常现象。直通模式本来就不该有重定向规则，不能显示成"异常"
 resolve_dns_entry(){
     dns_check_port=""
     dns_entry_label="未监听"
 
-    # 直通模式本来就不该有重定向规则，不能显示成"异常"
     if [ "${BYPASS_ENABLE}" = "true" ]; then
         dns_entry_label="直通模式"
         return 0
     fi
 
-    smartdns_dns_port=$(smartdns_port)
-
-    if [ "${MODULE_DNS_MODE}" = "2" ]; then
-        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
-        if [ "${mihomo_running}" = "已运行" ] && is_port_listening "${MIHOMO_DNS_PORT}"; then
-            dns_check_port="${MIHOMO_DNS_PORT}"
-            dns_entry_label="Mihomo:${MIHOMO_DNS_PORT}"
-        elif [ "${agh_running}" = "已运行" ] && is_port_listening "${AGH_DNS_PORT}"; then
-            dns_check_port="${AGH_DNS_PORT}"
-            dns_entry_label="AdGuardHome:${AGH_DNS_PORT}"
-        fi
-    else
-        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
-        if [ "${agh_running}" = "已运行" ] && is_port_listening "${AGH_DNS_PORT}"; then
-            dns_check_port="${AGH_DNS_PORT}"
-            dns_entry_label="AdGuardHome:${AGH_DNS_PORT}"
-        elif [ "${mihomo_running}" = "已运行" ] && is_port_listening "${MIHOMO_DNS_PORT}"; then
-            dns_check_port="${MIHOMO_DNS_PORT}"
-            dns_entry_label="Mihomo:${MIHOMO_DNS_PORT}"
-        fi
-    fi
-
-    if [ -z "${dns_check_port}" ] && [ "${smartdns_running}" = "已运行" ] && is_port_listening "${smartdns_dns_port}"; then
-        dns_check_port="${smartdns_dns_port}"
-        dns_entry_label="SmartDNS:${smartdns_dns_port}"
+    dns_entry=$(dns_entry_port)
+    if [ -n "${dns_entry}" ]; then
+        dns_entry_label="${dns_entry}"
+        dns_check_port="${dns_entry##*:}"
     fi
 }
 
