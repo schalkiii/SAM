@@ -10,14 +10,15 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 在原作者 [5MayRain/SAM](https://github.com/5MayRain/SAM) 基础上增加：
 
 - **WebUI 设置页**：直通开关、DNS 结构模式、服务开关、端口、TUN、订阅与黑白名单等可直接改
-- **直通模式**：临时撤销 DNS 劫持并暂停 Mihomo（TUN 仍会劫持 DNS），适合校园网、认证热点；改动 5 秒内由守护循环生效
+- **直通模式**：临时撤销 DNS 劫持并暂停 Mihomo（TUN 仍会劫持 DNS），适合校园网、认证热点；仅切换直通时只改 DNS 劫持规则、不重启 AGH/SmartDNS，缓存与统计保留；WebUI 保存直通开关立即生效，守护循环也会在 5 秒内校正规则
 - **免重启运维**：临时 root / 只能软重启环境使用 `sh scripts/manual.sh activate|resume|uninstall`
 - **启动降级**：三服务优先用 `busybox setuidgid` 指定用户/组；缺少该 applet 时以 root 启动并在 `module.log` 记录，避免临时 root 下三服务一起静默失败
 - **服务页语义明确**：启动/停止/重启全部服务；「软重启后恢复」会额外重挂 hosts、启动监控并按设置刷新网络；存在待激活包时按钮自动变为「激活并恢复新版」，不会再恢复旧版
 - **DNS 入口可见**：监控页显示当前 53 端口实际转发到的服务与端口，区分「DNS 规则正常」和「查询真的经过模块」
-- **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）；只有服务全部恢复且距离上次自动刷新超过 10 分钟时才刷新网络，避免服务反复掉线时反复开关 WiFi
+- **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）；服务恢复后只在 DNS 入口真正变化时才重写下游上游并重启，同名端口恢复不重启 AGH/Mihomo（缓存与统计保留）；只有服务全部恢复且距离上次自动刷新超过 10 分钟时才刷新网络，避免服务反复掉线时反复开关 WiFi
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
-- **全量配置备份**：卸载时备份到 `/data/adb/SAM-backup/<时间>/`（root-only，含 AGH/SmartDNS/Mihomo 用户数据目录；任一复制失败会返回失败并保留清单，避免假备份）
+- **全量配置备份**：卸载/更新/恢复前自动备份到 `/data/adb/SAM-backup/<时间>/`（root-only，含 AGH/SmartDNS/Mihomo 用户数据目录、crontabs 与广告屏蔽清单；任一复制失败会返回失败并保留清单，避免假备份）。备份带完成标记，`list`/`restore` 只认完整备份；`restore` 前会先自动留存一份当前配置快照，还原可回退；守护循环每天自动备份一次
+- **定时任务 WebUI**：工具页「定时任务」卡片可直接编辑 `/etc/crontabs/root`（一行一条，保存时逐行校验时间字段），busybox crond 下一分钟自动生效，无需重启服务
 - **默认仅回环监听**：AGH 面板/DNS、SmartDNS、Mihomo 控制台与代理端口默认只听 127.0.0.1；需要局域网使用时打开「允许局域网访问」，仅开放 AGH 面板/DNS 与 SmartDNS DNS，Mihomo 控制台与代理端口始终保持本机
 - **组件安全更新**：先停服务再替换，自检失败自动回滚，下载有超时
 - **工具页**：WebUI 工具页的按钮直接调用 `manual.sh` / `backup.sh` / `ad.sh` / `update.sh` 等脚本命令
@@ -31,6 +32,12 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **缓存只留一层**：AdGuardHome 自身不缓存，缓存由上游 SmartDNS 独占，避免双份内存并保留其测速选优能力
 
 > 本 fork 的 `updateJson` 指向本仓库，不再跟随上游自动更新。
+
+## ⚠️ 当前已知问题与发布状态
+
+- 最新 Release 是 **v20261025.1**（已推送 tag、Release 资产与 CI 校验通过）。
+- v20261024.18 的已知问题均已在 v20261025.1 修复：`is_port_listening` 曾改为要求 TCP 与 UDP 同时监听；SmartDNS 默认只有 `bind`（UDP），会被误判为“未监听”。表现：开启直通再关闭后 SmartDNS 计数一直为零而 AGH 计数持续增长（查询全部走了 AGH）。修复版改回「任一协议在监听即可用」并给 SmartDNS 补 `bind-tcp`；卸载残留（`SAM.previous`/`SAM-activate.sh` 导致 repair 复活已卸载模块）也已一并清理。
+- v20261025.1 同时包含：watchdog 过度重启修复（同名端口恢复不再重启 AGH/Mihomo，缓存与统计保留）、DNS owner 无 xt_owner 降级、IPv6 分支不再误删 IPv4 劫持、广告屏蔽/更新/备份/卸载加固、定时任务 WebUI、每日自动备份、默认密码与 TTL 下限调整、直通切换不重启服务。
 
 ## ⚙️功能
 - 两种服务结构:
@@ -48,7 +55,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## 📢注意
 - 禁止和其它同类型模块使用
-- 模块所有服务的账号和密码都是 `root`，开启「允许局域网访问」前请先改密码
+- 模块所有服务的账号为 `root`，默认密码 `sam123456`（重置 AGH 配置后同样恢复为该默认密码）；开启「允许局域网访问」前请先改密码
 - 刷入新版本后需**完整重启**，或使用「工具 → 激活待更新版本」/ 服务页「激活并恢复新版」（等价于 `manual.sh resume`，检测到待激活包会先激活）；**软重启本身不会激活 `modules_update` 里的新包**。未激活时 KernelSU 模块列表显示的是待激活包，WebUI 仍由旧版本提供服务
 - WebUI 服务页出现「待激活更新」徽章时，说明新包还没激活；此时服务页按钮会变为「激活并恢复新版」，点击会先激活再恢复。监控页「模块描述」显示的是 `module.prop` 里的实际值
 - 如果 KernelSU 模块描述仍是旧状态，先确认 `cat /data/adb/modules/SAM/module.prop` 的 `description`，再返回/刷新模块页；管理器会缓存上次读取的模块列表
@@ -57,6 +64,19 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - AGH 大版本升级会迁移配置 schema；回退旧二进制后若报 `unknown current schema version`，用「工具 → 重置 AGH 配置」恢复模板（会先完整备份并保留单文件副本，但会丢失面板密码与自定义过滤规则）
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml
+
+## 临时 root / 只能软重启：免重启激活与恢复
+
+KernelSU/Magisk 的升级包通常先进入 `/data/adb/modules_update/SAM`，正常需要下一次完整开机的 `post-fs-data` 才会合并；普通软重启不一定激活，部分新版 KSU 的模拟软重启还可能触发更新/回滚，所以模块列表偶尔会“消失”。
+
+本模块支持免重启处理：
+
+- **安装后自动激活**：在已启动的 Android 中刷入后，安装器会延迟数秒自动执行一次免重启激活，无需 WebUI、无需手动传参。日志在 `/data/adb/SAM-activate.log`。
+- `sh /data/adb/SAM-activate.sh activate`：立即激活 `modules_update` 中的新包。
+- `sh /data/adb/SAM-activate.sh repair`：模块目录丢失/损坏时，按 `active -> modules_update -> /data/adb/SAM.previous` 自动恢复。
+- WebUI「工具 → 修复 / 免重启激活」执行同一逻辑。
+
+激活会先校验模块结构，保留上一版到 `/data/adb/SAM.previous`，失败自动回滚；只有成功后才删除 `modules_update`。安装器还会在 `/data/adb/SAM-activate.sh` 留下模块外恢复入口，避免 active 目录消失后无法自救。
 
 ## 服务过一段时间自动停止
 

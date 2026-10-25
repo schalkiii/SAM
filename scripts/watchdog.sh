@@ -139,6 +139,24 @@ capture_auto_stop_snapshot(){
     record_service_event "auto-stop snapshot ${snapshot_file}"
 }
 
+# 计算当前 DNS 入口(与 iptables/dns.sh select_dns_port 同一顺序)
+# 用来判断"服务拓扑是否真的变了": 同名端口恢复(如 SmartDNS 重启)时入口不变，
+# 不需要重写下游上游，更不需要重启 AGH/Mihomo(重启会清缓存与统计)
+current_dns_entry(){
+    entry_value=""
+    if [ "${MODULE_DNS_MODE}" = "2" ]; then
+        # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
+        isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && entry_value="Mihomo:${MIHOMO_DNS_PORT}"
+        [ -z "${entry_value}" ] && { isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && entry_value="AdGuardHome:${AGH_DNS_PORT}"; }
+    else
+        # 期望链路: AdGuardHome -> Mihomo -> SmartDNS
+        isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && entry_value="AdGuardHome:${AGH_DNS_PORT}"
+        [ -z "${entry_value}" ] && { isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && entry_value="Mihomo:${MIHOMO_DNS_PORT}"; }
+    fi
+    [ -z "${entry_value}" ] && { isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}" && entry_value="SmartDNS:${SMARTDNS_PORT}"; }
+    echo "${entry_value:-none}"
+}
+
 # 服务掉线则拉起(只处理已启用的服务)
 ensure_service(){
     if [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN}; then
@@ -151,7 +169,6 @@ ensure_service(){
             # 只有真正起来才算异常恢复；起不来就不刷新网络
             if isRun ${SMARTDNS_BIN}; then
                 recovered_abnormal=1
-                need_chain_refresh=1
                 service_state_changed=1
             fi
         else
@@ -179,7 +196,6 @@ ensure_service(){
                 agh_backoff=${BACKOFF_ROUNDS}
                 if isRun ${AGH_BIN}; then
                     recovered_abnormal=1
-                need_chain_refresh=1
                     service_state_changed=1
                 fi
             else
@@ -201,7 +217,6 @@ ensure_service(){
             mihomo_backoff=${BACKOFF_ROUNDS}
             if isRun ${MIHOMO_BIN}; then
                 recovered_abnormal=1
-                need_chain_refresh=1
                 service_state_changed=1
             fi
         else
@@ -261,9 +276,11 @@ ensure_dns_rules(){
             }
         fi
     else
+        # 只清理 IPv6 侧规则: 原来的实现调用 dns.sh disable，
+        # 会连带删掉 IPv4 的 REDIRECT_DNS，整机 DNS 绕过模块
         ${ip6tables_w} -t filter -C OUTPUT -j BLOCK_IPV6_DNS > /dev/null 2>&1 && {
             log "i" "守护: IPv6 DNS 阻断已关闭，清理旧规则"
-            ${IPTABLES_PATH}/dns.sh disable
+            ${IPTABLES_PATH}/dns.sh disablev6
         }
     fi
 }
@@ -380,6 +397,26 @@ while true; do
         setting_sum="${new_sum}"
     fi
 
+    # 每天自动备份一次配置: 用户不再需要为了备份去手动点更新/卸载。
+    # 成功才记时间戳；失败按小时重试，避免备份失败时每 5 秒重试刷日志
+    if [ "${BACKUP_CONF}" = "true" ]; then
+        backup_now=$(date +%s)
+        backup_last=$(cat "${TMP_PATH}/backup.stamp" 2>/dev/null)
+        [ -z "${backup_last}" ] && backup_last=0
+        backup_retry=$(cat "${TMP_PATH}/backup.retry.stamp" 2>/dev/null)
+        [ -z "${backup_retry}" ] && backup_retry=0
+        if [ $((backup_now - backup_last)) -ge 86400 ] && [ $((backup_now - backup_retry)) -ge 3600 ]; then
+            if sh "${SCRIPTS_PATH}/backup.sh" save > /dev/null 2>&1; then
+                echo "${backup_now}" > "${TMP_PATH}/backup.stamp" 2>/dev/null
+                rm -f "${TMP_PATH}/backup.retry.stamp" 2>/dev/null
+                log "i" "守护: 每日自动备份完成"
+            else
+                echo "${backup_now}" > "${TMP_PATH}/backup.retry.stamp" 2>/dev/null
+                log "e" "守护: 自动备份失败，1 小时后重试"
+            fi
+        fi
+    fi
+
     # 直通模式: 撤销 DNS 劫持，停掉 Mihomo，服务进程与 WebUI 保持运行
     if [ "${BYPASS_ENABLE}" = "true" ]; then
         if [ "${bypass_switched}" != "on" ]; then
@@ -405,18 +442,33 @@ while true; do
         service_state_changed=1
     fi
 
+    # 拓扑变化才重写下游上游: 先记入口，ensure_service 之后再比一次。
+    # 同名端口恢复(SmartDNS 重启后仍是 3721)时入口不变，
+    # 重写+重启 AGH/Mihomo 只会白清缓存与统计
+    dns_entry_before=$(current_dns_entry)
     ensure_service
+    dns_entry_after=$(current_dns_entry)
+    if [ "${dns_entry_before}" != "${dns_entry_after}" ]; then
+        need_chain_refresh=1
+        log "i" "守护: DNS 入口变化 ${dns_entry_before} -> ${dns_entry_after}，重写下游上游"
+    fi
 
     # 服务拓扑变化后重写下游上游，避免 AGH/Mihomo 仍指向已死亡的本地 DNS
+    # 重启也按配置内容是否变化来决定: update 脚本在内容不变时只做等价重写，
+    # 此时重启纯粹是清缓存与统计，必须跳过
     if [ ${need_chain_refresh} -eq 1 ]; then
         need_chain_refresh=0
+        agh_before=$(cksum "${AGH_CONF}" 2>/dev/null)
         ${UPDATE_PATH}/agh.sh > /dev/null 2>&1
-        ${UPDATE_PATH}/mihomo.sh > /dev/null 2>&1
-        if [ "${AGH_ENABLE}" = "true" ]; then
+        agh_after=$(cksum "${AGH_CONF}" 2>/dev/null)
+        if [ "${agh_before}" != "${agh_after}" ] && [ "${AGH_ENABLE}" = "true" ]; then
             ${SERVICE_PATH}/agh.sh stop > /dev/null 2>&1
             ${SERVICE_PATH}/agh.sh start > /dev/null 2>&1
         fi
-        if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+        mihomo_before=$(cksum "${MIHOMO_CONF}" 2>/dev/null)
+        ${UPDATE_PATH}/mihomo.sh > /dev/null 2>&1
+        mihomo_after=$(cksum "${MIHOMO_CONF}" 2>/dev/null)
+        if [ "${mihomo_before}" != "${mihomo_after}" ] && [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
             ${SERVICE_PATH}/mihomo.sh stop > /dev/null 2>&1
             ${SERVICE_PATH}/mihomo.sh start > /dev/null 2>&1
         fi

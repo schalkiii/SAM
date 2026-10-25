@@ -21,14 +21,30 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 BACKUP_ROOT="/data/adb/SAM-backup"
 BACKUP_FILES="setting.conf etc/AdGuardHome/AdGuardHome.yaml etc/SmartDNS/smartdns.conf etc/mihomo/config.yaml etc/app_blacklist.prop etc/app_whitelist.prop etc/hosts etc/crontabs/root"
 BACKUP_DIRS="etc/AdGuardHome/data etc/SmartDNS/data etc/mihomo/proxy_provider etc/mihomo/rule_provider"
+# 模块目录外但必须备份的文件: 广告屏蔽清单丢了就定位不到任何 .samhold 备份，
+# 恢复(甚至卸载时的自动恢复)都会变成无头线索
+BACKUP_EXTRA_FILES="/data/adb/SAM-ad-hold.list"
 KEEP_BACKUP=5
+# 完成标记: 只有带标记的备份才算"完整"，restore/list 只认它。
+# 没有标记的说明上次备份中途失败(缺文件/磁盘满)，不能拿来恢复
+BACKUP_MARKER=".complete"
+
+# 只列已完成的备份目录(新->旧)
+completed_backups(){
+    for backup_candidate in $(ls -1d "${BACKUP_ROOT}"/*/ 2>/dev/null | sort -r); do
+        [ -f "${backup_candidate}${BACKUP_MARKER}" ] || continue
+        printf '%s\n' "${backup_candidate}"
+    done
+}
 
 # 备份
 save_backup(){
-    [ "${BACKUP_CONF}" = "true" ] || {
+    # force 供 restore 前的安全快照使用: 还原前必须先留住当前配置，
+    # 否则还原错了没有后悔药；此时不受 BACKUP_CONF 开关限制
+    if [ "${1}" != "force" ] && [ "${BACKUP_CONF}" != "true" ]; then
         echo "已关闭卸载备份(BACKUP_CONF=false)"
         return 0
-    }
+    fi
 
     backup_stamp=$(date "+%Y%m%d-%H%M%S").$$
     backup_dir="${BACKUP_ROOT}/${backup_stamp}"
@@ -78,23 +94,45 @@ save_backup(){
         cp -f "${MODULE_PATH}/etc/mihomo/config.yaml" "${BACKUP_ROOT}/Mihomo配置.yaml" 2>/dev/null
     fi
 
-    # 只保留最近 5 份
-    ls -1d "${BACKUP_ROOT}"/*/ 2>/dev/null | sort -r | tail -n +$((KEEP_BACKUP + 1)) | while read -r old_backup; do
-        rm -rf "${old_backup}"
+    # 模块目录外的关键文件(广告屏蔽清单)，存到 extra/ 子目录，恢复时按原路径写回
+    for extra_file in ${BACKUP_EXTRA_FILES}; do
+        [ -f "${extra_file}" ] || continue
+        mkdir -p "${backup_dir}/extra" 2>/dev/null
+        if cp -f "${extra_file}" "${backup_dir}/extra/$(basename "${extra_file}")"; then
+            backup_count=$((backup_count + 1))
+        else
+            backup_failed=1
+            echo "备份失败: ${extra_file}"
+        fi
     done
 
     if [ ${backup_failed} -ne 0 ]; then
-        echo "备份未完整完成，保留现有备份文件"
+        # 不写完成标记、不轮转: 半截备份留在原处供排查，
+        # 恢复时不会被选中，旧备份也不会被这次失败顶掉
+        echo "备份未完整完成，保留现有备份文件(未做轮转)"
         return 1
     fi
+    printf '%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" > "${backup_dir}/${BACKUP_MARKER}" 2>/dev/null
+
+    # 只保留最近 5 份(只轮转已完成的备份，未完成的不占额度也不删)
+    completed_backups | tail -n +$((KEEP_BACKUP + 1)) | while read -r old_backup; do
+        [ -n "${old_backup}" ] && rm -rf "${old_backup}"
+    done
+
     echo "已备份 ${backup_count} 个文件/目录到 ${backup_dir}"
 }
 
 # 列出备份
 list_backup(){
-    backup_list=$(ls -1d "${BACKUP_ROOT}"/*/ 2>/dev/null)
+    backup_list=$(completed_backups)
     if [ -z "${backup_list}" ]; then
-        echo "暂无备份"
+        # 没有已完成备份时，把未完成的列出来供排查
+        incomplete_list=$(ls -1d "${BACKUP_ROOT}"/*/ 2>/dev/null)
+        if [ -z "${incomplete_list}" ]; then
+            echo "暂无备份"
+        else
+            echo "${incomplete_list}" | sed "s|${BACKUP_ROOT}/||; s|/$||" | sed 's/$| (未完成)/'
+        fi
         return 0
     fi
     echo "${backup_list}" | sed "s|${BACKUP_ROOT}/||; s|/$||"
@@ -102,11 +140,17 @@ list_backup(){
 
 # 恢复最近一份
 restore_backup(){
-    latest_backup=$(ls -1d "${BACKUP_ROOT}"/*/ 2>/dev/null | sort -r | head -n 1)
+    # 先确定要恢复的目标: 必须在快照之前选，否则刚拍的快照会变成"最新"，
+    # 结果 restore 把自己刚备份的当前配置又原样恢复一遍
+    latest_backup=$(completed_backups | head -n 1)
     if [ -z "${latest_backup}" ]; then
         echo "暂无备份可恢复"
         return 1
     fi
+
+    # 还原前先留一份当前配置的快照: 还原本身不可逆(原文件被覆盖)，
+    # 没有快照的话还原错版本只能手动翻备份目录
+    save_backup force > /dev/null 2>&1
 
     restore_count=0
     restore_failed=0
@@ -133,6 +177,17 @@ restore_backup(){
         else
             restore_failed=1
             echo "恢复失败: ${restore_dir}"
+        fi
+    done
+    # 模块目录外的文件按原绝对路径写回
+    for extra_file in ${BACKUP_EXTRA_FILES}; do
+        restore_src="${latest_backup}extra/$(basename "${extra_file}")"
+        [ -f "${restore_src}" ] || continue
+        if cp -f "${restore_src}" "${extra_file}"; then
+            restore_count=$((restore_count + 1))
+        else
+            restore_failed=1
+            echo "恢复失败: ${extra_file}"
         fi
     done
 

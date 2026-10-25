@@ -236,7 +236,9 @@ case "$1" in
         # 不再清空日志: 之前的实现直接截断 module.log，
         # 恰好把"服务为什么掉线"的证据一起抹掉了(停止时正是最需要看日志的时候)。
         # 改为保留上一份日志为 module.log.1，当前日志重新开始。
-        sam_lock_acquire "service" 30 || { log "e" "服务操作正在进行，跳过 stop"; exit 1; }
+        # 锁等待给足: 守护循环拿到锁后可能正在做服务恢复(重启+改配置)，
+        # 停止屏障等不到锁就退出会让用户以为停了、其实没有
+        sam_lock_acquire "service" 120 || { log "e" "服务操作正在进行，跳过 stop"; exit 1; }
         if [ -s "${LOG_FILE}" ]; then
             mv -f "${LOG_FILE}" "${LOG_FILE}.1"
         fi
@@ -253,7 +255,8 @@ case "$1" in
         ;;
     # 重启
     restart)
-        sam_lock_acquire "service" 60 || { log "e" "服务操作正在进行，跳过 restart"; exit 1; }
+        # restart = stop + start，锁等待按最坏情况(两次服务就绪轮询)给足
+        sam_lock_acquire "service" 180 || { log "e" "服务操作正在进行，跳过 restart"; exit 1; }
         log "i" "restart >>>"
         stop
         start

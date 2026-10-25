@@ -1,3 +1,42 @@
+# 2026.10.25.1
+- 修复 v20261024.18 回归与二次全面 review 发现的问题
+  - `is_port_listening` 改回「TCP 与 UDP 任一在监听即可用」：SmartDNS 默认只有 `bind`（UDP），旧判定把它误判为未监听，DNS 入口选择跳过 SmartDNS，表现为「开启直通再关闭后 SmartDNS 计数一直是零、AGH 计数持续增长」；同时给 SmartDNS 补 `bind-tcp`，53 的 TCP 查询（大响应/截断重试）不再被拒绝
+  - `iptables/dns.sh` 新增 `owner_supported` 探测（结果写 `tmp/owner.supported`）：无 `xt_owner` 的内核上 `check_dns_chain`/`enable_dns` 不再强求 owner 规则，规则从「每轮重建」变为收敛
+  - watchdog 在 `BLOCK_IPV6_DNS=false` 时改调 `dns.sh disablev6`，只清理 IPv6 侧规则，不再连带删掉 IPv4 `REDIRECT_DNS`
+  - watchdog 服务恢复后按「DNS 入口是否变化」决定是否重写下游上游，且重启前比对配置 cksum：同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计不再被清
+  - `service.sh stop/restart` 锁等待 30/60 秒提高到 120/180 秒，避免守护循环做服务恢复时用户停止操作超时退出
+  - `manual.sh` 激活校验失败时把新包保留到 `/data/adb/SAM.rejected.<时间>` 而非直接删除；卸载时清理 `/data/adb/SAM-activate.sh`、`SAM-activate.log`、`SAM.previous`、rejected/old 残留，`repair` 不能再复活已卸载模块
+  - `ad.sh`：拿不到广告锁直接退出；`is_locked` 以备份清单为权威并只解析 lsattr 属性列（不再把路径当正则）；发现「有旧备份但未锁定」时跳过屏蔽并提示先 recovery，不再把 `.samhold` 挪成无索引的 `.prev.*`；占位目录/文件按原属主权限重建，`chattr +i` 失败时用严格权限兜底；purge 不再删除「空壳没删成」路径的备份
+  - `update.sh`：`safe_tar_extract` 改为 `-tvzf` 判链接 + `-tzf` 判成员名（原实现对整行做 `^/` 判断永远为假），并加体积/成员数上限；缺 `sha256sum` 时降级为跳过校验而非判失败；新增更新互斥锁
+  - `run.sh`：`stat -c %u` 不可用时不再把所有 WebUI 命令判成「参数文件属主异常」
+  - WebUI 读路径（allstatus/设置/日志/广告清单/挂载状态）统一按 `errno` 判断，失败时明确报错，不再静默显示「未运行/暂无日志」或用空值覆盖表单
+  - 服务页端口说明改为按真实配置动态显示（`data-port-label` + `webui.sh` 输出 `smartdns_port`），改过 DNS 端口后文案不再过期
+- 定时任务（crontabs）WebUI 化
+  - `setting_api.sh` 新增 `cron get` / `cron set`：一行一条参数传入，逐行校验时间字段（注释/空行放过，`@daily` 类快捷键支持），非法行整批拒绝且不碰原文件
+  - 工具页新增「定时任务」卡片：文本框编辑 + 读取/保存，清空全部行需确认；由 busybox crond 下一分钟自动生效，无需重启服务
+- 备份增强
+  - 备份新增 `/data/adb/SAM-ad-hold.list`（广告屏蔽清单，丢失就定位不到 `.samhold` 备份），存到备份的 `extra/` 子目录，恢复时按原路径写回
+  - 备份写完成标记 `.complete`：`list`/`restore` 只认完整备份，半截备份不会被当成最新恢复；备份失败不轮转、不写标记
+  - `restore` 前先自动留存一份当前配置快照（不受 `BACKUP_CONF` 开关限制），还原本身变得可回退
+  - watchdog 每天自动备份一次（成功才记时间戳，失败按小时重试）
+- 设置与默认值
+  - `SMARTDNS_TTL_MIN` 下限改为 60 秒（WebUI、`setting_api.sh`、`setting.sh` 三处一致）：30 秒会让客户端频繁回查、冷查询与测速被反复触发
+  - SmartDNS / AdGuardHome 默认密码由 `root` 改为 `sam123456`（AGH 模板同步换 bcrypt 哈希），安装输出与 README 同步说明
+- 直通模式不再重启 AGH/SmartDNS
+  - `setting_api.sh apply` 新增 `is_bypass_only_change`：只改 `BYPASS_ENABLE` 时调用 `dns.sh disable/enable` 与 `mihomo.sh start/stop`，不再 `service.sh restart`
+  - 保留 AGH 查询统计与 SmartDNS 缓存；WebUI 文案同步说明「只改直通不重启」
+- 临时 root 免重启激活增强
+  - 已启动的 Android 中安装结束后自动延迟执行一次 `autoactivate`，无需 WebUI 或手动传参；日志写 `/data/adb/SAM-activate.log`
+  - `manual.sh repair` 在 active 损坏/丢失时按 `active -> modules_update -> /data/adb/SAM.previous` 自动恢复
+  - 激活前校验模块结构，上一版保留到 `/data/adb/SAM.previous`，失败自动回滚，不再立即删除旧版本
+  - 安装器写入模块外恢复入口 `/data/adb/SAM-activate.sh`，软重启后模块目录消失也可直接执行 `repair`
+  - WebUI 工具页新增「修复 / 免重启激活」
+- 二次复审补充修复（第三轮）
+  - `service/sd.sh` 补 `bind-tcp` 时只在第一条 `bind` 之后插入一次：用户手工配置出现多条 `bind` 时，`sed a` 会跟在每条匹配行后补出多条重复 `bind-tcp`
+  - `iptables/dns.sh` `owner_supported` 探测前先清理上次被打断残留的 `SAM_OWNER_PROBE` 链再重试：残留链会让 `-N` 失败并被误判成「内核不支持」，owner 排除规则将被永久关掉
+  - WebUI 服务页 SmartDNS 端口标签的 key 修正为 `smartdns_port`（与 `webui.sh allstatus` 输出一致），此前大小写不匹配导致该标签永不刷新
+  - `tools/pack_module.py` 必需文件清单补 `scripts/update/proxy.sh`（`service/mihomo.sh` 的运行时依赖，此前不在打包门禁内）
+
 # 2026.10.24.18
 - WebUI 新增「自动停止分析」，一键输出手动/WiFi 停止、watchdog 拉起或系统/小米杀后台的判断；「一键诊断」默认带 15 秒 IPv6 阻断采样
 - 服务自动停止排查

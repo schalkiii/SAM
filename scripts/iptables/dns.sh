@@ -78,12 +78,48 @@ rule_exists(){
     ipt_run ${rule_ver} -t nat -C "$@" > /dev/null 2>&1
 }
 
+# 探测内核是否支持 -m owner(xt_owner)
+# 没有 owner 匹配时无法按 uid 排除模块自身查询，只能降级:
+# 跳过 owner RETURN 规则，靠回环 ACCEPT + 端口 REDIRECT 保持基本劫持能力。
+# 探测结果写 tmp，避免守护循环每 10 秒重复建/删探针链。
+owner_supported(){
+    owner_mode_file="${TMP_PATH}/owner.supported"
+    if [ -f "${owner_mode_file}" ]; then
+        [ "$(cat "${owner_mode_file}" 2>/dev/null)" = "1" ] && return 0
+        return 1
+    fi
+    # 上次探测可能被信号打断，留下残留链，此时 -N 必然失败。
+    # 不清掉残留就写"不支持"会把 owner 规则永久关掉，必须清理后重试一次
+    if ! ${iptables_w} -t nat -N SAM_OWNER_PROBE > /dev/null 2>&1; then
+        ${iptables_w} -t nat -F SAM_OWNER_PROBE > /dev/null 2>&1
+        ${iptables_w} -t nat -X SAM_OWNER_PROBE > /dev/null 2>&1
+        if ! ${iptables_w} -t nat -N SAM_OWNER_PROBE > /dev/null 2>&1; then
+            echo "0" > "${owner_mode_file}" 2>/dev/null
+            log "e" "无法创建 iptables 探针链，DNS 链跳过 owner 排除规则(自查询可能被再次劫持)"
+            return 1
+        fi
+    fi
+    if ${iptables_w} -t nat -A SAM_OWNER_PROBE -m owner --uid-owner 0 --gid-owner 0 -j RETURN > /dev/null 2>&1; then
+        ${iptables_w} -t nat -F SAM_OWNER_PROBE > /dev/null 2>&1
+        ${iptables_w} -t nat -X SAM_OWNER_PROBE > /dev/null 2>&1
+        echo "1" > "${owner_mode_file}" 2>/dev/null
+        return 0
+    fi
+    ${iptables_w} -t nat -F SAM_OWNER_PROBE > /dev/null 2>&1
+    ${iptables_w} -t nat -X SAM_OWNER_PROBE > /dev/null 2>&1
+    echo "0" > "${owner_mode_file}" 2>/dev/null
+    log "e" "内核不支持 -m owner(xt_owner)，DNS 链跳过 owner 排除规则(自查询可能被再次劫持)"
+    return 1
+}
+
 # 检查 REDIRECT 链是否完整且指向当前 DNS_PORT
 # 背景: 原实现只看"链名是否存在"，链在就直接返回。
 #       当某个服务被杀后回退到另一个端口(例如 AGH 挂了改用 SmartDNS 3721)，
 #       链里的 REDIRECT 仍指向旧端口 —— 那个端口已经没有进程监听，
 #       整机 DNS 全部进黑洞，表现为"服务恢复了但还是没网"。
 #       所以必须校验跳转、端口和防回环/owner 排除规则是否齐全。
+# 注意: owner 规则按内核能力生成，没有 xt_owner 时不能要求它存在，
+#       否则 check 永远不通过、enable 每次重建，规则反复抖动。
 check_dns_chain(){
     rule_ver="${1}"
     target_chain="${2}"
@@ -92,9 +128,11 @@ check_dns_chain(){
     ipt_run ${rule_ver} -t nat -L ${target_chain} > /dev/null 2>&1 || return 1
     # OUTPUT 未跳转到该链
     rule_exists ${rule_ver} OUTPUT -j ${target_chain} || return 1
-    # 防止模块自身 DNS 查询再次被劫持
-    rule_exists ${rule_ver} ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
-    rule_exists ${rule_ver} ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    # 防止模块自身 DNS 查询再次被劫持(无 xt_owner 时这条规则本就不存在)
+    if owner_supported; then
+        rule_exists ${rule_ver} ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
+        rule_exists ${rule_ver} ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    fi
     rule_exists ${rule_ver} ${target_chain} -d 127.0.0.0/8 -j ACCEPT || return 1
     # tcp/udp 53 的重定向必须指向当前 DNS_PORT
     rule_exists ${rule_ver} ${target_chain} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
@@ -133,8 +171,13 @@ enable_dns(){
 
     log "i" "创建 ${target_chain} 链并添加规则(端口 ${DNS_PORT})"
     ipt_run ${chain_ver} -t nat -N ${target_chain} || return 1
-    ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
-    ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    # owner 排除规则按内核能力添加: 没有 xt_owner 时插不进去，
+    # 原来的实现会在这里 return 1，之后 check_dns_chain 又要求它有，
+    # 结果每轮守护都重建一遍链，规则永远不收敛
+    if owner_supported; then
+        ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${DNS_GROUP} -j RETURN || return 1
+        ipt_run ${chain_ver} -t nat -A ${target_chain} -m owner --uid-owner ${SAM_USER} --gid-owner ${TUN_GROUP} -j RETURN || return 1
+    fi
     # 回环地址必须在 REDIRECT 之前放行，否则本机自建 DNS/代理会被一起劫持
     ipt_run ${chain_ver} -t nat -A ${target_chain} -d 127.0.0.0/8 -j ACCEPT || return 1
     ipt_run ${chain_ver} -t nat -A ${target_chain} -p tcp --dport 53 -j REDIRECT --to-ports ${DNS_PORT} || return 1
@@ -284,6 +327,13 @@ case "$1" in
     # 禁用
     disable)
         disable_dns "ipv4" ${DNS_CHAIN}
+        has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
+        disable_block_ipv6
+        ;;
+    # 只清理 IPv6 侧规则(v6 重定向链 + IPv6 阻断链)，绝不动 IPv4 DNS 劫持
+    # 背景: 守护循环在 BLOCK_IPV6_DNS=false 时原来调用 disable，
+    #       会把 IPv4 的 REDIRECT_DNS 一起删掉，整机 DNS 绕过模块
+    disablev6)
         has_ipv6_nat && remove_dns_chain v6 ${IPV6_DNS_CHAIN}
         disable_block_ipv6
         ;;

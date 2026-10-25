@@ -40,7 +40,13 @@ TEXT_NAMES = {
 }
 
 # 需要 0755 的路径前缀
-EXEC_PREFIXES = ("bin/",)
+EXEC_PREFIXES = ("bin/", "etc/SmartDNS/lib/")
+
+# 需要 0755 的具体文件(动态链接的 SmartDNS 二进制与 dlopen 的 ui.so)
+EXEC_EXACT = {
+    "etc/SmartDNS/smartdns",
+    "etc/SmartDNS/smartdns_ui.so",
+}
 
 # 第三方前端资源: 属于构建产物，不做 LF 规范化，避免无意义的整文件 diff
 VENDOR_PREFIXES = ("etc/SmartDNS/wwwroot/", "etc/mihomo/webui/")
@@ -154,6 +160,8 @@ def check_shell_syntax(path, relative, report):
 def file_mode(relative):
     if relative == "META-INF/com/google/android/update-binary":
         return 0o755
+    if relative in EXEC_EXACT:
+        return 0o755
     if relative.endswith(".sh") or relative.startswith(EXEC_PREFIXES):
         return 0o755
     return 0o644
@@ -242,9 +250,45 @@ def main():
         "service.sh",
         "uninstall.sh",
         "customize.sh",
+        "action.sh",
+        "META-INF/com/google/android/update-binary",
         "scripts/service.sh",
         "scripts/base.sh",
-        "META-INF/com/google/android/update-binary",
+        "scripts/config.sh",
+        "scripts/setting.sh",
+        "scripts/setting_api.sh",
+        "scripts/manual.sh",
+        "scripts/run.sh",
+        "scripts/watchdog.sh",
+        "scripts/wifi.monitor.sh",
+        "scripts/ad.sh",
+        "scripts/agh_reset.sh",
+        "scripts/backup.sh",
+        "scripts/update.sh",
+        "scripts/diagnose.sh",
+        "scripts/webui.sh",
+        "scripts/service/sd.sh",
+        "scripts/service/agh.sh",
+        "scripts/service/mihomo.sh",
+        "scripts/service/crontabs.sh",
+        "scripts/update/agh.sh",
+        "scripts/update/mihomo.sh",
+        "scripts/update/host.sh",
+        "scripts/update/desc.sh",
+        "scripts/update/proxy.sh",
+        "scripts/iptables/dns.sh",
+        "scripts/iptables/ip.sh",
+        "scripts/iptables/mihomo.sh",
+        "scripts/inotify/module.sh",
+        "scripts/inotify/host.sh",
+        "webroot/index.html",
+        "webroot/js/main.js",
+        "webroot/js/kernelsu.js",
+        "etc/SmartDNS/smartdns.conf",
+        "etc/SmartDNS/smartdns",
+        "etc/AdGuardHome/AdGuardHome.template.yaml",
+        "bin/AdGuardHome",
+        "bin/mihomo",
     ]
     missing_required = [f for f in required_files if f not in files]
     if missing_required:

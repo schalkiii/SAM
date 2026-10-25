@@ -15,7 +15,13 @@ if [ "$1" = "--args-file" ]; then
     [ -f "${args_file}" ] || { echo "参数文件不存在: ${args_file}" >&2; exit 1; }
     if [ -n "${caller_uid}" ]; then
         file_uid=$(stat -c %u "${args_file}" 2>/dev/null)
-        [ "${file_uid}" = "${caller_uid}" ] || { echo "参数文件属主异常，拒绝执行" >&2; rm -rf "$(dirname "${args_file}")"; exit 1; }
+        # 只有成功读到属主且不一致时才拒绝: 精简系统没有 stat -c 时
+        # file_uid 为空，原来的实现会把所有 WebUI 命令都判成"属主异常"
+        if [ -n "${file_uid}" ] && [ "${file_uid}" != "${caller_uid}" ]; then
+            echo "参数文件属主异常，拒绝执行" >&2
+            rm -rf "$(dirname "${args_file}")"
+            exit 1
+        fi
     fi
     set --
     while IFS= read -r arg_line; do

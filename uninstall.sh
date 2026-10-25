@@ -53,3 +53,10 @@ mount | grep -q " /system/etc/hosts " && umount "/system/etc/hosts" 2>/dev/null
 # 直接删除，不依赖 reboot 与 remove 标记
 rm -rf "${MODULE_PATH}"
 rm -rf "/data/adb/modules_update/SAM"
+
+# 清理模块目录外的恢复入口与历史版本，避免 repair 复活已卸载模块
+rm -f "/data/adb/SAM-activate.sh" "/data/adb/SAM-activate.log" 2>/dev/null
+rm -rf "/data/adb/SAM.previous" 2>/dev/null
+for sam_residue in /data/adb/SAM.rejected.* /data/adb/SAM.old.*; do
+    [ -d "${sam_residue}" ] && rm -rf "${sam_residue}"
+done

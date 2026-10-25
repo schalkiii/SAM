@@ -16,6 +16,17 @@ case "$(cat "${TMP_PATH}/service.state" 2>/dev/null)" in
     stopped*) was_stopped=1 ;;
 esac
 
+# 更新互斥: WebUI、命令行与定时任务可能并发触发，
+# 两个实例同时停服务/替换二进制会互相把对方的文件回滚掉
+sam_lock_acquire "update" 60 || {
+    log "e" "另一个更新任务正在进行，退出"
+    exit 1
+}
+release_update_lock(){
+    sam_lock_release "update"
+}
+trap release_update_lock EXIT HUP INT TERM
+
 # SmartDNS 版本
 smartdns_ver=$(cd ${SMARTDNS_PATH} && SMARTDNS_WORKDIR="${SMARTDNS_PATH}" exec ${SMARTDNS_BIN} -v | sed -n 's/^.*[[:space:]]\(.*\)[[:space:]].*/\1/p')
 # AdGuardHome 版本
@@ -92,6 +103,14 @@ verify_download_checksum(){
         log "i" "发布未提供 .sha256，无法做下载摘要校验"
         return 0
     fi
+    # 缺 sha256sum 时不能把"没法校验"当成"校验失败":
+    # 原实现 actual_hash 为空 -> 与期望不等 -> 删除文件并判失败，
+    # 用户在精简系统上会永远更新不了任何组件
+    if ! has_cmd sha256sum; then
+        rm -f "${checksum_file}"
+        log "e" "缺少 sha256sum，跳过下载摘要校验(存在被篡改风险)"
+        return 0
+    fi
     expected_hash=$(awk 'NF {print $1; exit}' "${checksum_file}" | tr 'A-F' 'a-f')
     actual_hash=$(sha256sum "${2}" 2>/dev/null | awk '{print $1}')
     rm -f "${checksum_file}"
@@ -129,21 +148,44 @@ replace_file(){
     }
 }
 
-# 校验 tar 归档，拒绝绝对路径和 .. 穿越
+# 校验 tar 归档，拒绝绝对路径、.. 穿越与链接成员
+# 不能对 tar -tvzf 的整行做 ^/ 判断: 行首是权限位，成员名在行尾，
+# 原来的判断永远为假，等于没有校验。
+# -tvzf 用来看类型位(l/h = 符号链接/硬链接)，-tzf 用来看纯净成员名；
+# 另外限制解压体积与成员数，避免损坏/恶意归档解出巨量文件占满存储。
 safe_tar_extract(){
     tar_file="${1}"
     extract_dir="${2}"
     tar_list="${TMP_PATH}/tar.list.$$"
+    tar_names="${TMP_PATH}/tar.names.$$"
     tar -tvzf "${tar_file}" > "${tar_list}" 2>/dev/null || {
-        rm -f "${tar_list}"
+        rm -f "${tar_list}" "${tar_names}"
         return 1
     }
-    if grep -qE '(^/|(^|/)\.\.(/|$))' "${tar_list}" || grep -qE '^[lh]' "${tar_list}"; then
-        log "e" "归档包含不安全路径或链接，拒绝解压"
-        rm -f "${tar_list}"
+    # 链接与硬链接成员一律拒绝(替换二进制/配置不需要链接)
+    if grep -qE '^[lh]' "${tar_list}"; then
+        log "e" "归档包含链接成员，拒绝解压"
+        rm -f "${tar_list}" "${tar_names}"
         return 1
     fi
-    rm -f "${tar_list}"
+    # 只取成员名做路径校验，避免把权限位也拿去做判断
+    tar -tzf "${tar_file}" > "${tar_names}" 2>/dev/null || {
+        rm -f "${tar_list}" "${tar_names}"
+        return 1
+    }
+    if grep -qE '(^/|(^|/)\.\.(/|$))' "${tar_names}"; then
+        log "e" "归档包含绝对路径或 .. 穿越，拒绝解压"
+        rm -f "${tar_list}" "${tar_names}"
+        return 1
+    fi
+    tar_count=$(wc -l < "${tar_names}" 2>/dev/null | tr -d ' ')
+    tar_total=$(awk '{sum += $3} END {print sum + 0}' "${tar_list}" 2>/dev/null)
+    if [ "${tar_count}" -gt 20000 ] || [ "${tar_total}" -gt 1073741824 ]; then
+        log "e" "归档体积或成员数超限(${tar_count} 个, ${tar_total} 字节)，拒绝解压"
+        rm -f "${tar_list}" "${tar_names}"
+        return 1
+    fi
+    rm -f "${tar_list}" "${tar_names}"
     mkdir -p "${extract_dir}" 2>/dev/null
     tar -zxf "${tar_file}" -C "${extract_dir}" >/dev/null 2>&1
 }

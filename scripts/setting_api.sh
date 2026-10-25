@@ -43,6 +43,54 @@ need_refresh(){
     grep -qE "^(BYPASS_ENABLE|MODULE_DNS_MODE|AGH_DNS_PORT|MIHOMO_DNS_PORT)$" "${CHANGED_FILE}"
 }
 
+# 判断本次变更是否只改了直通模式
+# 直通只影响 DNS 劫持与 Mihomo，不需要重启 AGH/SmartDNS(重启会清掉缓存与统计)
+is_bypass_only_change(){
+    [ -s "${CHANGED_FILE}" ] || return 1
+    grep -q "^BYPASS_ENABLE$" "${CHANGED_FILE}" || return 1
+    [ -z "$(grep -v "^BYPASS_ENABLE$" "${CHANGED_FILE}" 2>/dev/null)" ]
+}
+
+# 只改 DNS 劫持规则的直通切换，不重启 AGH / SmartDNS
+apply_bypass_only(){
+    if [ "${BYPASS_ENABLE}" = "true" ]; then
+        if ! sh "${IPTABLES_PATH}/dns.sh" disable > /dev/null 2>&1; then
+            echo "关闭 DNS 劫持失败，请到日志页查看" >&2
+            rm -f "${CHANGED_FILE}"
+            return 1
+        fi
+        # 直通模式下 Mihomo 仍会劫持 DNS，需要停掉；AGH/SmartDNS 保持运行
+        if isRun ${MIHOMO_BIN}; then
+            sh "${SERVICE_PATH}/mihomo.sh" stop > /dev/null 2>&1
+            sh "${IPTABLES_PATH}/mihomo.sh" del > /dev/null 2>&1
+        fi
+        file_log "直通模式开启：仅撤销 DNS 劫持并暂停 Mihomo，未重启 AGH/SmartDNS"
+        bypass_text="直通模式已开启，Mihomo 已暂停，AGH/SmartDNS 未重启"
+    else
+        if ! sh "${IPTABLES_PATH}/dns.sh" enable > /dev/null 2>&1; then
+            echo "重建 DNS 劫持失败，请到日志页查看" >&2
+            rm -f "${CHANGED_FILE}"
+            return 1
+        fi
+        if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && ! isRun ${MIHOMO_BIN}; then
+            sh "${SERVICE_PATH}/mihomo.sh" start > /dev/null 2>&1
+        fi
+        file_log "直通模式关闭：仅重建 DNS 劫持并恢复 Mihomo，未重启 AGH/SmartDNS"
+        bypass_text="直通模式已关闭，DNS 劫持已重建，AGH/SmartDNS 未重启"
+    fi
+
+    sh "${UPDATE_PATH}/desc.sh" > /dev/null 2>&1
+
+    if [ "${NETWORK_REFRESH}" = "true" ]; then
+        refresh_network force
+        echo "${bypass_text}，已刷新网络"
+    else
+        echo "${bypass_text}"
+    fi
+
+    rm -f "${CHANGED_FILE}"
+}
+
 # 支持的设置项分类
 BOOL_KEYS="SMARTDNS_ENABLE AGH_ENABLE BLOCK_IPV6_DNS MIHOMO_ENABLE MIHOMO_IPV6 IP_IPTABLES HOST_ENABLE CRONTAB_ENABLE BACKUP_CONF ENABLE_WHITELIST BYPASS_ENABLE NETWORK_REFRESH AD_BLOCK_ENABLE LAN_ACCESS SMARTDNS_DUALSTACK"
 PORT_KEYS="AGH_DNS_PORT MIHOMO_DNS_PORT"
@@ -200,8 +248,10 @@ set_scalar(){
         case "${item_value}" in
             ''|*[!0-9]*) echo "取值非法: ${item_key} 只能是数字" >&2; return 1 ;;
         esac
-        if ! awk -v p="${item_value}" 'BEGIN { exit !(p >= 0 && p <= 86400) }'; then
-            echo "取值非法: ${item_key} 必须在 0-86400 之间" >&2
+        # 下限 60: TTL 压到 30 秒这种值时客户端很快就会再来查，
+        # 冷查询与测速被反复触发，表现为"网络变慢 + 上游流量暴涨"
+        if ! awk -v p="${item_value}" 'BEGIN { exit !(p >= 60 && p <= 86400) }'; then
+            echo "取值非法: ${item_key} 必须在 60-86400 之间" >&2
             return 1
         fi
         replace_line "${item_key}" "${item_key}=${item_value}" || return 1
@@ -309,6 +359,13 @@ apply_settings(){
     refresh_needed=0
     need_refresh && refresh_needed=1
 
+    # 只切换直通时不要重启整套服务：AGH/SmartDNS 的缓存与统计会被清空，
+    # 而直通本身只影响 DNS 劫持规则和 Mihomo。
+    if is_bypass_only_change; then
+        apply_bypass_only
+        return $?
+    fi
+
     # 服务重启的详细过程全部由 log 函数写进 module.log，
     # 这里只把结论返回给 WebUI —— 否则 toast 会变成几十行服务日志，没法读。
     restart_out="${TMP_PATH}/apply_restart.$$"
@@ -342,6 +399,56 @@ apply_settings(){
 
     # 变更记录用完即清，避免之后单独 apply 又触发一次刷新
     rm -f "${CHANGED_FILE}"
+}
+
+# 定时任务(crontabs)读写
+# 文件由 busybox crond 直接读取，WebUI 通过这里安全地读写它。
+# 一行一条: 每行作为独立参数传入(run.sh 不允许参数里带换行)，保存时逐行校验。
+CRON_FILE="${MODULE_PATH}/etc/crontabs/root"
+
+# 校验一行 crontab: 注释/空行放过；其余必须是 5 个时间字段 + 命令，
+# 或 @reboot/@daily 这类快捷键 + 命令。时间字段字符限定数字/星号/逗号/斜杠/连字符，
+# 防止把 shell 命令伪装成时间字段写进 crond。
+# 用 awk 而不是 for ${1}: 未加引号的展开会做通配符展开，
+# 时间字段里的 * 会变成当前目录的文件名，校验永远失败
+cron_line_valid(){
+    case "${1}" in
+        ''|'#'*) return 0 ;;
+    esac
+    printf '%s\n' "${1}" | awk '
+        {
+            if ($1 ~ /^@/) exit ($2 == "" ? 1 : 0)
+            if (NF < 6) exit 1
+            for (i = 1; i <= 5; i++) {
+                if ($i !~ /^[0-9*,\/-]+$/) exit 1
+            }
+            exit 0
+        }
+    '
+}
+
+cron_get(){
+    if [ -f "${CRON_FILE}" ]; then
+        cat "${CRON_FILE}"
+    else
+        echo "(暂无定时任务)"
+    fi
+}
+
+cron_set(){
+    cron_tmp="${TMP_PATH}/crontabs.write.$$"
+    : > "${cron_tmp}" 2>/dev/null || { echo "无法创建临时文件" >&2; return 1; }
+    for cron_line in "$@"; do
+        if ! cron_line_valid "${cron_line}"; then
+            rm -f "${cron_tmp}"
+            echo "定时任务格式非法(需要 5 个时间字段 + 命令): ${cron_line}" >&2
+            return 1
+        fi
+        printf '%s\n' "${cron_line}" >> "${cron_tmp}"
+    done
+    mkdir -p "$(dirname "${CRON_FILE}")" 2>/dev/null
+    mv -f "${cron_tmp}" "${CRON_FILE}" || { rm -f "${cron_tmp}"; echo "写入定时任务失败" >&2; return 1; }
+    echo "已保存 $(grep -cvE '^[[:space:]]*(#|$)' "${CRON_FILE}" 2>/dev/null) 条定时任务"
 }
 
 case "${1}" in
@@ -439,8 +546,25 @@ case "${1}" in
         : > "${LOG_FILE}"
         echo "日志已清空"
         ;;
+    cron)
+        case "${2}" in
+            get)
+                cron_get
+                ;;
+            set)
+                # 不带任何行 = 清空全部定时任务(WebUI 清空文本框就是这个场景)；
+                # crontabs/root 每天自动备份，误清也能找回
+                shift 2
+                cron_set "$@"
+                ;;
+            *)
+                echo "用法: setting_api.sh cron get | set <行>..." >&2
+                exit 1
+                ;;
+        esac
+        ;;
     *)
-        echo "用法: setting_api.sh get | set KEY=VALUE... | setarr KEY 值... | apply | logview [行数] | clearlog" >&2
+        echo "用法: setting_api.sh get | set KEY=VALUE... | setarr KEY 值... | apply | logview [行数] | clearlog | cron get | cron set <行>..." >&2
         exit 1
         ;;
 esac

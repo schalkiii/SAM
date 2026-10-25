@@ -25,7 +25,7 @@
                 <div class="service-item" data-id="1">
                     <div class="service-info">
                         <h4>SmartDNS | DNS 解析与分流</h4>
-                        <div class="service-desc">面板: 127.0.0.1:6080 | DNS 端口: 3721</div>
+                        <div class="service-desc">面板: 127.0.0.1:6080 | DNS 端口: <span data-port-label="smartdns_port">3721</span></div>
                         <span id="smartdns-status" class="service-status status-inactive">未运行</span>
                     </div>
                     <div class="service-actions">
@@ -41,7 +41,7 @@
                 <div class="service-item" data-id="1">
                     <div class="service-info">
                         <h4>Mihomo | 代理与 TUN</h4>
-                        <div class="service-desc">面板: 127.0.0.1:9090 | 代理端口: 7890</div>
+                        <div class="service-desc">面板: 127.0.0.1:9090 | 代理端口: 7890 | DNS 端口: <span data-port-label="MIHOMO_DNS_PORT">1053</span></div>
                         <span id="mihomo-status" class="service-status status-inactive">未运行</span>
                     </div>
                     <div class="service-actions">
@@ -57,7 +57,7 @@
                 <div class="service-item" data-id="1">
                     <div class="service-info">
                         <h4>AdGuardHome | DNS 过滤与广告拦截</h4>
-                        <div class="service-desc">面板: 127.0.0.1:3000 | DNS 端口: 5300</div>
+                        <div class="service-desc">面板: 127.0.0.1:3000 | DNS 端口: <span data-port-label="AGH_DNS_PORT">5300</span></div>
                         <span id="agh-status" class="service-status status-inactive">未运行</span>
                     </div>
                     <div class="service-actions">
@@ -213,7 +213,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>直通模式</h4>
-                        <div class="setting-desc">撤销 DNS 劫持，系统改用网络下发的 DNS。服务与 WebUI 保持运行，适合校园网、认证热点、企业内网。开启期间会暂停 Mihomo（TUN 仍会劫持 DNS），关闭后自动恢复</div>
+                        <div class="setting-desc">撤销 DNS 劫持，系统改用网络下发的 DNS。仅切换直通时只改 DNS 劫持规则并暂停/恢复 Mihomo，不会重启 AGH/SmartDNS，缓存与统计也保留；适合校园网、认证热点、企业内网。开启期间会暂停 Mihomo（TUN 仍会劫持 DNS），关闭后自动恢复</div>
                     </div>
                     <label class="switch">
                         <input type="checkbox" data-key="BYPASS_ENABLE">
@@ -316,7 +316,7 @@
                 <div class="setting-row">
                     <div class="setting-info">
                         <h4>缓存 TTL 下限</h4>
-                        <div class="setting-desc">秒。上游 TTL 低于该值时按该值缓存。缓存由 SmartDNS 承担（AdGuardHome 不缓存），设太小会导致缓存形同虚设、每次都重新测速，默认 600</div>
+                        <div class="setting-desc">秒，范围 60-86400。上游 TTL 低于该值时按该值缓存。缓存由 SmartDNS 承担（AdGuardHome 不缓存），设太小会导致缓存形同虚设、每次都重新测速，默认 600</div>
                     </div>
                     <input class="setting-input" type="number" data-key="SMARTDNS_TTL_MIN">
                 </div>
@@ -417,7 +417,7 @@
                 <button class="service-btn reload-setting">重新加载</button>
                 <button class="service-btn save-setting">保存并应用</button>
             </div>
-            <div class="setting-tip">保存后会自动重启服务，约需数秒。直通开关也可以不重启：守护循环会在 5 秒内让它生效。</div>
+            <div class="setting-tip">保存后会自动重启服务，约需数秒。只改「直通模式」时不重启 AGH/SmartDNS，仅切换 DNS 劫持规则，缓存与统计保留。</div>
         </div>
 
         <!-- 工具页面: 所有脚本命令的图形入口 -->
@@ -431,11 +431,12 @@
                 <h3>模块与诊断</h3>
                 <div class="tool-grid">
                     <button class="tool-btn" data-script="manual.sh" data-args="activate">激活待更新版本</button>
+                    <button class="tool-btn" data-script="manual.sh" data-args="repair">修复 / 免重启激活</button>
                     <button class="tool-btn" data-script="manual.sh" data-args="status">查看模块状态</button>
                     <button class="tool-btn" data-script="diagnose.sh" data-args="--watch 15">一键诊断（15 秒采样）</button>
                     <button class="tool-btn" data-script="diagnose.sh" data-args="--auto-stop">自动停止分析</button>
                 </div>
-                <div class="setting-desc">「激活待更新版本」只用于刚刷入、还在 modules_update 的情况。「一键诊断」只读采集服务/端口/配置校验/防火墙/DNS/MTU，并采样 15 秒 IPv6 阻断增量；「自动停止分析」直接判断是手动/WiFi 停止、watchdog 拉起，还是系统/小米杀后台，并列出 auto-stop 取证。</div>
+                <div class="setting-desc">「激活待更新版本」只用于刚刷入、还在 modules_update 的情况；「修复 / 免重启激活」会在 active/update/previous 间自动恢复，适合临时 root 和软重启后模块目录丢失。「一键诊断」只读采集服务/端口/配置校验/防火墙/DNS/MTU，并采样 15 秒 IPv6 阻断增量；「自动停止分析」直接判断是手动/WiFi 停止、watchdog 拉起，还是系统/小米杀后台，并列出 auto-stop 取证。</div>
             </div>
 
             <div class="content-section">
@@ -472,6 +473,16 @@
                     <button class="tool-btn" data-script="update/desc.sh" data-args="">刷新模块描述</button>
                 </div>
                 <div class="setting-desc">「刷新网络」等价于开关一次飞行模式，WiFi 会短暂断开。「重写配置」只改写文件，不会重启服务；需要生效请回「服务」页重启。DNS 规则状态与重建在「监控 → 健康状态」。</div>
+            </div>
+
+            <div class="content-section">
+                <h3>定时任务</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" id="cron-load-btn" data-cron="load">读取定时任务</button>
+                    <button class="tool-btn" id="cron-save-btn" data-cron="save">保存定时任务</button>
+                </div>
+                <textarea class="setting-textarea" id="cron-input" rows="7" placeholder="分 时 日 月 周 命令&#10;0 4 * * * /data/adb/modules/SAM/scripts/update.sh"></textarea>
+                <div class="setting-desc">格式: <code>分 时 日 月 周 命令</code>，一行一条，# 开头为注释；也支持 <code>@daily</code> 这类快捷键。由 busybox crond 执行，保存后下一分钟自动生效，无需重启服务。默认示例见上方输入框提示；清空全部行再保存=删除所有定时任务(定时文件每天自动备份，可恢复)。</div>
             </div>
 
             <div class="content-section">

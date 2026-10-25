@@ -152,6 +152,8 @@ get_all_status(){
     else
         echo "watchdog=未运行"
     fi
+    # SmartDNS 实际监听端口(配置可被 sd.sh 按 LAN_ACCESS 改写)，供服务页端口说明动态显示
+    echo "smartdns_port=$(smartdns_port)"
     resolve_dns_entry
     echo "dns_rule=$(check_dns_rule)"
     echo "dns_entry=${dns_entry_label}"

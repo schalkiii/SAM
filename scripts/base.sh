@@ -335,6 +335,10 @@ smartdns_port(){
 # 判断端口是否有进程在监听
 # 进程活着不代表 DNS 端口可用(端口冲突/配置错误都会出现"进程在、端口死")，
 # 重定向规则必须指向真正在监听的端口。
+# 协议语义: TCP 与 UDP 都要查，但任一在监听即视为可用。
+#   SmartDNS 默认只有 bind(UDP)，AGH/Mihomo 两者都听；
+#   要求"同时监听"会把只有 UDP 的 SmartDNS 误判成未监听，
+#   DNS 入口选择跳过它 -> 整机查询全走 AGH，SmartDNS 计数永远为零。
 # 没有 ss/netstat 时按"在监听"处理，避免在精简系统上误删规则。
 is_port_listening(){
     listen_port="${1}"
@@ -343,16 +347,16 @@ is_port_listening(){
     if has_cmd ss; then
         listen_udp=$(ss -lun 2>/dev/null) || listen_udp=""
         listen_tcp=$(ss -ltn 2>/dev/null) || listen_tcp=""
-        echo "${listen_udp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
-        echo "${listen_tcp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
-        return 0
+        echo "${listen_udp}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        echo "${listen_tcp}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        return 1
     fi
     if has_cmd netstat; then
         listen_udp=$(netstat -lnu 2>/dev/null) || listen_udp=""
         listen_tcp=$(netstat -lnt 2>/dev/null) || listen_tcp=""
-        echo "${listen_udp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
-        echo "${listen_tcp}" | grep -qE "[:.]${listen_port}[[:space:]]" || return 1
-        return 0
+        echo "${listen_udp}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        echo "${listen_tcp}" | grep -qE "[:.]${listen_port}[[:space:]]" && return 0
+        return 1
     fi
     return 0
 }

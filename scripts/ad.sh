@@ -339,10 +339,15 @@ ad_exclude=(
 HOLD_LIST="${AD_HOLD_LIST}"
 
 # 判断路径是否带 immutable 锁定
-# 优先用 lsattr -d 精确取目录自身属性; 某些 busybox 不支持 -d, 回退到不带 -d 的写法
+# 权威依据是备份清单: 在清单里的一定是本模块屏蔽的(与 lsattr 是否可用无关)。
+# lsattr 兜底覆盖旧版本屏蔽(没有清单条目): 只解析首列属性位，
+# 不能把路径当正则 —— 路径里的 . * [ 等字符会被解释成元字符，误判锁定状态。
 is_locked(){
-    lsattr -d "${1}" 2>/dev/null | grep -q "i.*${1}" && return 0
-    lsattr "${1}" 2>/dev/null | grep -q "i.*${1}" && return 0
+    grep -qxF "${1}" "${HOLD_LIST}" 2>/dev/null && return 0
+    lock_attrs=$(lsattr -d "${1}" 2>/dev/null | awk '{print $1}')
+    case "${lock_attrs}" in
+        *i*) return 0 ;;
+    esac
     return 1
 }
 
@@ -389,30 +394,41 @@ block_ad(){
     # 在排除列表里则跳过
     is_excluded "${ad_target}" && return 0
 
-    # 已锁定说明屏蔽过了, 避免重复处理
-    is_locked "${ad_target}" && return 0
-
     # 路径不存在则跳过
     [ -e "${ad_target}" ] || return 0
 
     ad_hold="${ad_target}${HOLD_SUFFIX}"
 
-    # 历史备份不能直接删除：保留为 .prev.<时间戳>，避免二次屏蔽把唯一副本吃掉
+    # 已屏蔽过(清单或 immutable 任一命中)则不重复处理。
+    # 清单命中还覆盖"chattr 不可用所以没锁定"的情况: 那种环境下重复屏蔽
+    # 只会把空壳和数据来回改名，没有任何收益
+    is_locked "${ad_target}" && return 0
+
+    # 有旧备份但没锁定也没进清单: 上次恢复不完整(或清单被手动改过)。
+    # 这时不能把旧备份挪成 .prev.* 再屏蔽新内容 —— 清单会指向空壳，
+    # 之后 recovery 还原出来的是空内容，原数据反而成了没有索引的 .prev.*。
+    # 保持现状并提示先 recovery，由用户确认后再屏蔽
     if [ -e "${ad_hold}" ]; then
-        hold_prev="${ad_hold}.prev.$(date '+%s')"
-        if mv "${ad_hold}" "${hold_prev}" 2>/dev/null; then
-            log "e" "发现旧备份，已保留到 ${hold_prev}"
-        else
-            log "e" "旧备份无法移开，跳过屏蔽: ${ad_target}"
-            return 0
-        fi
+        log "e" "存在旧备份但未锁定，跳过屏蔽(请先执行 recovery): ${ad_target}"
+        return 0
     fi
 
     if [ -d "${ad_target}" ]; then
         # 目录: 改名保留原内容, 原位置重建空目录并锁定
         if mv "${ad_target}" "${ad_hold}" 2>/dev/null; then
+            # 记下原目录属主与权限: 锁定成功时按原样重建，
+            # App 侧对"目录还在但写不进"的感知与旧版一致
+            hold_owner=$(stat -c '%u:%g' "${ad_hold}" 2>/dev/null)
+            hold_mode=$(stat -c '%a' "${ad_hold}" 2>/dev/null)
             mkdir -p "${ad_target}" 2>/dev/null
-            chattr +i "${ad_target}" 2>/dev/null
+            if chattr +i "${ad_target}" 2>/dev/null; then
+                [ -n "${hold_owner}" ] && chown "${hold_owner}" "${ad_target}" 2>/dev/null
+                [ -n "${hold_mode}" ] && chmod "${hold_mode}" "${ad_target}" 2>/dev/null
+            else
+                # 锁定失败时权限是唯一屏障: 保持 root 属主 + 严格权限挡住 App 写入
+                chmod 700 "${ad_target}" 2>/dev/null
+                log "e" "chattr +i 失败，仅以权限屏蔽: ${ad_target}"
+            fi
             hold_record "${ad_target}"
         else
             # 改名失败时宁可跳过，也不能退回到删除数据
@@ -422,8 +438,17 @@ block_ad(){
     elif [ -f "${ad_target}" ]; then
         # 文件: 改名保留原内容, 原位置建空文件并锁定
         if mv "${ad_target}" "${ad_hold}" 2>/dev/null; then
+            hold_owner=$(stat -c '%u:%g' "${ad_hold}" 2>/dev/null)
+            hold_mode=$(stat -c '%a' "${ad_hold}" 2>/dev/null)
             : > "${ad_target}"
-            chattr +i "${ad_target}" 2>/dev/null
+            if chattr +i "${ad_target}" 2>/dev/null; then
+                [ -n "${hold_owner}" ] && chown "${hold_owner}" "${ad_target}" 2>/dev/null
+                [ -n "${hold_mode}" ] && chmod "${hold_mode}" "${ad_target}" 2>/dev/null
+            else
+                # 文件场景锁定失败时更严格: 600 + root 属主，App 读写都进不去
+                chmod 600 "${ad_target}" 2>/dev/null
+                log "e" "chattr +i 失败，仅以权限屏蔽: ${ad_target}"
+            fi
             hold_record "${ad_target}"
         else
             log "e" "改名保留失败，跳过屏蔽: ${ad_target}"
@@ -639,15 +664,9 @@ cleanup_removed(){
         chattr -i "${hold_line}" 2>/dev/null
         if [ -d "${hold_line}" ]; then
             if ! rmdir "${hold_line}" 2>/dev/null; then
+                # 目录非空(屏蔽期间 App 又写了数据): 空壳删不掉就不能动备份，
+                # 否则原数据被删、新数据留在没有备份的目录里，两边都不剩
                 log "e" "已解除锁定但目录非空，保留: ${hold_line}"
-                if [ "${cleanup_mode}" = "purge" ]; then
-                    rm -rf "${hold_line}${HOLD_SUFFIX}" 2>/dev/null
-                    for orphan_prev in "${hold_line}${HOLD_SUFFIX}".prev.*; do
-                        [ -e "${orphan_prev}" ] && rm -rf "${orphan_prev}" 2>/dev/null
-                    done
-                    hold_forget "${hold_line}"
-                    log "i" "已清理该路径的备份: ${hold_line}${HOLD_SUFFIX}"
-                fi
                 skip_number=$((skip_number + 1))
                 continue
             fi
@@ -852,7 +871,12 @@ release_ad_lock(){
 }
 
 trap release_ad_lock EXIT HUP INT TERM
-acquire_ad_lock
+# 拿不到锁说明已有 block/recovery/cleanup 在跑: 清单是「读-改-写」，
+# 放行会让两个实例互相覆盖清单，必须退出而不是带病执行
+if ! acquire_ad_lock; then
+    log "e" "获取广告操作锁失败，已有同类操作在进行，退出"
+    exit 1
+fi
 
 # 添加指令
 case "$1" in

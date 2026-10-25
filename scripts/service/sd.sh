@@ -35,6 +35,25 @@ start(){
         log "i" "${SMARTDNS_BIN} 监听地址改为 ${bind_addr}"
     fi
 
+    # TCP 监听与 UDP 保持一致(旧配置没有 bind-tcp 时补上)：
+    # 53 的 TCP 查询会被重定向到 3721，只有 bind(UDP) 时这些查询会被拒绝
+    current_bind_tcp=$(grep -m1 "^bind-tcp " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')
+    if [ "${current_bind_tcp}" != "${bind_addr}" ]; then
+        if grep -q "^bind-tcp " "${SMARTDNS_CONF}" 2>/dev/null; then
+            sed -i "s|^bind-tcp .*|bind-tcp ${bind_addr}|" "${SMARTDNS_CONF}"
+        else
+            # 只在第一条 bind 之后补一次: 用户手工配置可能出现多条 bind，
+            # sed 的 a 会跟在每条匹配行后面，补出多条重复 bind-tcp
+            bind_line=$(grep -n -m1 "^bind " "${SMARTDNS_CONF}" 2>/dev/null | cut -d: -f1)
+            if [ -n "${bind_line}" ]; then
+                sed -i "${bind_line}a bind-tcp ${bind_addr}" "${SMARTDNS_CONF}"
+            else
+                sed -i "$ a bind-tcp ${bind_addr}" "${SMARTDNS_CONF}"
+            fi
+        fi
+        log "i" "${SMARTDNS_BIN} TCP 监听地址改为 ${bind_addr}"
+    fi
+
     # 按设置改写响应模式 / 测速方式 / 双栈优选
     # 这三项直接决定"冷查询"要等多久，值变了才改文件
     new_response=$(grep -m1 "^response-mode " "${SMARTDNS_CONF}" 2>/dev/null | awk '{print $2}')

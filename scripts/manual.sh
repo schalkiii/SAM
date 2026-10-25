@@ -19,6 +19,7 @@
 MODULE_ID="SAM"
 ACTIVE_DIR="/data/adb/modules/${MODULE_ID}"
 UPDATE_DIR="/data/adb/modules_update/${MODULE_ID}"
+PREVIOUS_DIR="/data/adb/SAM.previous"
 SYSTEM_HOSTS="/system/etc/hosts"
 
 # 自身路径(兼容 modules 与 modules_update 两种位置)
@@ -33,7 +34,9 @@ die(){ echo "[×] ${1}" >&2; exit 1; }
 
 usage(){
     say "用法: sh manual.sh <命令>"
-    say "  activate        激活模块并启动(把 modules_update 搬到 modules)"
+    say "  activate        免重启激活模块并启动(把 modules_update 搬到 modules)"
+    say "  autoactivate    安装后后台延迟自动激活(供 customize.sh 调用)"
+    say "  repair          免重启修复/恢复模块目录(active/update/previous 自动选择)"
     say "  resume          软重启后恢复运行(重启服务 + 挂载 hosts + 起监控；有待激活包时自动激活)"
     say "  start           启动服务"
     say "  stop            停止服务"
@@ -125,6 +128,27 @@ fix_symlink(){
     fi
 }
 
+# 校验模块目录结构：不能只看 module.prop，否则半截包会被当成可激活
+validate_module_dir(){
+    target_dir="${1}"
+    [ -f "${target_dir}/module.prop" ] || return 1
+    [ -f "${target_dir}/scripts/service.sh" ] || return 1
+    [ -f "${target_dir}/scripts/manual.sh" ] || return 1
+    [ -f "${target_dir}/scripts/base.sh" ] || return 1
+    [ -x "${target_dir}/bin/AdGuardHome" ] || return 1
+    [ -x "${target_dir}/etc/SmartDNS/smartdns" ] || return 1
+    [ -x "${target_dir}/bin/mihomo" ] || return 1
+    sh -n "${target_dir}/scripts/service.sh" >/dev/null 2>&1 || return 1
+    sh -n "${target_dir}/scripts/manual.sh" >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# 清掉会让下次重启删除/禁用模块的标记
+clear_module_markers(){
+    target_dir="${1}"
+    rm -f "${target_dir}/update" "${target_dir}/remove" "${target_dir}/disable" "${target_dir}/skip_mount"
+}
+
 # 激活
 activate_module(){
     need_root
@@ -134,9 +158,12 @@ activate_module(){
 
     if [ "${source_dir}" = "${UPDATE_DIR}" ]; then
         warn "检测到待激活模块: ${UPDATE_DIR}"
-        if [ ! -f "${UPDATE_DIR}/module.prop" ] || [ ! -f "${UPDATE_DIR}/scripts/service.sh" ] || [ ! -f "${UPDATE_DIR}/scripts/manual.sh" ]; then
-            die "待激活包缺少关键文件，取消激活"
+        fix_permission "${UPDATE_DIR}"
+        fix_symlink "${UPDATE_DIR}"
+        if ! validate_module_dir "${UPDATE_DIR}"; then
+            die "待激活包未通过结构校验，取消激活"
         fi
+
         old_dir=""
         if [ -d "${ACTIVE_DIR}" ]; then
             warn "暂存旧版本: ${ACTIVE_DIR}"
@@ -152,29 +179,96 @@ activate_module(){
         fi
         fix_permission "${ACTIVE_DIR}"
         fix_symlink "${ACTIVE_DIR}"
-        # 新包连基本启动入口都没有时恢复旧版本，不能直接删旧包
-        if [ ! -x "${ACTIVE_DIR}/bin/AdGuardHome" ] && [ ! -x "${ACTIVE_DIR}/etc/SmartDNS/smartdns" ] && [ ! -x "${ACTIVE_DIR}/bin/mihomo" ]; then
-            warn "新版本缺少可执行组件，恢复旧版本"
-            rm -rf "${ACTIVE_DIR}"
+        if ! validate_module_dir "${ACTIVE_DIR}"; then
+            warn "新版本未通过结构校验，恢复旧版本"
+            # 不能直接 rm -rf 新包: 用户刚下载的更新会彻底消失，连问题都没法查。
+            # 保留到 rejected 目录，由用户决定手动删除或重新安装
+            rejected_dir="/data/adb/SAM.rejected.$(date '+%Y%m%d-%H%M%S')"
+            rm -rf "${rejected_dir}"
+            mv "${ACTIVE_DIR}" "${rejected_dir}" 2>/dev/null || rm -rf "${ACTIVE_DIR}"
             [ -n "${old_dir}" ] && mv "${old_dir}" "${ACTIVE_DIR}"
+            say "未通过校验的新包已保留: ${rejected_dir}"
             die "激活失败，已恢复旧版本"
         fi
-        [ -n "${old_dir}" ] && rm -rf "${old_dir}"
+        # 保留上一版到固定路径，软重启/KSU 回滚把 active 弄丢时还能 repair
+        if [ -n "${old_dir}" ]; then
+            rm -rf "${PREVIOUS_DIR}"
+            mv "${old_dir}" "${PREVIOUS_DIR}" 2>/dev/null || rm -rf "${old_dir}"
+        fi
         ok "已激活到 ${ACTIVE_DIR}"
     else
+        fix_permission "${ACTIVE_DIR}"
+        fix_symlink "${ACTIVE_DIR}"
+        if ! validate_module_dir "${ACTIVE_DIR}"; then
+            warn "当前 active 目录结构异常，尝试从待激活包/上一版修复"
+            repair_module
+            return $?
+        fi
         ok "模块已在 ${ACTIVE_DIR}"
     fi
 
-    # 清掉会让下次重启删除/禁用模块的标记
-    # 临时 root 等不到那次重启，标记留着只会让人以为"已经卸载了"
-    rm -f "${ACTIVE_DIR}/update" "${ACTIVE_DIR}/remove" "${ACTIVE_DIR}/disable" "${ACTIVE_DIR}/skip_mount"
+    clear_module_markers "${ACTIVE_DIR}"
     rm -rf "${UPDATE_DIR}"
-
     fix_permission "${ACTIVE_DIR}"
     fix_symlink "${ACTIVE_DIR}"
 
     # 用激活后的新路径继续，避免脚本文件被移动后继续读取
     sh "${ACTIVE_DIR}/scripts/manual.sh" resume
+}
+
+# 模块目录丢失/损坏时的免重启修复入口
+repair_module(){
+    need_root
+
+    if [ -d "${ACTIVE_DIR}" ] && validate_module_dir "${ACTIVE_DIR}"; then
+        clear_module_markers "${ACTIVE_DIR}"
+        fix_permission "${ACTIVE_DIR}"
+        fix_symlink "${ACTIVE_DIR}"
+        ok "模块目录正常"
+        sh "${ACTIVE_DIR}/scripts/manual.sh" resume
+        return $?
+    fi
+
+    if [ -d "${UPDATE_DIR}" ]; then
+        say "发现待激活包，尝试免重启激活"
+        activate_module
+        return $?
+    fi
+
+    if [ -d "${PREVIOUS_DIR}" ] && validate_module_dir "${PREVIOUS_DIR}"; then
+        say "active 目录缺失/损坏，从 ${PREVIOUS_DIR} 恢复"
+        rm -rf "${ACTIVE_DIR}"
+        mv "${PREVIOUS_DIR}" "${ACTIVE_DIR}" || die "恢复上一版失败"
+        clear_module_markers "${ACTIVE_DIR}"
+        fix_permission "${ACTIVE_DIR}"
+        fix_symlink "${ACTIVE_DIR}"
+        sh "${ACTIVE_DIR}/scripts/manual.sh" resume
+        return $?
+    fi
+
+    die "未找到可恢复的 SAM 模块目录，请检查 ${ACTIVE_DIR}、${UPDATE_DIR}、${PREVIOUS_DIR}"
+}
+
+# 安装结束后自动激活：必须延迟，避开管理器仍在写 modules_update / 清理临时目录的窗口
+autoactivate_module(){
+    need_root
+    say "安装后自动免重启激活：等待安装器收尾..."
+    sleep 8
+
+    # 等待待激活目录稳定；最多 20 秒
+    auto_wait=0
+    while [ ${auto_wait} -lt 20 ] && [ ! -f "${UPDATE_DIR}/module.prop" ] && [ ! -f "${ACTIVE_DIR}/module.prop" ]; do
+        sleep 1
+        auto_wait=$((auto_wait + 1))
+    done
+
+    if [ -d "${UPDATE_DIR}" ]; then
+        say "检测到待激活包，自动激活"
+        activate_module
+        return $?
+    fi
+
+    repair_module
 }
 
 # 挂载 hosts
@@ -343,6 +437,15 @@ uninstall_module(){
         die "删除失败，请确认目录未被占用后重试"
     fi
 
+    # 清理模块目录外的恢复入口与历史版本:
+    # 留着 SAM-activate.sh + SAM.previous 会让 repair 把已卸载的模块复活，
+    # 卸载后还占用一份完整模块目录的空间
+    rm -f "/data/adb/SAM-activate.sh" "/data/adb/SAM-activate.log" 2>/dev/null
+    rm -rf "${PREVIOUS_DIR}" 2>/dev/null
+    for sam_residue in /data/adb/SAM.rejected.* /data/adb/SAM.old.*; do
+        [ -d "${sam_residue}" ] && rm -rf "${sam_residue}"
+    done
+
     ok "模块已卸载(无需重启)"
 }
 
@@ -361,6 +464,10 @@ install_zip(){
     say "解压到 ${UPDATE_DIR}"
     unzip -o "${zip_file}" -x "META-INF/*" -d "${UPDATE_DIR}" > /dev/null 2>&1 || die "解压失败"
     [ -f "${UPDATE_DIR}/module.prop" ] || die "压缩包内缺少 module.prop，可能不是模块包"
+
+    # 留下模块外的免重启恢复入口，模块目录被 KSU 软重启/回滚弄丢时仍可 repair
+    cp -f "${UPDATE_DIR}/scripts/manual.sh" "/data/adb/SAM-activate.sh" 2>/dev/null
+    chmod 700 "/data/adb/SAM-activate.sh" 2>/dev/null
 
     # manual 安装不会经过 customize.sh 的升级迁移；
     # 先备份并保留旧配置，否则激活时删除旧目录会把订阅/设置一起丢掉
@@ -391,6 +498,8 @@ show_status(){
         say "目录    : 未激活"
     fi
     [ -d "${UPDATE_DIR}" ] && say "待激活  : ${UPDATE_DIR}"
+    [ -d "${PREVIOUS_DIR}" ] && say "上一版备份: ${PREVIOUS_DIR}"
+    [ -f "/data/adb/SAM-activate.sh" ] && ok "免重启恢复入口: /data/adb/SAM-activate.sh"
 
     for service_bin in smartdns AdGuardHome mihomo; do
         if pidof "${service_bin}" > /dev/null 2>&1; then
@@ -430,6 +539,12 @@ show_status(){
 case "${1}" in
     activate)
         activate_module
+        ;;
+    autoactivate)
+        autoactivate_module
+        ;;
+    repair)
+        repair_module
         ;;
     resume|boot|restore)
         resume_module

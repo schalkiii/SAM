@@ -83,10 +83,29 @@ function parseKeyValues(text) {
 // 最近一次状态快照，启动/停止后直接复用，省掉两次脚本调用
 let lastStatus = {};
 
+// 服务页的端口说明按真实配置显示，避免改过端口后文案还是旧值
+// 数据来源: allstatus 的 smartdns_port + 设置页的 AGH/Mihomo DNS 端口
+function updatePortLabels(values) {
+    if (!values) return;
+    document.querySelectorAll("[data-port-label]").forEach(el => {
+        const key = el.dataset.portLabel;
+        if (values[key] !== undefined && values[key] !== "") {
+            el.textContent = values[key];
+        }
+    });
+}
+
 // 更新服务状态：一次 allstatus 拿到全部状态
 async function updateServiceStatus() {
-    const status = parseKeyValues(out(await runShell("webui.sh", "allstatus")));
+    const result = await runShell("webui.sh", "allstatus");
+    // 读失败不能静默: 否则所有状态会显示"未运行"，用户以为服务全挂了
+    if (!isOk(result)) {
+        showToast("状态读取失败: " + resultMessage(result), 5000);
+        return;
+    }
+    const status = parseKeyValues(out(result));
     lastStatus = status;
+    updatePortLabels(status);
 
     getServiceStatus("smartdns-status", status.smartdns || "未运行");
     const aghConfigBad = status.agh_config === "bad";
@@ -261,6 +280,12 @@ function parseSettingOutput(text) {
 // 读取设置并填到表单
 async function loadSettings(silent) {
     const result = await runShell("setting_api.sh", "get");
+    // 读失败时绝不能继续填表单: 空值会覆盖用户正在看的内容，
+    // 此时点保存会把空值写回配置
+    if (!isOk(result)) {
+        showToast("设置读取失败: " + resultMessage(result), 6000);
+        return;
+    }
     const parsed = parseSettingOutput(result.stdout);
 
     document.querySelectorAll("[data-key]").forEach(el => {
@@ -279,6 +304,7 @@ async function loadSettings(silent) {
     if (!silent) showToast("设置已加载");
     syncWhitelistMode();
     labelSettingsControls();
+    updatePortLabels(parsed.values);
     setSettingsDirty(false);
 }
 
@@ -314,6 +340,10 @@ async function refreshLog() {
     if (!view) return;
     view.textContent = "加载中...";
     const result = await runShell("setting_api.sh", "logview 150");
+    if (!isOk(result)) {
+        view.textContent = "日志读取失败: " + resultMessage(result);
+        return;
+    }
     view.textContent = out(result) || "(暂无日志)";
     view.scrollTop = view.scrollHeight;
 }
@@ -334,6 +364,10 @@ async function showAdScope() {
 
     const newline = String.fromCharCode(10);
     const result = await runShell("ad.sh", "list");
+    if (!isOk(result)) {
+        view.textContent = "读取失败: " + resultMessage(result);
+        return;
+    }
     const lines = out(result).split(newline).filter(line => line.length > 0);
     if (lines.length === 0) {
         view.textContent = "未读取到列表";
@@ -419,11 +453,11 @@ async function saveSettings() {
 
         const value = String(el.value).trim();
 
-        // 端口必须是 1-65535 的数字；TTL 单独按 0-86400 校验
+        // 端口必须是 1-65535 的数字；TTL 下限 60 秒(压到 30 秒会频繁回查、拖慢网络)
         if (el.type === "number") {
             const valueNumber = Number(value);
             const isTtl = key === "SMARTDNS_TTL_MIN";
-            const min = isTtl ? 0 : 1;
+            const min = isTtl ? 60 : 1;
             const max = isTtl ? 86400 : 65535;
             if (!value || !/^[0-9]+$/.test(value) || valueNumber < min || valueNumber > max) {
                 invalid = key + " 必须是 " + min + "-" + max + " 之间的数字";
@@ -475,6 +509,13 @@ async function saveSettings() {
             return;
         }
         setSettingsDirty(false);
+        // 保存成功后同步服务页端口说明(AGH/Mihomo DNS 端口可能刚改过)
+        const savedPorts = {};
+        scalars.forEach(item => {
+            const pos = item.indexOf("=");
+            if (pos > 0) savedPorts[item.slice(0, pos)] = item.slice(pos + 1);
+        });
+        updatePortLabels(savedPorts);
         showToast(out(applyResult) || "已保存并应用", 4000);
     } finally {
         savingSettings = false;
@@ -538,6 +579,8 @@ function newlineChar() {
 // 危险操作需要二次点击确认
 function initToolButtons() {
     document.querySelectorAll(".tool-btn").forEach(button => {
+        // 定时任务按钮走专门的回调(要传多行参数)，不走通用 tool-btn 流程
+        if (button.dataset.cron) return;
         let armed = false;
         let timer = null;
         const originalText = button.textContent;
@@ -561,6 +604,8 @@ function initToolButtons() {
         });
     });
 
+    initCronButtons();
+
     // 监控页的「重建 DNS 规则」按钮
     const dns_rule_action = document.getElementById("dns-rule-action");
     if (dns_rule_action) {
@@ -581,6 +626,61 @@ function initToolButtons() {
             }
         });
     }
+}
+
+// 定时任务(crontabs)读写
+// 每行作为独立参数传给 setting_api.sh cron set —— run.sh 的参数不能带换行，
+// 所以这里按行拆分，由服务端逐行校验格式
+function initCronButtons() {
+    const loadBtn = document.getElementById("cron-load-btn");
+    const saveBtn = document.getElementById("cron-save-btn");
+    const input = document.getElementById("cron-input");
+    const output = document.getElementById("tool-output");
+    if (!loadBtn || !saveBtn || !input) return;
+
+    loadBtn.addEventListener("click", async () => {
+        loadBtn.disabled = true;
+        loadBtn.textContent = "读取中...";
+        try {
+            const result = await runShellArgs("setting_api.sh", ["cron", "get"]);
+            const readErr = resultMessage(result);
+            if (readErr) {
+                showToast("读取失败: " + readErr, 6000);
+                return;
+            }
+            const text = out(result);
+            input.value = text === "(暂无定时任务)" ? "" : text;
+            if (output) output.textContent = text;
+            showToast("定时任务已读取", 3000);
+        } finally {
+            loadBtn.disabled = false;
+            loadBtn.textContent = "读取定时任务";
+        }
+    });
+
+    saveBtn.addEventListener("click", async () => {
+        // 全部行被清空时给出确认: 这会删掉所有定时任务
+        const lines = splitLines(input.value);
+        if (lines.length === 0 && !confirm("将删除全部定时任务，确定？(定时文件每天自动备份，可恢复)")) {
+            return;
+        }
+        saveBtn.disabled = true;
+        saveBtn.textContent = "保存中...";
+        try {
+            const result = await runShellArgs("setting_api.sh", ["cron", "set"].concat(lines));
+            const saveErr = resultMessage(result);
+            if (saveErr) {
+                showToast("保存失败: " + saveErr, 6000);
+                if (output) output.textContent = "保存失败: " + saveErr;
+                return;
+            }
+            if (output) output.textContent = out(result) || "已保存";
+            showToast(out(result) || "定时任务已保存", 4000);
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = "保存定时任务";
+        }
+    });
 }
 
 // 页面导航功能
@@ -655,6 +755,11 @@ async function mountControls(){
     try {
         const hostMountStatus = document.getElementById("host-mount-status");
         var host_mount_status = await runShell("webui.sh", "mount");
+        // 读不到挂载状态时不能猜: 猜错会把 HOST_ENABLE 写成相反的值
+        if (!isOk(host_mount_status)) {
+            showToast("挂载状态读取失败: " + resultMessage(host_mount_status), 6000);
+            return;
+        }
         if ( out(host_mount_status) == "已挂载" ) {
             const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=false"]);
             const saveErr = resultMessage(saved);

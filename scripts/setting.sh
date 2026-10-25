@@ -245,6 +245,11 @@ setting_validate(){
         log "e" "设置项 SMARTDNS_TTL_MIN 取值越界，已回退为 600"
         SMARTDNS_TTL_MIN=600
     fi
+    # 下限 60 秒: 30 秒这种值会让客户端频繁回查，冷查询/测速被反复触发
+    if [ "${SMARTDNS_TTL_MIN}" -lt 60 ]; then
+        log "e" "设置项 SMARTDNS_TTL_MIN 低于 60 秒，已回退为 600"
+        SMARTDNS_TTL_MIN=600
+    fi
 
     setting_fix_enum MODULE_DNS_MODE 2 1 2
     setting_fix_enum WHITELIST_MODE 1 1 2

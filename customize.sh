@@ -31,6 +31,13 @@ chown root:net_raw "${MODPATH}/bin/AdGuardHome"
 chown root:net_admin "${MODPATH}/bin/mihomo"
 find "${MODPATH}" -type f -name "*.sh" -exec chmod +x {} \;
 
+# 临时 root/软重启场景可能等不到正常模块加载，留下一个模块外的免重启恢复入口。
+# 只复制 manual.sh 即可：它按固定路径激活 modules_update 或 SAM.previous。
+if [ -f "${MODPATH}/scripts/manual.sh" ]; then
+    cp -f "${MODPATH}/scripts/manual.sh" "/data/adb/SAM-activate.sh" 2>/dev/null
+    chmod 700 "/data/adb/SAM-activate.sh" 2>/dev/null
+fi
+
 # 设置输出内容
 out_content=$(cat "${MODPATH}/setting.conf")
 # 旧设置内容
@@ -136,10 +143,28 @@ if [ -f "${MODPATH}/module.prop" ]; then
     mv -f "${pending_prop_tmp}" "${MODPATH}/module.prop" 2>/dev/null
 fi
 
-ui_print "🌐 SmartDNS ( 账号: root | 密码: root )"
+ui_print "🌐 SmartDNS ( 账号: root | 密码: sam123456 )"
 ui_print "🌐 SmartDNS ( WebUI: 127.0.0.1:6080 )"
-ui_print "🔰 AdGuardHome ( 账号: root | 密码: root )"
+ui_print "🔰 AdGuardHome ( 账号: root | 密码: sam123456 )"
 ui_print "🔰 AdGuardHome ( WebUI: 127.0.0.1:3000 )"
 ui_print "✈️ Mihomo ( WebUI: 127.0.0.1:9090/ui/ )"
+ui_print "💡 面板默认只听回环；开放局域网(LAN_ACCESS)前请先修改默认密码"
+
+# 临时 root / 只能软重启的环境：安装器返回后由独立进程自动激活。
+# 不能在 customize.sh 里直接 mv MODPATH，因为管理器还在这个目录上做收尾。
+ui_print "🚀 将自动执行免重启激活，无需手动输入命令"
+auto_log="/data/adb/SAM-activate.log"
+if [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; then
+    if command -v setsid > /dev/null 2>&1; then
+        setsid sh "/data/adb/SAM-activate.sh" autoactivate > "${auto_log}" 2>&1 &
+    elif command -v nohup > /dev/null 2>&1; then
+        nohup sh "/data/adb/SAM-activate.sh" autoactivate > "${auto_log}" 2>&1 &
+    else
+        sh "/data/adb/SAM-activate.sh" autoactivate > "${auto_log}" 2>&1 &
+    fi
+else
+    ui_print "当前不是已启动的 Android，不自动激活；首次完整重启后生效"
+fi
 
 ui_print "🎉 安装完成"
+ui_print "📄 自动激活日志: /data/adb/SAM-activate.log"
