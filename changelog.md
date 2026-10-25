@@ -1,3 +1,21 @@
+# 2026.10.25.6
+- 修复: 「自动停止分析」会把厂商日志误判成"被系统杀/OOM"
+  - 旧逻辑只要取证文件里出现 `lmkd` 字样就判定"倾向系统/小米杀后台或 OOM"，
+    而小米的 `IOMEM: handleLmkdMessage cmd: 11` 只是厂商守护进程**收到** lmkd
+    消息的记录，不含任何被杀的 PID/进程名——2026-10-25 因此把真正的
+    「启动失败（软链悬空）」误判成 OOM，方向完全错了
+  - 现在要求**进程级证据**: `lowmemorykiller`/`oom-kill`/`killinfo`/
+    `Kill process`/`Force stopping <服务名>`/`ActivityManager ... <服务名>`；
+    只有 `handleLmkdMessage` 而无线程级记录时，报告里明确标注"不算证据"
+  - 新增「启动失败线索(module.log)」统计与「最后一次原因」：把"服务根本没起来"
+    （软链/解释器/端口/配置）与"起来后被外力杀掉"分开，结论按
+    「启动失败 → 击杀证据 → WiFi 停止 → 主动停止」的优先级给判断
+  - auto-stop 取证增强: 记录存活服务的 `oom_score_adj`、`/proc/pressure/memory`、
+    `dmesg` 里的内核 OOM 记录、服务**自身**日志尾部（`tmp/<bin>.out`/`.log`，
+    能直接看出是自己退出还是被 kill）、最近 10 条 ERROR
+  - 说明: `oom_score_adj=-1000` 只对内核 OOM 与 LMKD 的分数选择有效，
+    挡不住厂商守护进程、`kill -9`、`am force-stop` 等用户态击杀
+
 # 2026.10.25.5
 - 修复: 免重启更新后 SmartDNS 起不来（软链悬空）
   - 现象: 日志只有 `setuidgid: can't execute 'smartdns': No such file or directory`，

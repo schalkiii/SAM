@@ -75,7 +75,13 @@ analyze_auto_stop(){
     kv "watchdog restart 次数" "${watchdog_restarts:-0}"
     kv "WiFi 黑名单停止次数" "${wifi_stops:-0}"
 
+    # 真实击杀证据必须能对上进程名/内核 OOM 记录。小米的
+    # "IOMEM: handleLmkdMessage cmd: N" 只是厂商守护进程收到 lmkd 消息的
+    # 日志，不含任何被杀的 PID/进程名——把它当证据会得出"被系统杀"的错误
+    # 结论(2026-10-25 实际踩过: 真因是启动失败，却被判成 OOM)
+    kill_pattern="lowmemorykiller|oom-kill|killinfo|Kill process|Force stopping .*(smartdns|AdGuardHome|mihomo)|ActivityManager.*(smartdns|AdGuardHome|mihomo)"
     kill_evidence=""
+    lmkd_noise=""
     snapshot_found=0
     echo ""
     echo "auto-stop 取证文件:"
@@ -84,11 +90,28 @@ analyze_auto_stop(){
         snapshot_found=1
         echo "  --- ${snapshot_file##*/} ---"
         ls -l "${snapshot_file}" 2>/dev/null | sed 's/^/    /'
-        grep -iE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping|Scheduling restart" "${snapshot_file}" 2>/dev/null | tail -n 8 | sed 's/^/    /'
-        snapshot_kill=$(grep -icE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping" "${snapshot_file}" 2>/dev/null)
+        # 服务自身日志尾部最能说明"自己退出"还是"被外力杀掉"
+        grep -E "^(out|log):" "${snapshot_file}" 2>/dev/null | tail -n 3 | sed 's/^/    /'
+        grep -iE "${kill_pattern}" "${snapshot_file}" 2>/dev/null | tail -n 8 | sed 's/^/    /'
+        snapshot_kill=$(grep -icE "${kill_pattern}" "${snapshot_file}" 2>/dev/null)
         [ "${snapshot_kill:-0}" -gt 0 ] && kill_evidence=1
+        grep -q "handleLmkdMessage" "${snapshot_file}" 2>/dev/null && lmkd_noise=1
     done
     [ ${snapshot_found} -eq 0 ] && echo "  暂无 auto-stop.*.log（服务尚未发生异常消失，或 watchdog 也被同时杀死）"
+
+    # 启动失败统计: "服务根本没起来"(配置/权限/解释器/软链)与"起来后被杀死"
+    # 是两种完全不同的故障，必须分开统计才能给出正确结论
+    echo ""
+    echo "启动失败线索(module.log):"
+    start_fail_total=0
+    for fail_bin in smartdns AdGuardHome mihomo; do
+        fail_count=$(grep -c "${fail_bin} 启动失败" "${TMP_PATH}/module.log" 2>/dev/null)
+        kv "  ${fail_bin} 启动失败次数" "${fail_count:-0}"
+        if [ "${fail_count:-0}" -gt 0 ]; then
+            start_fail_total=$((start_fail_total + fail_count))
+            grep "${fail_bin} 日志:" "${TMP_PATH}/module.log" 2>/dev/null | tail -n 1 | sed 's/^/    最后一次原因: /'
+        fi
+    done
 
     echo ""
     echo "MIUI/系统限制:"
@@ -99,8 +122,13 @@ analyze_auto_stop(){
 
     echo ""
     echo "结论:"
-    if [ -n "${kill_evidence}" ]; then
-        echo "  倾向系统/小米杀后台或 OOM：auto-stop 日志中出现 LMKD/ActivityManager/Force stopping。"
+    if [ "${start_fail_total}" -gt 0 ] && [ -z "${kill_evidence}" ]; then
+        echo "  倾向启动失败/自行退出(不是被系统杀)：module.log 有 ${start_fail_total} 次服务启动失败记录。"
+        echo "  下一步：看 tmp/<服务>.out 最后几行(上面 service own log 段)，那是服务自己吐的失败原因。"
+        echo "  常见原因：软链/解释器缺失、端口被占、配置校验不过、二进制权限。"
+    elif [ -n "${kill_evidence}" ]; then
+        echo "  存在进程级击杀证据(内核 OOM / ActivityManager / Force stopping)，服务是被外力杀掉的。"
+        echo "  注意：oom_score_adj=-1000 只挡住内核 OOM 与 LMKD 的分数选择，挡不住厂商守护进程与 kill -9。"
         echo "  建议：设为无限制后台、关闭电池优化、锁定最近任务，并观察 watchdog 心跳。"
     elif [ "${wifi_stops:-0}" -gt 0 ] && [ "${wifi_stops:-0}" -ge "${stop_requested:-0}" ]; then
         echo "  倾向 WiFi 黑名单触发停止：存在 stopped-by-wifi。"
@@ -113,6 +141,13 @@ analyze_auto_stop(){
         echo "  watchdog 心跳过期：优先排查 watchdog 自身被杀，服务停止只是结果。"
     else
         echo "  当前没有足够证据区分系统杀后台与模块停止，请在下次自动停止后立即重新分析。"
+    fi
+
+    # 只出现厂商的 handleLmkdMessage 而没有任何进程级击杀记录时，明确说明
+    # 它不算证据，避免下次又按"被系统杀"去调后台策略
+    if [ -n "${lmkd_noise}" ] && [ -z "${kill_evidence}" ]; then
+        echo "  说明：日志里的 IOMEM/handleLmkdMessage 是厂商守护进程收到 lmkd 消息的记录，"
+        echo "        不含我们进程的 PID/名称，不作为击杀证据。"
     fi
 
     rm -f "${event_log}" 2>/dev/null

@@ -131,8 +131,25 @@ capture_auto_stop_snapshot(){
         echo "watchdog_heartbeat=$(cat "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null)"
         echo "--- processes ---"
         ps -A 2>/dev/null | grep -E "smartdns|AdGuardHome|mihomo|watchdog|wifi.monitor" | grep -v grep
+        echo "--- oom_score_adj ---"
+        for snapshot_pid_name in smartdns AdGuardHome mihomo; do
+            snapshot_pid=$(pidof "${snapshot_pid_name}" 2>/dev/null)
+            [ -n "${snapshot_pid}" ] && \
+                echo "${snapshot_pid_name} pid=${snapshot_pid} oom=$(cat "/proc/${snapshot_pid}/oom_score_adj" 2>/dev/null)"
+        done
+        # 内存压力与内核 OOM 记录: -1000 的进程不会被内核 OOM 选中，
+        # 没有这两项就无法区分"内存真的紧张"和"进程自己退出"
+        echo "--- memory pressure ---"
+        cat /proc/pressure/memory 2>/dev/null
+        echo "--- kernel oom ---"
+        dmesg 2>/dev/null | grep -iE "lowmemorykiller|oom-kill|Kill process|out of memory" | tail -n 10
+        echo "--- service own log ---"
+        tail -n 5 "${TMP_PATH}/${snapshot_bin}.out" 2>/dev/null | sed 's/^/out: /'
+        tail -n 5 "${TMP_PATH}/${snapshot_bin}.log" 2>/dev/null | sed 's/^/log: /'
         echo "--- recent service events ---"
         grep "SERVICE-EVENT" "${LOG_FILE}" 2>/dev/null | tail -n 20
+        echo "--- recent errors ---"
+        grep "ERROR" "${LOG_FILE}" 2>/dev/null | tail -n 10
         echo "--- logcat kill/lmkd ---"
         logcat -d -t 300 2>/dev/null | grep -iE "lowmemorykiller|lmkd|ActivityManager.*kill|Force stopping|Scheduling restart" | tail -n 30
     } > "${snapshot_file}" 2>/dev/null
