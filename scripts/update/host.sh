@@ -7,14 +7,17 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 # 候选源逐个尝试, 第一个取到有效内容的即采用; 全部失败才返回 1
 #
 # 为什么要多个源:
-#   raw.githubusercontent.com 在国内移动网络下经常超时或被限速,
+#   raw.githubusercontent.com 在国内移动网络下经常超时或被限速/污染，
 #   单源失败就直接整条规则落空。备用顺序:
-#     1. 直连 raw(最快, 网络好时首选)
-#     2. ghfast.top 代理(国内可用的 GitHub raw 加速)
+#     1. ghfast.top 代理(国内可用的 GitHub raw 加速，实测最快且不需要跳转)
+#     2. 直连 raw(网络好时可用，放第二位避免被墙时白等超时)
 #     3. cdn.jsdelivr.net(另一个 CDN, 部分场景可达)
 #
-# 注意 curl 加 -f: 没有它时 404/500 也会输出错误页正文,
-# 长度超过阈值就会被当成"取到内容"写进 hosts 文件, 反而污染规则
+# 下载统一走 base.sh 的 fetch_url: 设备不一定带 curl，缺 curl 时自动退回 wget，
+# 否则所有源都会"看起来不可用"(实际是拉取工具不存在)
+#
+# 注意 fetch_url 内部加 -f/-L: 没有 -f 时 404/500 也会输出错误页正文，
+# 长度超过阈值就会被当成"取到内容"写进 hosts 文件，反而污染规则
 get_host(){
     # 规则名称: 必须在 shift 之前取出来。
     # shift 之后 $1 变成第一个候选 URL(含斜杠), 再拿它拼 sed 表达式会报
@@ -36,7 +39,7 @@ get_host(){
     do
         [ -n "${i}" ] || continue
         log "i" "尝试源: ${i}"
-        source_content=$(curl -m 15 -s -f ${i} 2>/dev/null | grep -Ev "^#.*$|^[[:space:]]*$" | awk -F' ' '{print $1, $2}')
+        source_content=$(fetch_url "${i}" 10 2>/dev/null | grep -Ev "^#.*$|^[[:space:]]*$" | awk -F' ' '{print $1, $2}')
         # 有效内容: 至少一行严格 "IP 域名"，且不能混入 HTML/非法映射
         if [ -z "${source_content}" ] || echo "${source_content}" | grep -qE "^<|^!DOCTYPE|^html"; then
             # 候选源失败是降级流程的一部分，不用 ERROR 污染"重启错误数"
@@ -108,15 +111,15 @@ get_host(){
 
 # 添加指令
 # 候选源: 同一份内容的多个取回途径
-# 直连优先(快), 失败依次降级到代理与另一个 CDN
+# ghfast.top 优先(国内移动网络下最稳)，失败依次降级到直连与另一个 CDN
 GITHUB_HOST_SOURCES="
-https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts
 https://ghfast.top/https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts
+https://raw.githubusercontent.com/521xueweihan/GitHub520/main/hosts
 https://cdn.jsdelivr.net/gh/521xueweihan/GitHub520@master/hosts
 "
 FCM_HOST_SOURCES="
-https://raw.githubusercontent.com/cagedbird043/fcm-hosts-next/main/fcm_dual.hosts
 https://ghfast.top/https://raw.githubusercontent.com/cagedbird043/fcm-hosts-next/main/fcm_dual.hosts
+https://raw.githubusercontent.com/cagedbird043/fcm-hosts-next/main/fcm_dual.hosts
 https://cdn.jsdelivr.net/gh/Mice-Tailor-Infra/fcm-hosts-next@master/fcm_dual.hosts
 "
 
@@ -135,16 +138,31 @@ case "$1" in
         fi
 
         log "i" "更新 host 规则"
+        # 开机时 WiFi/移动数据常比服务晚就绪: 先等最多 60 秒，
+        # 否则 10 秒后的那次拉取会全源失败，规则要拖到下次启动才重试
+        wait_network 60 || log "e" "网络在 60 秒内未就绪，仍尝试拉取"
         sam_lock_acquire "host_update" 120 || {
             log "e" "hosts 更新正在进行，跳过"
             exit 1
         }
         github_ok=0
         fcm_ok=0
-        # GitHub
-        get_host "GitHub" ${GITHUB_HOST_SOURCES} && github_ok=1
-        # FCM
-        get_host "FCM" ${FCM_HOST_SOURCES} && fcm_ok=1
+        # 网络刚就绪时首个请求仍可能被 RST: 失败的规则再补一次(最多两轮)
+        attempt=1
+        while [ ${attempt} -le 2 ]; do
+            if [ ${github_ok} -eq 0 ]; then
+                get_host "GitHub" ${GITHUB_HOST_SOURCES} && github_ok=1
+            fi
+            if [ ${fcm_ok} -eq 0 ]; then
+                get_host "FCM" ${FCM_HOST_SOURCES} && fcm_ok=1
+            fi
+            [ ${github_ok} -eq 1 ] && [ ${fcm_ok} -eq 1 ] && break
+            if [ ${attempt} -lt 2 ]; then
+                log "i" "host 规则未全部获取，30 秒后重试"
+                sleep 30
+            fi
+            attempt=$((attempt + 1))
+        done
         # 只有两条规则都成功才记录时间；部分失败不能算完成，
         # 否则失败的那条要等 24 小时才会重试。
         if [ ${github_ok} -eq 1 ] && [ ${fcm_ok} -eq 1 ]; then

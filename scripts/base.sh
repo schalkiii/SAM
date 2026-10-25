@@ -26,6 +26,51 @@ has_cmd(){
     command -v "${1}" > /dev/null 2>&1
 }
 
+# 下载 URL 到 stdout: curl 优先，无 curl 时退回 wget
+# 设备不一定带 curl(部分 ROM 只有 toybox/Magisk busybox 的 wget)，
+# 只写 curl 会让 hosts/组件更新在缺 curl 的机器上 100% 静默失败
+fetch_url(){
+    fetch_target="${1}"
+    fetch_timeout="${2:-15}"
+    if has_cmd curl; then
+        curl -m "${fetch_timeout}" -s -f -L "${fetch_target}"
+        return $?
+    fi
+    if has_cmd wget; then
+        wget -T "${fetch_timeout}" -q -O - "${fetch_target}"
+        return $?
+    fi
+    if has_cmd busybox && busybox wget --help > /dev/null 2>&1; then
+        busybox wget -T "${fetch_timeout}" -q -O - "${fetch_target}"
+        return $?
+    fi
+    return 1
+}
+
+# 网络是否可用: HTTPS 握手成功即可(不要求特定响应码)
+# 用 IP 直连(223.5.5.5 阿里 DoH)绕过 DNS: 开机早期往往 DNS 还没就绪，
+# 而 hosts 更新正是要在这种时刻判断"能不能联网"
+is_network_ready(){
+    if has_cmd curl; then
+        curl -m 5 -s -o /dev/null "https://223.5.5.5/" 2>/dev/null && return 0
+    fi
+    ping -c 1 -W 2 223.5.5.5 > /dev/null 2>&1 && return 0
+    return 1
+}
+
+# 等网络就绪，最多等 wait_network_timeout 秒(默认 60)
+# 开机时 WiFi/移动数据常比服务晚就绪，一次性拉取会全源失败并把规则拖到下次启动
+wait_network(){
+    wait_network_timeout="${1:-60}"
+    wait_network_elapsed=0
+    while [ ${wait_network_elapsed} -lt ${wait_network_timeout} ]; do
+        is_network_ready && return 0
+        sleep 5
+        wait_network_elapsed=$((wait_network_elapsed + 5))
+    done
+    return 1
+}
+
 # 确保 SmartDNS 运行所需的软链接存在
 # SmartDNS 是 musl 动态链接的可执行文件，缺少 loader 软链时 exec 会直接失败，
 # 表现为「AGH 能起来、SmartDNS 起不来」。开机脚本只在真开机时建这些链接，

@@ -5,8 +5,9 @@
 > 本报告只记录发现与建议；执行状态见文末。与第三轮（`AUDIT-REPORT-2026-10-25-3.md`）的关系：
 > 第三轮 S-2~S-10 与 S-11 代码项均已实施，本轮**只登记新增/残留项**，不重复已关闭条目。
 
-> **执行状态（2026-10-25 深夜更新）**：S-4-1~S-4-5 已全部实施，随 v20261025.9 本地构建。
-> 落地结果：十套件 351 项（CI/mksh；Windows 本机 320 项），CI 全绿；`manual.sh` 首次有了自动化覆盖。
+> **执行状态（2026-10-25 深夜更新）**：S-4-1~S-4-5 已全部实施，随 v20261025.9 发布。
+> 另有用户反馈的 hosts 抓取问题已作为 H-1~H-5 补入本报告并修复。
+> 落地结果：十一套件 371 项（CI/mksh；Windows 本机 340 项），CI 全绿；`manual.sh` 首次有了自动化覆盖。
 > 本轮同时修正上一版文档的测试计数笔误（九套件实为 335/307，此前写成 344/325）。
 
 ## 一、现状描述（可观察事实）
@@ -17,8 +18,8 @@
 |---|---|
 | Shell 脚本 | 33 个（`scripts/**` 29 + 根目录 4），约 7,250 行 |
 | WebUI | `index.html` + `main.js`（约 1,110 行）+ `kernelsu.js` + `styles.css`，无构建步骤 |
-| Python 工具 | 11 个：`pack_module.py`、`check_version_sync.py`、9 个测试套件 |
-| 测试 | 九套件 **335 项**（CI/mksh），Windows 本机 307 项；CI `module-check` 全绿 |
+| Python 工具 | 13 个：`pack_module.py`、`check_version_sync.py`、11 个测试套件 |
+| 测试 | 九套件 **335 项**（CI/mksh），Windows 本机 307 项；CI `module-check` 全绿（H-5 后为十一套件 371/340） |
 | 配置键 | `setting.conf` 27 个 + `get` 下发的 2 个只读边界字段 |
 
 ### 本周期内的收敛（事实）
@@ -168,9 +169,41 @@
 | P2 | S-4-5（流程记录） | 无 | 收尾 |
 
 **推荐顺序**：S-4-3 → S-4-1 + S-4-2（同一提交）→ S-4-4 → S-4-5。
-每组完成后跑：`pack --check`、`check_version_sync`、九套件（Windows + WSL 各一遍）、`node --check`、`git diff --check`。
+每组完成后跑：`pack --check`、`check_version_sync`、全部套件（Windows + WSL 各一遍）、`node --check`、`git diff --check`。
 
-## 五、审计边界说明
+## 五、补充审计：hosts 抓取失败（用户反馈，2026-10-25）
+
+用户反馈「FCM 和 GitHub host 一直是获取不到」。三个候选源在本机实测全部 200（ghfast 1.5s / raw 1.5s / jsdelivr 2.0s），说明**地址本身没问题**，失败发生在设备侧的执行条件。
+
+#### H-1（高）设备缺 curl 时 hosts 抓取 100% 失败
+
+- **位置**：`scripts/update/host.sh` 原第 39 行（`curl -m 15 -s -f ${i}`）。
+- **描述**：下载只走 curl；精简 ROM 往往没有 curl（只有 busybox/toybox 的 wget）。此时三个候选源全部"不可用"，日志与真实网络状况无关。
+- **修复**：`base.sh` 新增 `fetch_url`（curl → wget → busybox wget），`host.sh` 统一调用。
+
+#### H-2（高）开机网络未就绪，一次性拉取全源失败且重试窗口太长
+
+- **位置**：`scripts/service.sh` 第 115 行（延迟 10 秒）+ `host.sh` update 分支。
+- **描述**：只延迟 10 秒且不判断网络就绪；WiFi/移动数据常在解锁后才连上，于是两条规则都失败。时间戳只在两条都成功时写入，重试要等下一次服务启动（可能数天）。
+- **修复**：`base.sh` 新增 `is_network_ready`（IP 直连探测，绕开尚未就绪的 DNS）与 `wait_network`；`host.sh` 更新前 `wait_network 60`，未取全的规则 30 秒后补拉一次（最多两轮）。
+
+#### H-3（中）直连 raw 排在代理前面，被墙时白等超时
+
+- **位置**：`host.sh` 的 `GITHUB_HOST_SOURCES` / `FCM_HOST_SOURCES`。
+- **描述**：raw.githubusercontent.com 在国内移动网络常被 RST/污染；原顺序先直连、且单源超时 15 秒。用户建议的 ghfast.top 本来就在第二位，但因 H-1/H-2 从未真正生效。
+- **修复**：ghfast.top 提到首位；单源超时 15s → 10s。实测 ghfast 返回 200 且不跳转。
+
+#### H-4（中）出厂 hosts 没有预置最新规则
+
+- **位置**：`etc/hosts`。
+- **描述**：新装或断网首启必须等联网后才拿到 GitHub/FCM 规则，此前文件里是旧数据。
+- **修复**：已用 ghfast.top 拉取、按 `IP 域名` 严格校验后合并（GitHub 40 条 / FCM 24 条），随包分发。
+
+#### H-5（低）抓取逻辑无自动化覆盖
+
+- **修复**：新增 `tools/test_host_sources.py`（20 项）：curl/wget 降级、源顺序（ghfast 首位）、HTML 错误页拒绝、section 替换去重、全源失败保留原文件、`wait_network` 就绪/超时。
+
+## 六、审计边界说明
 
 - 未在真机（Android + mksh + busybox）执行；所有结论来自静态阅读与 Windows/WSL 双环境实测。
 - 第三方二进制与 `etc/*/wwwroot|webui` 前端资源不在范围内。

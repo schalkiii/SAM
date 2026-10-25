@@ -69,3 +69,7 @@ jobs:
       # 免重启激活的判定逻辑(目录选择/结构校验/标记清理)
       - name: 免重启激活判定回归测试
         run: python tools/test_manual_repair.py
+
+      # hosts 抓取降级(缺 curl / 网络未就绪 / 直连被墙)
+      - name: hosts 抓取回归测试
+        run: python tools/test_host_sources.py

@@ -8,9 +8,21 @@
   - 优化: `manual.sh` 的模块结构校验改用与设备一致的 mksh（文件内独立探测，不依赖 base.sh），
     避免 dash 环境把 `scripts/service.sh` 的数组展开误判成语法错误而拒绝激活
   - 文档: `setting.sh` / `setting_api.sh` 里"sh -n 自检"的旧措辞同步为 `SETTING_SYNTAX_SHELL`
+  - 修复: GitHub/FCM hosts 长期获取失败（用户反馈）
+    - 下载改走 `base.sh` 的 `fetch_url`: curl 优先，**缺 curl 自动退回 wget**。
+      部分 ROM 只有 busybox wget，原实现直接调 curl，会让所有候选源"看起来都失败"
+    - 候选源顺序改为 **ghfast.top 优先**（国内移动网络最稳），raw 直连降为备用，
+      jsdelivr 兜底；单个源超时从 15 秒缩到 10 秒，快速降级
+    - 更新前 `wait_network 60`: 开机时 WiFi/移动数据常比服务晚就绪，
+      原实现 10 秒后一次性拉取会全源失败，规则要拖到下次启动才重试
+    - 未取全的规则 30 秒后补拉一次（最多两轮）；只有两条都成功才写 24 小时时间戳
+    - `etc/hosts` **预置最新规则**（GitHub 40 条 / FCM 24 条，经 ghfast.top 拉取校验），
+      首次开机或断网时也有可用解析，不再等联网后才生效
+    - 新增 `test_host_sources.py`（20 项）锁定源顺序、curl/wget 降级、HTML 拒绝、
+      section 替换与失败保留
   - 测试: 新增 `test_manual_repair.py`（16 项：`detect_source` / `validate_module_dir` /
     `clear_module_markers`；Windows 因 MSYS 的 shebang 规则跳过不可执行位 3 项）。
-    十套件合计 351 项（CI/mksh），Windows 本机 320 项
+    十一套件合计 371 项（CI/mksh），Windows 本机 340 项
   - 修正: 上一版文档里的测试计数笔误（九套件实为 335 项 CI / 307 项 Windows，此前写成 344/325）
 
 # 2026.10.25.8
