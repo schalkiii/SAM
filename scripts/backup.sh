@@ -143,7 +143,9 @@ list_backup(){
 # 恢复最近一份
 restore_backup(){
     # 先确定要恢复的目标: 必须在快照之前选，否则刚拍的快照会变成"最新"，
-    # 结果 restore 把自己刚备份的当前配置又原样恢复一遍
+    # 结果 restore 把自己刚备份的当前配置又原样恢复一遍。
+    # 目标选取有意在锁外: 并发双重 restore 是幂等的(都恢复同一目标)；
+    # 若把选取挪进锁内，后一次会选中前一次的快照，变成"撤销前一次恢复"
     latest_backup=$(completed_backups | head -n 1)
     if [ -z "${latest_backup}" ]; then
         echo "暂无备份可恢复"
@@ -167,10 +169,14 @@ restore_backup(){
     restore_count=0
     restore_failed=0
     for restore_file in ${BACKUP_FILES}; do
+        restore_target="${MODULE_PATH}/${restore_file}"
+        # 清掉上次恢复被中断(cp 后 mv 前)留下的临时文件，与备份是否含该文件无关:
+        # 残留的 root.restore.<pid> 会被 busybox crond 当作 crontab 加载，
+        # 里面的有效 cron 行会被重复执行(crond -c 加载目录下所有文件)
+        rm -f "${restore_target}.restore."* 2>/dev/null
         restore_src="${latest_backup}${restore_file}"
         [ -f "${restore_src}" ] || continue
 
-        restore_target="${MODULE_PATH}/${restore_file}"
         mkdir -p "$(dirname "${restore_target}")" 2>/dev/null
         # 原子替换: 同目录临时文件 + mv。cp 原地覆盖会有 O_TRUNC 窗口，
         # 并发的 setting_api get / crond 重读可能看到半截文件
@@ -203,6 +209,7 @@ restore_backup(){
     done
     # 模块目录外的文件按原绝对路径写回(同样原子替换)
     for extra_file in ${BACKUP_EXTRA_FILES}; do
+        rm -f "${extra_file}.restore."* 2>/dev/null
         restore_src="${latest_backup}extra/$(basename "${extra_file}")"
         [ -f "${restore_src}" ] || continue
         extra_tmp="${extra_file}.restore.$$"

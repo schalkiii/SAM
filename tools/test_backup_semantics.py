@@ -344,6 +344,26 @@ def main():
         c.check('mv 守卫: 失败路径释放锁', lock_calls(mod_off2),
                 ['acquire:setting', 'release:setting'])
 
+        # ---- 用例9: restore 清理被中断(cp 后 mv 前)留下的临时文件 ----
+        # 残留的 root.restore.<pid> 会被 busybox crond 当 crontab 加载重复执行
+        stale_base = base / 'stale'
+        mod_stale2 = build_env(stale_base)
+        run_backup(mod_stale2, stale_base, ['save'])  # 造一份完整备份
+        (mod_stale2 / 'etc' / 'crontabs' / 'root.restore.99999').write_text(
+            '0 4 * * * /data/adb/modules/SAM/scripts/update.sh\n', encoding='utf-8')
+        (stale_base / 'SAM-ad-hold.list.restore.99999').write_text(
+            '/data/data/com.test/files/ad\n', encoding='utf-8')
+        r = run_backup(mod_stale2, stale_base, ['restore'])
+        c.check('restore 退出码(残留清理)', r.returncode, 0)
+        c.check('crontab 中断残留被清理',
+                (mod_stale2 / 'etc' / 'crontabs' / 'root.restore.99999').exists(), False)
+        c.check('extra 中断残留被清理',
+                (stale_base / 'SAM-ad-hold.list.restore.99999').exists(), False)
+        c.check('残留清理后无其他临时文件', leftover_temps(mod_stale2), [])
+        c.check('残留清理后 crontab 内容正确',
+                (mod_stale2 / 'etc' / 'crontabs' / 'root').read_text(encoding='utf-8'),
+                'v1-etc/crontabs/root\n')
+
         return c.report()
     finally:
         shutil.rmtree(base, ignore_errors=True)
