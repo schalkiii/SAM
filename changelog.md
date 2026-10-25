@@ -1,9 +1,25 @@
-# Unreleased
+# 2026.10.25.3
+- 热修复: `backup.sh restore` 与 WebUI 配置写操作的竞态
+  - restore 此前完全不持锁且用 `cp -f` 原地覆盖，而 WebUI 工具页有「恢复最近备份」按钮：
+    恢复进行时另一标签页保存设置/定时任务会互相覆盖；`cp` 的截断窗口内并发的
+    `setting_api get` / crond 重读可能看到半截的 setting.conf / crontabs/root
+  - restore 现在持 setting 锁覆盖文件写入期(与 `set`/`cron set` 互斥)，锁只持到文件
+    写完——随后的服务重启由 service.sh 自己的锁串行化，不把 setting 锁握过重启；
+    成功与失败路径都确保释放
+  - 文件写入改为同目录临时文件 + `mv` 的原子替换(临时文件不放 tmp：重启会清 tmp，
+    且跨文件系统 mv 退化为拷贝)；`mv` 后补 `-f` 守卫——目标意外是目录时 mv 按 POSIX
+    会把临时文件移进目录并返回成功，守卫把这种假成功判失败
+  - 数据目录(AGH/SmartDNS/Mihomo)无法原子替换(先移走再换有消失窗口，中断即丢数据)，
+    保持原地覆盖：WebUI 不写它们，且恢复完成后服务重启会重新初始化
 - 配置锁契约统一: `setting_api.sh cron set` 与 `set`/`setarr`/`apply` 一致走 setting 锁
-  - 修复前定时任务保存是唯一不持锁的 WebUI 写入口，与文档「进程内互斥，避免 WebUI 与命令行
-    同时写导致互相覆盖」的契约不一致；成功与失败(整批拒绝)路径都确保释放锁
-  - `tools/test_cron_validate.py` 增补锁接线用例（19 → 29 项）：成功释放、陈旧锁自动恢复、
-    失败路径释放、`cron get` 读路径不取锁（记录型 stub 验证 acquire/release 调用序列）
+  - 修复前定时任务保存是唯一不持锁的 WebUI 写入口，与「进程内互斥，避免 WebUI 与
+    命令行同时写导致互相覆盖」的契约不一致；成功与失败(整批拒绝)路径都确保释放锁
+  - `tools/test_cron_validate.py` 增补锁接线用例（19 → 29 项）
+- 测试增补
+  - `tools/test_backup_semantics.py`（31 → 43 项）：restore 持锁并释放(真实锁 + 记录型
+    stub 双验证)、失败路径释放锁、原子替换无临时残留、`mv` 目录目标假成功守卫
+    (变异验证: 去掉 `-f` 守卫即失败)
+  - 五个测试文件合计 137 项断言，CI `module-check` 全量执行
 
 # 2026.10.25.2
 - 热修复: `backup.sh list` 在「没有任何完整备份」时输出为空

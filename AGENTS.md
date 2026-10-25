@@ -56,7 +56,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：最新 Release 为 **v20261025.2**，已推送 `main`、tag `v20261025.2` 与 Release 资产，CI `module-check` 通过；该版本是 v20261025.1 的热修复版（`backup.sh list_backup` sed 闭合分隔符缺失修复），并增补 4 个测试文件共 88 项断言（cron 校验 / tar 解包安全 / owner 探测降级 / 备份语义，合计测试 115 项）；v20261025.1 包含 v20261024.18 回归修复 + 二次 review 修复 + 定时任务/备份/默认密码增强 + 第三轮复审修复（sd.sh bind-tcp 单次插入、owner_supported 残留链清理、端口标签 key 修正、pack 清单补 proxy.sh）
+- 发布状态：最新 Release 为 **v20261025.3**，已推送 `main`、tag `v20261025.3` 与 Release 资产，CI `module-check` 通过；该版本是热修复版：① `backup.sh restore` 持 setting 锁覆盖文件写入期（与 `set`/`cron set` 互斥，锁不握过服务重启），文件写入改同目录临时文件 + `mv` 原子替换并加 `-f` 守卫（mv 对目录目标是"移入"而非报错）；② `setting_api.sh cron set` 补配置锁统一 WebUI 写入口互斥语义；③ 测试增补 24 项断言（备份语义 31→43、定时任务 19→29，五文件合计 137 项）；v20261025.2 为备份列表 sed 热修复 + 4 个新测试文件 88 项断言；v20261025.1 包含 v20261024.18 回归修复 + 二次 review 修复 + 定时任务/备份/默认密码增强 + 第三轮复审修复（sd.sh bind-tcp 单次插入、owner_supported 残留链清理、端口标签 key 修正、pack 清单补 proxy.sh）
 - v20261024.18 回归已在工作区修复（发版前需全量验证）：`is_port_listening` 恢复「UDP 或 TCP 任一」并给 SmartDNS 补 `bind-tcp`；`dns.sh` 增加 `owner_supported` 探测（无 `xt_owner` 时跳过 owner 规则，结果缓存 `tmp/owner.supported`）；watchdog 的 `BLOCK_IPV6_DNS=false` 分支改调 `dns.sh disablev6`（只清 IPv6 侧，不碰 IPv4 劫持）
 - **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（与 `dns.sh select_dns_port` 同序），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
 - **服务锁等待**：`service.sh stop/restart` 锁等待 120/180 秒，匹配守护循环持锁做服务恢复的最坏时长；用户停止操作不会因等不到锁而静默失败

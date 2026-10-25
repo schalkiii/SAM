@@ -151,8 +151,18 @@ restore_backup(){
     fi
 
     # 还原前先留一份当前配置的快照: 还原本身不可逆(原文件被覆盖)，
-    # 没有快照的话还原错版本只能手动翻备份目录
+    # 没有快照的话还原错版本只能手动翻备份目录。
+    # 快照只读模块文件、只写备份根目录，与 WebUI 的原子写不冲突，无需持锁
     save_backup force > /dev/null 2>&1
+
+    # 持配置锁覆盖文件写入期: setting.conf / crontabs/root 正是 WebUI
+    # set / cron set 在写的文件，不互斥会互相覆盖(恢复把刚保存的设置冲掉)。
+    # 锁只持到文件写完——随后的服务重启可能耗时数十秒，由 service.sh 自己的
+    # 锁串行化；若把 setting 锁握过重启，WebUI 的保存操作会被堵到超时
+    sam_lock_acquire "setting" 30 || {
+        echo "获取配置锁失败，已有其他配置操作正在进行，请稍后重试"
+        return 1
+    }
 
     restore_count=0
     restore_failed=0
@@ -162,9 +172,16 @@ restore_backup(){
 
         restore_target="${MODULE_PATH}/${restore_file}"
         mkdir -p "$(dirname "${restore_target}")" 2>/dev/null
-        if cp -f "${restore_src}" "${restore_target}"; then
+        # 原子替换: 同目录临时文件 + mv。cp 原地覆盖会有 O_TRUNC 窗口，
+        # 并发的 setting_api get / crond 重读可能看到半截文件
+        # (临时文件不放 tmp: 重启会清 tmp，且跨文件系统 mv 会退化成拷贝)。
+        # mv 后补 -f 守卫: 目标意外是目录时 mv 会把临时文件移进目录并返回成功，
+        # 不加守卫会静默"恢复成功"但文件根本没被替换
+        restore_tmp="${restore_target}.restore.$$"
+        if cp -f "${restore_src}" "${restore_tmp}" && mv -f "${restore_tmp}" "${restore_target}" && [ -f "${restore_target}" ]; then
             restore_count=$((restore_count + 1))
         else
+            rm -f "${restore_tmp}" 2>/dev/null
             restore_failed=1
             echo "恢复失败: ${restore_file}"
         fi
@@ -174,6 +191,9 @@ restore_backup(){
         [ -d "${restore_src}" ] || continue
         restore_target="${MODULE_PATH}/${restore_dir}"
         mkdir -p "${restore_target}" 2>/dev/null
+        # 目录无法原子替换(先移走再换会有目标消失窗口，中断即丢数据)，
+        # 保持原地覆盖: 这些是 AGH/SmartDNS/Mihomo 的数据目录，WebUI 不写它们，
+        # 且恢复完成后服务重启会重新初始化
         if cp -R -f "${restore_src}/." "${restore_target}" 2>/dev/null; then
             restore_count=$((restore_count + 1))
         else
@@ -181,17 +201,21 @@ restore_backup(){
             echo "恢复失败: ${restore_dir}"
         fi
     done
-    # 模块目录外的文件按原绝对路径写回
+    # 模块目录外的文件按原绝对路径写回(同样原子替换)
     for extra_file in ${BACKUP_EXTRA_FILES}; do
         restore_src="${latest_backup}extra/$(basename "${extra_file}")"
         [ -f "${restore_src}" ] || continue
-        if cp -f "${restore_src}" "${extra_file}"; then
+        extra_tmp="${extra_file}.restore.$$"
+        if cp -f "${restore_src}" "${extra_tmp}" && mv -f "${extra_tmp}" "${extra_file}" && [ -f "${extra_file}" ]; then
             restore_count=$((restore_count + 1))
         else
+            rm -f "${extra_tmp}" 2>/dev/null
             restore_failed=1
             echo "恢复失败: ${extra_file}"
         fi
     done
+
+    sam_lock_release "setting"
 
     if [ ${restore_failed} -ne 0 ]; then
         echo "备份恢复未完整完成，请检查磁盘与权限"

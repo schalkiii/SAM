@@ -35,7 +35,8 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## ⚠️ 当前已知问题与发布状态
 
-- 最新 Release 是 **v20261025.2**（已推送 tag、Release 资产与 CI 校验通过）。
+- 最新 Release 是 **v20261025.3**（已推送 tag、Release 资产与 CI 校验通过）。
+- v20261025.3 是热修复版：① `backup.sh restore` 此前后不持锁且原地覆盖，与 WebUI「恢复最近备份」按钮交叉时会互相覆盖设置、并发读取可能看到半截文件——现在 restore 持配置锁覆盖文件写入期，文件写入改为同目录临时文件 + `mv` 原子替换（目标意外是目录时 mv 会"假成功"，已加 `-f` 守卫）；② `setting_api.sh cron set` 补上配置锁，与 `set`/`setarr`/`apply` 统一互斥语义；③ 测试增补 24 项断言（备份语义 31→43、定时任务 19→29，合计 137 项）。
 - v20261025.2 是 v20261025.1 的热修复版：`backup.sh list_backup` 的行尾 sed 少一个闭合分隔符（`s|$| (未完成)/` 应为 `s/$/ (未完成)/`），导致未完成备份列表为空；该问题由新增测试用例逮出并修复，同时增补 4 个测试文件共 88 项断言（定时任务校验、tar 解包安全、owner 探测降级、备份语义），测试总数达 115 项。
 - v20261024.18 的已知问题均已在 v20261025.1 修复：`is_port_listening` 曾改为要求 TCP 与 UDP 同时监听；SmartDNS 默认只有 `bind`（UDP），会被误判为“未监听”。表现：开启直通再关闭后 SmartDNS 计数一直为零而 AGH 计数持续增长（查询全部走了 AGH）。修复版改回「任一协议在监听即可用」并给 SmartDNS 补 `bind-tcp`；卸载残留（`SAM.previous`/`SAM-activate.sh` 导致 repair 复活已卸载模块）也已一并清理。
 - v20261025.1 同时包含：watchdog 过度重启修复（同名端口恢复不再重启 AGH/Mihomo，缓存与统计保留）、DNS owner 无 xt_owner 降级、IPv6 分支不再误删 IPv4 劫持、广告屏蔽/更新/备份/卸载加固、定时任务 WebUI、每日自动备份、默认密码与 TTL 下限调整、直通切换不重启服务。

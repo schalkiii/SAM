@@ -11,6 +11,9 @@
   - 轮转只数已完成备份，最多保留 5 份
   - save 失败(备份根目录不可建)时不写标记、不轮转
   - restore 前的安全快照不受 BACKUP_CONF=false 限制
+  - restore 持配置锁覆盖文件写入期(与 WebUI set/cron set 互斥)，
+    成功与失败路径都释放；文件写入为同目录临时文件 + mv 的原子替换，
+    正常与失败路径都不留临时残留
 
 用法:
     python tools/test_backup_semantics.py            # 跑全部用例
@@ -100,6 +103,45 @@ def run_backup(mod, base, args):
         capture_output=True, text=True, encoding='utf-8', errors='replace',
         cwd=base.as_posix(),
     )
+
+
+def stub_lock(mod):
+    """在 base.sh 副本末尾追加记录型锁 stub
+
+    shell 里后定义的函数覆盖先定义的，追加在末尾即可透明替换真实实现。
+    记录 acquire/release 调用序列到 ${TMP_PATH}/lock.calls。
+    """
+    p = mod / 'scripts' / 'base.sh'
+    with p.open('a', encoding='utf-8') as f:
+        f.write(
+            '\n# 测试 stub: 记录锁调用序列，覆盖上面的真实实现\n'
+            'sam_lock_acquire(){ printf "acquire:%s\\n" "${1}" >> "${TMP_PATH}/lock.calls"; return 0; }\n'
+            'sam_lock_release(){ printf "release:%s\\n" "${1}" >> "${TMP_PATH}/lock.calls"; return 0; }\n'
+        )
+
+
+def lock_calls(mod):
+    calls_file = mod / 'tmp' / 'lock.calls'
+    if not calls_file.exists():
+        return []
+    return calls_file.read_text(encoding='utf-8').splitlines()
+
+
+def clear_lock_calls(mod):
+    (mod / 'tmp' / 'lock.calls').unlink(missing_ok=True)
+
+
+def leftover_temps(root):
+    """收集原子替换可能遗留的临时文件(模块内与备份根目录外都要查)"""
+    return sorted(p.name for p in root.rglob('*.restore.*'))
+
+
+def force_remove(path):
+    """删掉路径上的 whatever: rmtree 对文件会抛 NotADirectoryError"""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
 
 
 def completed_dirs(base):
@@ -254,6 +296,53 @@ def main():
         c.check('restore 内容正确',
                 (mod_off2 / 'etc' / 'hosts').read_text(encoding='utf-8'), 'restored-hosts\n')
         c.check('restore 前仍自动拍快照', len(completed_dirs(base / 'off2')), 2)
+
+        # ---- 用例8: restore 持配置锁 + 文件原子替换 ----
+        off2 = base / 'off2'
+        lock_dir = mod_off2 / 'tmp' / '.setting.lock'
+
+        # 8a 真实锁: 正常结束后锁目录不得残留(漏 release 会堵死后续 WebUI 写操作)，
+        # 且原子替换的临时文件全部清零
+        r = run_backup(mod_off2, off2, ['restore'])
+        c.check('restore 退出码(锁用例)', r.returncode, 0)
+        c.check('restore 后锁目录不残留', lock_dir.exists(), False)
+        c.check('restore 后模块内无临时残留', leftover_temps(mod_off2), [])
+        c.check('restore 后 extra 无临时残留', leftover_temps(off2), [])
+
+        # 8b 记录型 stub: 验证 acquire/release 调用序列(锁的接线)
+        stub_lock(mod_off2)
+        clear_lock_calls(mod_off2)
+        r = run_backup(mod_off2, off2, ['restore'])
+        c.check('restore 取锁并释放', lock_calls(mod_off2),
+                ['acquire:setting', 'release:setting'])
+        c.check('restore 后仍无临时残留', leftover_temps(mod_off2), [])
+
+        # 8c 写入失败也放锁: 把 etc/crontabs 占成文件，mkdir -p 与 cp 双双失败
+        # (不能把目标本身占成目录: POSIX mv 对目录目标是"移入"而非报错)——
+        # 漏放锁的话后续 WebUI 保存全被堵到 30 秒超时
+        force_remove(mod_off2 / 'etc' / 'crontabs')
+        (mod_off2 / 'etc' / 'crontabs').write_text('not a dir\n', encoding='utf-8')
+        clear_lock_calls(mod_off2)
+        r = run_backup(mod_off2, off2, ['restore'])
+        c.check('restore 失败退出码', r.returncode, 1)
+        c.check('restore 失败提示', '未完整完成' in r.stdout, True)
+        c.check('restore 失败路径也释放锁', lock_calls(mod_off2),
+                ['acquire:setting', 'release:setting'])
+        c.check('restore 失败后无临时残留', leftover_temps(mod_off2), [])
+
+        # 8d mv 守卫: 目标被占成目录时 mv 按 POSIX 把临时文件"移入"目录并返回
+        # 成功，-f 守卫必须把这种假成功判失败(临时文件会被移进目录，故不查残留)
+        force_remove(mod_off2 / 'etc' / 'crontabs')
+        (mod_off2 / 'etc' / 'crontabs').mkdir()
+        (mod_off2 / 'etc' / 'crontabs' / 'root').write_text(
+            'current-cron\n', encoding='utf-8', newline='\n')
+        force_remove(mod_off2 / 'etc' / 'hosts')
+        (mod_off2 / 'etc' / 'hosts').mkdir()
+        clear_lock_calls(mod_off2)
+        r = run_backup(mod_off2, off2, ['restore'])
+        c.check('mv 守卫: 目标为目录判失败', r.returncode, 1)
+        c.check('mv 守卫: 失败路径释放锁', lock_calls(mod_off2),
+                ['acquire:setting', 'release:setting'])
 
         return c.report()
     finally:
