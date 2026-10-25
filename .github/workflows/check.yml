@@ -31,3 +31,17 @@ jobs:
 
       - name: 广告屏蔽回归测试
         run: python tools/test_ad_sh.py
+
+      # 配置接口 / 归档安全 / 能力探测 / 备份语义回归
+      # 这些用例从脚本中抽取真实函数或搭临时模块目录，不依赖设备环境
+      - name: 定时任务校验回归测试
+        run: python tools/test_cron_validate.py
+
+      - name: 归档安全校验回归测试
+        run: python tools/test_tar_guard.py
+
+      - name: owner 能力探测回归测试
+        run: python tools/test_owner_probe.py
+
+      - name: 备份语义回归测试
+        run: python tools/test_backup_semantics.py

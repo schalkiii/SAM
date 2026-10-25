@@ -1,3 +1,16 @@
+# 2026.10.25.2
+- 热修复: `backup.sh list` 在「没有任何完整备份」时输出为空
+  - 行尾追加标记的 sed 写成 `s/$| (未完成)/`，少一个闭合分隔符，GNU/busybox sed 均报
+    `unterminated s command`；改为 `s/$/ (未完成)/` 后未完成备份正常列出供排查
+  - 该问题由 v20261025.1 的备份语义修复引入，发布前无自动化用例覆盖，已被新增的
+    `tools/test_backup_semantics.py` 逮住并纳入 CI
+- 测试增补（software-improvement 测试分支，对应审计建议 S-2）
+  - 新增 `tools/test_cron_validate.py`（19 项）：cron get/set 合法行、非法行整批拒绝且不碰原文件、清空语义
+  - 新增 `tools/test_tar_guard.py`（18 项）：从 `update.sh` 抽取真实 `safe_tar_extract`，覆盖链接/穿越/绝对路径/成员数与体积上限/垃圾内容
+  - 新增 `tools/test_owner_probe.py`（20 项）：从 `dns.sh` 抽取真实 `owner_supported`，mock iptables 驱动支持/不支持/残留链/缓存命中/幂等五场景
+  - 新增 `tools/test_backup_semantics.py`（31 项）：`.complete` 完成标记、restore 先选目标再拍快照、extra 清单往返、轮转、失败不轮转、快照不受开关限制
+  - 四个用例共 88 项断言，连同既有 `test_ad_sh.py` 27 项，CI `module-check` 全量执行
+
 # 2026.10.25.1
 - 修复 v20261024.18 回归与二次全面 review 发现的问题
   - `is_port_listening` 改回「TCP 与 UDP 任一在监听即可用」：SmartDNS 默认只有 `bind`（UDP），旧判定把它误判为未监听，DNS 入口选择跳过 SmartDNS，表现为「开启直通再关闭后 SmartDNS 计数一直是零、AGH 计数持续增长」；同时给 SmartDNS 补 `bind-tcp`，53 的 TCP 查询（大响应/截断重试）不再被拒绝

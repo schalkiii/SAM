@@ -131,7 +131,9 @@ list_backup(){
         if [ -z "${incomplete_list}" ]; then
             echo "暂无备份"
         else
-            echo "${incomplete_list}" | sed "s|${BACKUP_ROOT}/||; s|/$||" | sed 's/$| (未完成)/'
+            # 行尾追加 " (未完成)" 标记: s/$/ (未完成)/ 的 / 分隔符必须成对，
+            # 早先写成 s/$| (未完成)/ 少一个闭合符，sed 直接报语法错误、列表为空
+            echo "${incomplete_list}" | sed "s|${BACKUP_ROOT}/||; s|/$||" | sed 's/$/ (未完成)/'
         fi
         return 0
     fi
