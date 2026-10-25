@@ -217,9 +217,27 @@ fi
 
 echo ""
 echo "SmartDNS 软链:"
-kv "  bin/smartdns" "$([ -e "${MODULE_PATH}/bin/smartdns" ] && echo 存在 || echo 缺失)"
-kv "  lib/ld-musl-aarch64.so.1" "$([ -e "${MODULE_PATH}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" ] && echo 存在 || echo 缺失)"
-kv "  lib/ld-linux.so" "$([ -e "${MODULE_PATH}/etc/SmartDNS/lib/ld-linux.so" ] && echo 存在 || echo 缺失)"
+# 三种状态必须分开: 悬空链(-L 真/-e 假)是更新后 mv 目录的典型后果，
+# 只看 -e 会显示"缺失"，让人误以为是没建过链接
+smartdns_link_state(){
+    [ -e "${1}" ] && { echo "存在"; return 0; }
+    if [ -L "${1}" ]; then
+        echo "悬空 -> $(readlink "${1}" 2>/dev/null)"
+    else
+        echo "缺失"
+    fi
+}
+smartdns_link_missing=0
+for smartdns_link in \
+    "${MODULE_PATH}/bin/smartdns" \
+    "${MODULE_PATH}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" \
+    "${MODULE_PATH}/etc/SmartDNS/lib/ld-linux.so"; do
+    smartdns_link_now=$(smartdns_link_state "${smartdns_link}")
+    kv "  ${smartdns_link#${MODULE_PATH}/}" "${smartdns_link_now}"
+    [ "${smartdns_link_now}" = "存在" ] || smartdns_link_missing=1
+done
+[ "${smartdns_link_missing}" = "1" ] && \
+    echo "  >>> 软链不可用会导致 setuidgid: can't execute 'smartdns'。执行 service.sh restart 由 ensure_module_links 重建(悬空链会自动删除重建)"
 kv "  smartdns 可执行" "$([ -x "${MODULE_PATH}/etc/SmartDNS/smartdns" ] && echo yes || echo NO)"
 kv "  AdGuardHome 可执行" "$([ -x "${MODULE_PATH}/bin/AdGuardHome" ] && echo yes || echo NO)"
 

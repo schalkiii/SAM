@@ -30,20 +30,43 @@ has_cmd(){
 # SmartDNS 是 musl 动态链接的可执行文件，缺少 loader 软链时 exec 会直接失败，
 # 表现为「AGH 能起来、SmartDNS 起不来」。开机脚本只在真开机时建这些链接，
 # 软重启 / 临时 root 场景必须由运行时补齐。
+# 建立/修复一条模块内软链(link_path, target)
+# 两个要点都是实测踩出来的:
+#   1. 目标用**相对路径**: 模块更新先把新版本建在 modules_update 再 mv 到
+#      modules，绝对目标在 mv 后指向已消失的 modules_update，直接变悬空链
+#   2. 悬空链(-L 真 / -e 假)必须删掉重建: 只看"链接是否存在"的守卫会一直
+#      跳过它，表现为 SmartDNS 永远起不来(setuidgid: can't execute 'smartdns')
+repair_module_link(){
+    [ -e "${1}" ] && return 0
+    mkdir -p "$(dirname "${1}")" 2>/dev/null
+    rm -f "${1}" 2>/dev/null
+    ln -s "${2}" "${1}" 2>/dev/null || log "e" "创建软链失败: ${1} -> ${2}"
+}
+
 ensure_module_links(){
-    [ -d "${BIN_PATH}" ] || return 0
+    # bin/ 缺失时建出来: 模块更新/半截解压后目录可能不完整
+    [ -d "${BIN_PATH}" ] || mkdir -p "${BIN_PATH}" 2>/dev/null
 
-    if [ ! -e "${BIN_PATH}/${SMARTDNS_BIN}" ] && [ ! -L "${BIN_PATH}/${SMARTDNS_BIN}" ]; then
-        ln -s "${SMARTDNS_PATH}/${SMARTDNS_BIN}" "${BIN_PATH}/${SMARTDNS_BIN}" 2>/dev/null
-    fi
+    # SmartDNS 是 musl 二进制，ELF 解释器写成相对路径 "lib/ld-musl-aarch64.so.1"，
+    # 解析基准是进程 CWD(service/sd.sh 会 cd 到 SMARTDNS_PATH)。三条软链缺一不可:
+    #   bin/smartdns                            PATH 查找(service_exec 按裸名调用)
+    #   etc/SmartDNS/lib/ld-musl-aarch64.so.1   解释器 → libc.so
+    #   etc/SmartDNS/lib/ld-linux.so            解释器兼容名
+    repair_module_link "${BIN_PATH}/${SMARTDNS_BIN}" "../etc/SmartDNS/${SMARTDNS_BIN}"
+    repair_module_link "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" "libc.so"
+    repair_module_link "${SMARTDNS_PATH}/lib/ld-linux.so" "ld-musl-aarch64.so.1"
 
-    if [ ! -e "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" ] && [ ! -L "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" ]; then
-        ln -s "${SMARTDNS_PATH}/lib/libc.so" "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" 2>/dev/null
-    fi
-
-    if [ ! -e "${SMARTDNS_PATH}/lib/ld-linux.so" ] && [ ! -L "${SMARTDNS_PATH}/lib/ld-linux.so" ]; then
-        ln -s "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" "${SMARTDNS_PATH}/lib/ld-linux.so" 2>/dev/null
-    fi
+    # 建完复查: 缺链时给出定位用的具体路径，不再只靠 exec 的 ENOENT 反推
+    for link_path in "${BIN_PATH}/${SMARTDNS_BIN}" \
+                     "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" \
+                     "${SMARTDNS_PATH}/lib/ld-linux.so"; do
+        [ -e "${link_path}" ] && continue
+        if [ -L "${link_path}" ]; then
+            log "e" "软链悬空: ${link_path} -> $(readlink "${link_path}" 2>/dev/null)"
+        else
+            log "e" "软链缺失且创建失败: ${link_path}"
+        fi
+    done
 }
 
 # 把进程从当前会话/进程组里剥离

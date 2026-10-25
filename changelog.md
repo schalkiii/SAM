@@ -1,3 +1,25 @@
+# 2026.10.25.5
+- 修复: 免重启更新后 SmartDNS 起不来（软链悬空）
+  - 现象: 日志只有 `setuidgid: can't execute 'smartdns': No such file or directory`，
+    诊断页「SmartDNS 软链」三项显示缺失；AGH 正常、SmartDNS 反复被守护拉起又失败
+  - 根因: 免重启激活先在 `modules_update` 用**绝对路径**建链，再 `mv` 到 `modules`，
+    目标随之失效变成悬空链；而 `ensure_module_links` / `fix_symlink` 的守卫是
+    `[ ! -e ] && [ ! -L ]`，悬空链 `-L` 为真 → 永远跳过重建，故障自愈不了
+  - 修复: ① 建链改用**相对目标**（`bin/smartdns → ../etc/SmartDNS/smartdns`、
+    `lib/ld-musl-aarch64.so.1 → libc.so`、`ld-linux.so → ld-musl-aarch64.so.1`），
+    `mv` 目录后依然有效；② 悬空链（`-L` 真 / `-e` 假）删掉重建；③ `bin/` 缺失时自建；
+    ④ 建完复查并在仍不可用时写 ERROR（带悬空目标），不再静默
+  - `service/sd.sh` 启动前显式校验软链，把「二进制不在 PATH」与「musl 解释器缺失」
+    拆成两条可定位的错误，不再混成一条 ENOENT
+  - `diagnose.sh` 软链检查改为三态（存在/悬空→目标/缺失），缺链时直接给出修复命令
+  - 新增 `tools/test_module_links.py`（20 项）锁定相对目标、悬空链重建、幂等、
+    bin 自建、目标缺失报错；CI 纳入
+- WebUI: 输出窗口增加「全选复制」
+  - 工具页「输出」与「运行日志」各加一个「全选复制」按钮：一键复制全部文本，
+    提示复制的行数与字符数；诊断日志动辄两三百行，手机上手动全选容易漏行
+  - 三层回退: Clipboard API → textarea + execCommand → 选中文本提示长按复制
+    （KSU WebView 的剪贴板权限因内核版本而异，单靠 Clipboard API 会静默失败）
+
 # 2026.10.25.4
 - 修复与加固（第二轮审计 S-2~S-9）
   - restore 在拷贝前无条件清理上次被中断留下的 `${target}.restore.*` 临时文件：残留的 `etc/crontabs/root.restore.<pid>` 会被 busybox crond 当作 crontab 加载并重复执行其中的 cron 行（`crond -c` 加载目录下所有文件）

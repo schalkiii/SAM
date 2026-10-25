@@ -91,6 +91,17 @@ start(){
         return 1
     fi
     ensure_module_links
+    # 软链补齐后仍然不可用就直接报明确原因: 否则 exec 只会给
+    # "setuidgid: can't execute 'smartdns': No such file or directory"，
+    # 把"二进制不在 PATH"和"musl 解释器缺失"两种情况混成一条无从下手的错误
+    if [ ! -e "${BIN_PATH}/${SMARTDNS_BIN}" ]; then
+        log "e" "${SMARTDNS_BIN} 软链不可用: ${BIN_PATH}/${SMARTDNS_BIN} -> ../etc/SmartDNS/${SMARTDNS_BIN}"
+        return 1
+    fi
+    if [ ! -e "${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1" ]; then
+        log "e" "${SMARTDNS_BIN} 的 musl 解释器缺失: ${SMARTDNS_PATH}/lib/ld-musl-aarch64.so.1"
+        return 1
+    fi
 
     # 进入工作路径，并启动
     cd ${SMARTDNS_PATH}

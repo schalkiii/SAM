@@ -112,20 +112,25 @@ fix_permission(){
     mkdir -p "${target_dir}/tmp"
 }
 
+# 建立/修复一条软链(link_path, target)
+# manual.sh 故意不 source base.sh(安装/激活阶段 base.sh 可能还不可用)，
+# 所以规则在这里复制一份，与 base.sh ensure_module_links 保持一致:
+#   目标用相对路径(mv 到 modules 后仍有效)，悬空链(-L 真/-e 假)必须重建
+fix_one_link(){
+    [ -e "${1}" ] && return 0
+    mkdir -p "$(dirname "${1}")" 2>/dev/null
+    rm -f "${1}" 2>/dev/null
+    ln -s "${2}" "${1}" 2>/dev/null
+}
+
 # 重建开机脚本会创建的那几个软链接
 fix_symlink(){
     target_dir="${1}"
     [ -d "${target_dir}" ] || return 1
 
-    if [ ! -e "${target_dir}/bin/smartdns" ] && [ ! -L "${target_dir}/bin/smartdns" ]; then
-        ln -s "${target_dir}/etc/SmartDNS/smartdns" "${target_dir}/bin/smartdns" 2>/dev/null
-    fi
-    if [ ! -e "${target_dir}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" ] && [ ! -L "${target_dir}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" ]; then
-        ln -s "${target_dir}/etc/SmartDNS/lib/libc.so" "${target_dir}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" 2>/dev/null
-    fi
-    if [ ! -e "${target_dir}/etc/SmartDNS/lib/ld-linux.so" ] && [ ! -L "${target_dir}/etc/SmartDNS/lib/ld-linux.so" ]; then
-        ln -s "${target_dir}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" "${target_dir}/etc/SmartDNS/lib/ld-linux.so" 2>/dev/null
-    fi
+    fix_one_link "${target_dir}/bin/smartdns" "../etc/SmartDNS/smartdns"
+    fix_one_link "${target_dir}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" "libc.so"
+    fix_one_link "${target_dir}/etc/SmartDNS/lib/ld-linux.so" "ld-musl-aarch64.so.1"
 }
 
 # 校验模块目录结构：不能只看 module.prop，否则半截包会被当成可激活

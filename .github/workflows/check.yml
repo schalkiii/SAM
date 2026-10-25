@@ -58,3 +58,7 @@ jobs:
       # 守护循环的纯判定逻辑(健康判定/配置阻塞)，不启动守护循环本身
       - name: watchdog 纯逻辑回归测试
         run: python tools/test_watchdog_logic.py
+
+      # SmartDNS 依赖的三条软链: 相对目标 + 悬空链重建(更新后 mv 目录的坑)
+      - name: 模块软链回归测试
+        run: python tools/test_module_links.py

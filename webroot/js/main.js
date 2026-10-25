@@ -419,6 +419,72 @@ async function clearLog() {
     showToast("日志已清空");
 }
 
+// 复制输出窗口的全部文本(诊断日志动辄两三百行，手机上手动全选很容易漏行)
+// 三层回退: Clipboard API -> textarea+execCommand -> 选中文本提示长按复制。
+// KSU WebView 的剪贴板权限因内核版本而异，单靠 Clipboard API 会静默失败，
+// 所以每一层失败都要继续往下走，不能只 catch 后放弃。
+async function copyWindowText(elementId) {
+    const view = document.getElementById(elementId);
+    if (!view) return;
+    const text = (view.textContent || "").trim();
+    // 占位文案不是内容，复制出去只会让人以为拿到了日志
+    const placeholders = [
+        "点击「刷新」查看最近日志",
+        "点击上面的按钮执行，结果会显示在这里",
+        "(日志已清空)",
+    ];
+    if (!text || placeholders.indexOf(text) >= 0) {
+        showToast("当前没有可复制的内容");
+        return;
+    }
+
+    let copied = false;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            copied = true;
+        } catch (err) {
+            copied = false;
+        }
+    }
+
+    if (!copied) {
+        try {
+            const helper = document.createElement("textarea");
+            helper.value = text;
+            helper.setAttribute("readonly", "");
+            helper.style.position = "fixed";
+            helper.style.top = "-1000px";
+            helper.style.left = "-1000px";
+            document.body.appendChild(helper);
+            helper.select();
+            helper.setSelectionRange(0, helper.value.length);
+            copied = document.execCommand("copy");
+            document.body.removeChild(helper);
+        } catch (err) {
+            copied = false;
+        }
+    }
+
+    if (!copied) {
+        // 最后兜底: 把文本整段选中，至少让用户能长按复制
+        try {
+            const range = document.createRange();
+            range.selectNodeContents(view);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            showToast("已选中全部内容，请长按复制");
+        } catch (err) {
+            showToast("复制失败，请长按选择文本");
+        }
+        return;
+    }
+
+    const lineCount = text.split("\n").length;
+    showToast(`已复制 ${lineCount} 行 / ${text.length} 字符`);
+}
+
 // 多行文本 -> 数组
 function splitLines(text) {
     return String(text || "")
@@ -969,6 +1035,14 @@ async function resumeModule() {
     const logClearBtn = document.getElementById("log-clear");
     if (logClearBtn) {
         logClearBtn.addEventListener("click", clearLog);
+    }
+    const logCopyBtn = document.getElementById("log-copy");
+    if (logCopyBtn) {
+        logCopyBtn.addEventListener("click", () => copyWindowText("log-view"));
+    }
+    const toolOutputCopyBtn = document.getElementById("tool-output-copy");
+    if (toolOutputCopyBtn) {
+        toolOutputCopyBtn.addEventListener("click", () => copyWindowText("tool-output"));
     }
 
     const adListBtn = document.getElementById("ad-list-btn");
