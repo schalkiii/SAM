@@ -43,7 +43,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 监听地址由 `LAN_ACCESS` 决定（默认 false = 只回环）：AGH 在 `update/agh.sh` 改写并开放面板/DNS，SmartDNS 在 `service/sd.sh` 启动前改写；Mihomo 控制台/mixed-port/DNS 始终只监听 127.0.0.1（无鉴权控制面与开放代理不能暴露到局域网）
 - `scripts/backup.sh` 把配置备份到 `/data/adb/SAM-backup/<时间>/`（root-only；不要放 `/sdcard`，备份含订阅链接与节点密码，且 restore 信任备份内容）。备份写完成标记 `.complete`，`list`/`restore` 只认完整备份；`restore` 前自动留存当前配置快照；广告屏蔽清单 `/data/adb/SAM-ad-hold.list` 存到备份的 `extra/` 并按原路径恢复；watchdog 每天自动备份一次
 - `scripts/ad.sh list` 输出广告屏蔽的影响范围（App|路径|状态|备份KB），WebUI「查看影响范围」用它；`scripts/ad.sh hold` 列出广告备份路径与占用总量
-- 广告屏蔽是**改名保留**不是删除：屏蔽时把内容 `mv` 到 `<路径>.samhold`，原位置重建空目录并 `chattr +i`；恢复时改回原名。备份清单在 `/data/adb/SAM-ad-hold.list`（模块目录外，重装不丢）；二次屏蔽会把旧备份保留为 `.samhold.prev.<时间戳>`，rename 失败则跳过而不是删数据
+- 广告屏蔽是**改名保留**不是删除：屏蔽时把内容 `mv` 到 `<路径>.samhold`，原位置重建空目录并 `chattr +i`；恢复时改回原名。备份清单在 `/data/adb/SAM-ad-hold.list`（模块目录外，重装不丢）；二次屏蔽发现「有旧备份但未锁定」时**跳过屏蔽并提示先 recovery**（`.prev.*` 另存方案已废弃，见设计文档 §14），rename 失败同样跳过而不是删数据；`cleanup purge` 会清理历史版本遗留的 `.samhold.prev.*` 孤立目录
 - `chattr +i` 会阻止系统卸载时删除 App 数据：`ad.sh cleanup` 在包已不存在时解除 immutable 并删除空壳（默认保留 `.samhold`），`cleanup purge` 才删孤儿备份；由启动、守护循环与 WebUI 工具触发，`ad.sh` 有进程锁
 - hosts 监控监听 `etc/` 目录而不是单个文件：`update/host.sh` 用 mv 原子替换后 inode 会变，必须重挂 bind mount；`inotify/host.sh` 处理 moved_to/close_write
 - `scripts/update.sh` 先检查版本并下载，替换当前组件前停服务，替换后做 `-v` 自检并自动回滚；不要在服务运行时直接 `cp` 二进制
@@ -57,9 +57,10 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
 - 发布状态：最新 Release 为 **v20261025.3**，已推送 `main`、tag `v20261025.3` 与 Release 资产，CI `module-check` 通过；该版本是热修复版：① `backup.sh restore` 持 setting 锁覆盖文件写入期（与 `set`/`cron set` 互斥，锁不握过服务重启），文件写入改同目录临时文件 + `mv` 原子替换并加 `-f` 守卫（mv 对目录目标是"移入"而非报错）；② `setting_api.sh cron set` 补配置锁统一 WebUI 写入口互斥语义；③ 测试增补 24 项断言（备份语义 31→43、定时任务 19→29，五文件合计 137 项）；v20261025.2 为备份列表 sed 热修复 + 4 个新测试文件 88 项断言；v20261025.1 包含 v20261024.18 回归修复 + 二次 review 修复 + 定时任务/备份/默认密码增强 + 第三轮复审修复（sd.sh bind-tcp 单次插入、owner_supported 残留链清理、端口标签 key 修正、pack 清单补 proxy.sh）
-- v20261024.18 回归已在工作区修复（发版前需全量验证）：`is_port_listening` 恢复「UDP 或 TCP 任一」并给 SmartDNS 补 `bind-tcp`；`dns.sh` 增加 `owner_supported` 探测（无 `xt_owner` 时跳过 owner 规则，结果缓存 `tmp/owner.supported`）；watchdog 的 `BLOCK_IPV6_DNS=false` 分支改调 `dns.sh disablev6`（只清 IPv6 侧，不碰 IPv4 劫持）
+- v20261024.18 回归（`is_port_listening` 曾要求 TCP+UDP 同时监听，SmartDNS 只有 UDP bind 被误判未监听 → 计数为零）已于 v20261025.1 修复并发布：恢复「任一协议监听即可用」+ SmartDNS 补 `bind-tcp`；`dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；watchdog 的 `BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
 - **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（与 `dns.sh select_dns_port` 同序），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
 - **服务锁等待**：`service.sh stop/restart` 锁等待 120/180 秒，匹配守护循环持锁做服务恢复的最坏时长；用户停止操作不会因等不到锁而静默失败
+- **setting 配置锁（跨文件边界，改动前三思）**：`sam_lock_acquire "setting" 30`（base.sh 实现，目录锁 + PID 陈旧检测）。持有者：`setting_api.sh` 的 `set`/`setarr`/`apply`/`cron set`（写 `setting.conf`/`etc/crontabs/root`）+ `backup.sh restore` 的**文件写入期**（持锁不含快照与服务重启——restart 由 service.sh 自己的锁串行化）。读路径（`get`/`cron get`/`save`）不持锁：原子写下读者只会看到完整文件。新增 WebUI 写入口必须走同一把锁
 - **手动激活失败保留现场**：校验不过的新包移到 `/data/adb/SAM.rejected.<时间>`；卸载清理 `/data/adb/SAM-activate.sh`、`SAM-activate.log`、`SAM.previous`、rejected/old 残留，`repair` 不能复活已卸载模块
 - **广告屏蔽稳健性**：`is_locked` 以 `HOLD_LIST` 为权威 + lsattr 属性列解析（不把路径当正则）；「有旧备份但未锁定」跳过屏蔽并提示先 recovery；占位目录/文件按原属主权限重建，`chattr +i` 失败用严格权限兜底；`ad.sh` 拿不到锁直接退出；purge 不删「空壳没删成」路径的备份
 - **更新安全**：`safe_tar_extract` 用 `-tvzf` 判链接类型位、`-tzf` 判成员名（原整行 `^/` 判断永远为假），加体积/成员数上限；缺 `sha256sum` 降级跳过校验；`update.sh` 有更新互斥锁

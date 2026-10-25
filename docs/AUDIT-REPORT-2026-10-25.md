@@ -4,6 +4,9 @@
 > 审计基线：commit `f143eea`（v20261025.1 发布后）
 > 本报告只记录发现与建议，**未修改任何代码**；每条建议可直接交给执行 Agent 开工。
 
+> **执行状态（2026-10-25 晚更新，报告本体保持审计时快照）**：
+> S-2 已实施并于 v20261025.2/v20261025.3 发布——新增 `test_cron_validate.py`/`test_tar_guard.py`/`test_owner_probe.py`/`test_backup_semantics.py` 四个文件，连同 `test_ad_sh.py` 共 5 个套件 137 项断言由 CI 全量执行；期间另修复两个真实缺陷（backup.sh sed 闭合分隔符、restore 无锁非原子写入）。S-1/S-3~S-7 仍待办；最新 Release 为 v20261025.3。
+
 ## 一、现状描述（可观察事实）
 
 ### 规模
