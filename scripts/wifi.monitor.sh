@@ -42,10 +42,12 @@ count_running_service(){
 }
 
 # 是否有任何服务期望运行；全禁用时不能反复执行 service.sh start
+# Mihomo 的判定统一用 base.sh 的 mihomo_expected: 这里漏掉直通判定会让
+# "直通 + 只启用 Mihomo"反复触发 service.sh start(启动又被直通分支停掉)
 any_service_enabled(){
     [ "${SMARTDNS_ENABLE}" = "true" ] && return 0
     [ "${AGH_ENABLE}" = "true" ] && return 0
-    [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && return 0
+    mihomo_expected && return 0
     return 1
 }
 

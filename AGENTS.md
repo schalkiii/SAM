@@ -8,11 +8,11 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 激活：`sh scripts/manual.sh activate`
 - 软重启后恢复：`sh scripts/manual.sh resume`（检测到待激活包时会先 `activate`；WebUI 按钮同步变为「激活并恢复新版」）
 - 卸载（不需要重启）：`sh scripts/manual.sh uninstall`
-- 打包：`python tools/pack_module.py`；只检查用 `--check`；不改源文件用 `--no-write`；打包会跳过 `tools/`、`dist/`、`.workbuddy/` 等非模块内容
+- 打包：`python tools/pack_module.py`；只检查用 `--check`；不改源文件用 `--no-write`；打包会跳过 `tools/`、`docs/`、`dist/`、`.workbuddy/` 等非模块内容
 - 广告屏蔽回归测试：`python tools/test_ad_sh.py`（改 `scripts/ad.sh` 后必跑，27 项断言）
-- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_backup_semantics.py`（backup.sh，48 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口回退链三处消费方一致性，66 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞，20 项）、`test_module_links.py`（SmartDNS 三条软链：相对目标/悬空链重建，20 项）。八套件合计 253 项断言
-- 版本一致性：`python tools/check_version_sync.py`（module.prop / update.json / changelog 三处必须对齐，CI 每次 push 跑）
-- 测试编写约定（照现有任一测试为范例）：driver 搭临时模块目录/路径重写、或从脚本**原样抽取真实函数体**（不复制实现，重构会立刻失败）；mock 用可执行文件或 driver 内函数覆盖；Checker 类统一输出「通过 N 项, 失败 M 项」；shell 函数不能当变量用（mksh 里 `${fn}` 展开为空）；依赖 PID 可见性的用例用 `live_pid_visible()` 门控（本机 sh.EXE 的 `kill -0` 看不到任何进程）
+- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_setting_transaction.py`（setting_api.sh 的 set/setarr 事务与端口批量校验，31 项）、`test_backup_semantics.py`（backup.sh，48 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口/下游上游选择 + check_dns_chain 参数，107 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞，20 项）、`test_module_links.py`（SmartDNS 三条软链 + 开机脚本复用 ensure_module_links，22 项；Windows 只跑 2 项静态断言）。九套件合计 327 项断言（本机 Windows 325 项，软链行为用例在 CI 执行）
+- 版本/文档一致性：`python tools/check_version_sync.py`（module.prop / update.json / changelog 版本对齐 + README/AGENTS 默认密码与 smartdns.conf 同值 + description 非占位，CI 每次 push 跑）
+- 测试编写约定（照现有任一测试为范例）：driver 搭临时模块目录/路径重写、或从脚本**原样抽取真实函数体**（不复制实现，重构会立刻失败）；mock 优先用 **driver 内函数覆盖**，不要用 PATH 注入的假可执行文件（MSYS 的 sh 会把 `/usr/bin` 前置，假程序永远排不上号，test_ad_sh 曾因此出现伪失败）；Checker 类统一输出「通过 N 项, 失败 M 项」；shell 函数不能当变量用（mksh 里 `${fn}` 展开为空）；依赖 PID 可见性的用例用 `live_pid_visible()` 门控（本机 sh.EXE 的 `kill -0` 看不到任何进程）
 
 ## 技术栈
 - 设备端 `/system/bin/sh` 是 mksh：支持数组、`(( ))`、`let`；不要用 bash 专属语法
@@ -31,7 +31,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - **配置文件清洗**：`base.sh` 的 `sanitize_config` 在 AGH/SmartDNS 启动前清理 UTF-8 BOM 与 CR；UTF-16 明确报错不自动转换。AGH 启动前跑 `--check-config`，失败写 `tmp/agh.config.bad`（内容 cksum）和 `agh.config.bad.reason`（`yaml`/`schema`/`encoding`/`generate`），守护循环据此暂停自动拉起，配置内容变化或手动重启后才重试
 - **服务用户降级**：三服务统一经 `base.sh` 的 `service_exec` 启动；`busybox setuidgid` 或独立 `setuidgid` 不可用时以 root 启动并在 `module.log` 记录 ERROR，避免临时 root 下三服务一起静默失败。当前 `SAM_USER=root`，只降组不降 UID，控制面仍需依赖回环监听和默认密码提醒。
 - **服务启停互斥**：`service.sh start/stop/restart`、watchdog 的服务/规则恢复、`setting_api apply` 共用 `base.sh` 的 PID 目录锁；watchdog 拿锁后会再次检查 `service.state`，避免停止屏障失效。WiFi 查询失败时保持现状，不把空 SSID 当成非黑名单。
-- **配置事务写入**：`setting_api.sh set/setarr` 先写临时副本，全部校验通过后一次 `mv`；端口冲突按同一批最终候选值校验，TTL 独立为 0-86400。
+- **配置事务写入**：`setting_api.sh set/setarr` 先写临时副本，全部校验通过后一次 `mv`；端口冲突按同一批最终候选值校验，TTL 边界 60-86400 由 `setting.sh` 的 `SMARTDNS_TTL_FLOOR/CEIL` 单一定义，并通过 `get` 下发（`SMARTDNS_TTL_FLOOR/CEIL` 两行只读字段），WebUI 不再硬编码。
 - **服务自动停止取证**：watchdog 在服务异常消失时写 `tmp/auto-stop.<bin>.*.log`，`diagnose.sh` 汇总 `SERVICE-EVENT`、`watchdog.heartbeat`、`oom_score_adj`、MIUI/`logcat` 杀进程线索。
 - **广告恢复保护**：文件类路径屏蔽期间的新内容改名到 `.samnew`，恢复失败返回非零；卸载只有全部恢复成功才删除 `/data/adb/SAM-ad-hold.list`。
 - **更新与安装安全**：组件下载优先校验 `.sha256`，tar 拒绝绝对路径/`..`/链接；AGH/Mihomo 替换失败会回滚；`customize.sh` 解压或关键文件失败会中止安装。
@@ -61,16 +61,18 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261025.3**（tag 与资产已推送，CI 通过）；**v20261025.7 已在本地构建**（`dist/SAM_20261025.7_release.zip`），尚未推送 tag / 创建 GitHub Release。v20261025.7 = 软链悬空修复（SmartDNS 起不来）+ WebUI 输出窗口全选复制 + 自动停止分析误判修复（不再把 `IOMEM: handleLmkdMessage` 当击杀证据）+ 默认凭据纠正为 root/root（AGH 模板 bcrypt 同源）+ 作者改为 Schalkiii + SmartDNS 面板登录保持 30 天（`smartdns-ui.token-expire`）。
+- 发布状态：线上最新 Release 为 **v20261025.3**（tag 与资产已推送，CI 通过）；**v20261025.8 已提交（本地构建）**，尚未推送 tag / 创建 GitHub Release。v20261025.8 = 第三轮审计修复（`docs/AUDIT-REPORT-2026-10-25-3.md` S-2~S-11）：下游上游链路合一（`dns_chain_upstream`，防 AGH↔Mihomo 互指转发环）+ watchdog 空端口分支改 `disable` + 开机 `service.sh` 复用 `ensure_module_links` + WebUI 挂载失败回滚/部分保存提示 + 出厂 crontab 高危任务默认注释 + TTL 边界由 `get` 下发 + `check_version_sync` 增加凭据/描述检查 + 九套件 327 项。v20261025.7 = 默认凭据恢复 root/root（AGH 模板 bcrypt 同源）+ 作者改为 Schalkiii + SmartDNS 面板登录保持 30 天；v20261025.5/6 = 软链悬空修复 + 输出窗口全选复制 + 自动停止分析误判修复。
 - v20261024.18 回归（`is_port_listening` 曾要求 TCP+UDP 同时监听，SmartDNS 只有 UDP bind 被误判未监听 → 计数为零）已于 v20261025.1 修复并发布：恢复「任一协议监听即可用」+ SmartDNS 补 `bind-tcp`；`dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；watchdog 的 `BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
-- **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（与 `dns.sh select_dns_port` 同序），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
+- **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（薄包装 `base.sh dns_entry_port`，SmartDNS 端口从 `smartdns.conf` 解析后实测监听，不依赖调用方预置变量），只有入口变化才跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留
+- **下游上游选择只有一处**：`base.sh dns_chain_upstream <consumer>` 按 `MODULE_DNS_MODE` 的链路（模式 1 = AGH→Mihomo→SmartDNS，模式 2 = Mihomo→AGH→SmartDNS）向后找第一个可用节点，**绝不回头**（回头会让两级服务互指形成转发环）；`update/agh.sh` 与 `update/mihomo.sh` 都必须用它，不允许各写回退链
+- **SmartDNS 软链只有一套规则**：`base.sh ensure_module_links`（相对目标 + 悬空链删掉重建）。开机脚本 `service.sh`、`service.sh start`、`manual.sh` 激活路径全部复用它，禁止再写 `ln -s` 的第二份实现（v20261025.5 的故障源）
 - **服务锁等待**：`service.sh stop/restart` 锁等待 120/180 秒，匹配守护循环持锁做服务恢复的最坏时长；用户停止操作不会因等不到锁而静默失败
 - **setting 配置锁（跨文件边界，改动前三思）**：`sam_lock_acquire "setting" 30`（base.sh 实现，目录锁 + PID 陈旧检测）。持有者：`setting_api.sh` 的 `set`/`setarr`/`apply`/`cron set`（写 `setting.conf`/`etc/crontabs/root`）+ `backup.sh restore` 的**文件写入期**（持锁不含快照与服务重启——restart 由 service.sh 自己的锁串行化）。读路径（`get`/`cron get`/`save`）不持锁：原子写下读者只会看到完整文件。新增 WebUI 写入口必须走同一把锁
 - **手动激活失败保留现场**：校验不过的新包移到 `/data/adb/SAM.rejected.<时间>`；卸载清理 `/data/adb/SAM-activate.sh`、`SAM-activate.log`、`SAM.previous`、rejected/old 残留，`repair` 不能复活已卸载模块
 - **广告屏蔽稳健性**：`is_locked` 以 `HOLD_LIST` 为权威 + lsattr 属性列解析（不把路径当正则）；「有旧备份但未锁定」跳过屏蔽并提示先 recovery；占位目录/文件按原属主权限重建，`chattr +i` 失败用严格权限兜底；`ad.sh` 拿不到锁直接退出；purge 不删「空壳没删成」路径的备份
 - **更新安全**：`safe_tar_extract` 用 `-tvzf` 判链接类型位、`-tzf` 判成员名（原整行 `^/` 判断永远为假），加体积/成员数上限；缺 `sha256sum` 降级跳过校验；`update.sh` 有更新互斥锁
 - **备份语义**：完成标记 `.complete`，`list`/`restore` 只认完整备份；失败不轮转不写标记；`restore` 前自动留存当前配置快照；备份含 `/data/adb/SAM-ad-hold.list`（存 `extra/`，按原路径恢复）；watchdog 每日自动备份（失败按小时重试）
-- **定时任务**：`setting_api.sh cron get|set` 一行一条参数传入，逐行校验时间字段（`@daily` 类支持，非法整批拒绝）；WebUI 工具页「定时任务」卡片编辑保存，busybox crond 下一分钟自动生效；清空全部行需确认
+- **定时任务**：`setting_api.sh cron get|set` 一行一条参数传入，逐行校验时间字段（`@daily` 类支持，非法整批拒绝）；WebUI 工具页「定时任务」卡片编辑保存，busybox crond 下一分钟自动生效；清空全部行需确认。出厂 `etc/crontabs/root` 的更新/重启/hosts 三条任务默认**注释**——`CRONTAB_ENABLE=true` 只启动 crond，不等于同意每日自动更新与重启，需要时在工具页取消注释
 - **WebUI 读路径全部按 errno**：allstatus/设置/日志/广告清单/挂载状态失败时明确报错；设置读取失败不填表单（防止空值覆盖后误保存）；服务页端口说明用 `data-port-label` 动态显示（`webui.sh` 输出 `smartdns_port`）
 - **`run.sh` 属主校验降级**：`stat -c %u` 不可用时跳过校验而不是拒绝所有命令
 - **默认密码**：SmartDNS/AGH 默认密码 `root`（AGH 模板为 bcrypt cost 12 哈希，与 SmartDNS 明文同源）；`SMARTDNS_TTL_MIN` 下限 60 秒（WebUI/API/加载三处一致）

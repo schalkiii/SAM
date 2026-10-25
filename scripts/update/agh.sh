@@ -6,7 +6,6 @@ source "/data/adb/modules/SAM/scripts/base.sh"
 sanitize_config "${AGH_CONF}"
 [ $? -eq 2 ] && exit 1
 
-SMARTDNS_PORT=$(smartdns_port)
 # 全文件改写的临时文件；每个修改函数写它再原子替换
 # 放在 TMP_PATH 而不是配置目录，进程被杀时不会在 AGH 目录里留垃圾
 AGH_TMP="${TMP_PATH}/agh.yaml.$$"
@@ -80,22 +79,17 @@ modify_conf(){
         return $?
     fi
 
-    # 判断 SmartDNS 启用且端口确实在监听，才把它作为上游
-    # 期望链路不可用时回退到另一个可用本地 DNS；全不可用才使用公共 DNS
-    if [ "${SMARTDNS_ENABLE}" = "true" ] && [ "${MODULE_DNS_MODE}" = "2" ] && \
-       isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
-        log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
-        replace_upstream "127.0.0.1:${SMARTDNS_PORT}"
-    elif [ "${MIHOMO_ENABLE}" = "true" ] && [ "${MODULE_DNS_MODE}" = "1" ] && \
-         isRun "${MIHOMO_BIN}" && is_port_listening "${MIHOMO_DNS_PORT}"; then
-        log "i" "${AGH_BIN} 上游DNS使用 ${MIHOMO_BIN}"
-        replace_upstream "127.0.0.1:${MIHOMO_DNS_PORT}"
-    elif [ "${SMARTDNS_ENABLE}" = "true" ] && isRun "${SMARTDNS_BIN}" && is_port_listening "${SMARTDNS_PORT}"; then
-        log "i" "${AGH_BIN} 上游DNS回退到 ${SMARTDNS_BIN}"
-        replace_upstream "127.0.0.1:${SMARTDNS_PORT}"
-    elif [ "${MIHOMO_ENABLE}" = "true" ] && isRun "${MIHOMO_BIN}" && is_port_listening "${MIHOMO_DNS_PORT}"; then
-        log "i" "${AGH_BIN} 上游DNS回退到 ${MIHOMO_BIN}"
-        replace_upstream "127.0.0.1:${MIHOMO_DNS_PORT}"
+    # 上游 = 服务链上 AGH 的下一个可用节点(模式 2 是 SmartDNS，模式 1 是 Mihomo)
+    # 链路顺序与可用性判定统一在 base.sh dns_chain_upstream，避免与
+    # dns_entry_port / update/mihomo.sh 各自维护一份回退逻辑后互相漂移
+    upstream_port=$(dns_chain_upstream "${AGH_BIN}")
+    if [ -n "${upstream_port}" ]; then
+        if [ "${upstream_port}" = "$(smartdns_port)" ]; then
+            log "i" "${AGH_BIN} 上游DNS使用 ${SMARTDNS_BIN}"
+        else
+            log "i" "${AGH_BIN} 上游DNS使用 ${MIHOMO_BIN}"
+        fi
+        replace_upstream "127.0.0.1:${upstream_port}"
     else
         log "i" "${AGH_BIN} 上游DNS使用默认DNS"
         replace_upstream $(echo "${DNS_LIST}")

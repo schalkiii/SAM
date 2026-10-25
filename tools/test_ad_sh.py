@@ -9,8 +9,10 @@
   - 连续屏蔽两次是幂等的
   - 旧版本遗留的「锁定空目录」能被正常清理
 
-设备上 chattr 只支持 immutable(i) 属性，Windows 上的 Git Bash 也不支持，
-所以这里用 stub 版的 lsattr/chattr：以 .locked 标记文件模拟 immutable。
+设备上 chattr 只支持 immutable(i) 属性，Windows 上的 Git Bash 也不支持。
+这里把 lsattr/chattr 的 **shell 函数**注入到测试脚本副本里，用 .locked 标记
+文件模拟 immutable：不能用 PATH 上的假可执行文件——MSYS 的 sh 启动时会把
+/usr/bin 前置，假程序永远排不上号（实测 command -v 命中的是真实 lsattr）。
 
 用法:
     python tools/test_ad_sh.py            # 跑全部用例
@@ -18,7 +20,6 @@
 """
 
 import argparse
-import os
 import pathlib
 import re
 import shutil
@@ -43,54 +44,47 @@ CASES = [
 # 模拟 exclude：真机上是 /data/system/ifw
 EXCLUDE_CASE = 'test/D/files/ads'
 
-STUB_LSATTR = r'''#!/bin/sh
-# stub: 用 .locked 标记文件模拟 immutable 属性
-for arg in "$@"; do
-  case "$arg" in -*) continue;; esac
-  path="$arg"
-  lock1="$(dirname "$path")/.$(basename "$path").locked"
-  lock2="$path/.locked"
-  if [ -f "$lock1" ] || [ -f "$lock2" ]; then
-    echo "----i------e-- $path"
-  else
-    echo "-------------- $path"
-  fi
-done
+# 注入到测试副本的 immutable 模拟（shell 函数优先级高于 PATH 中的同名程序）
+STUB_FUNCS = r'''
+# --- 测试注入: 用 .locked 标记文件模拟 immutable 属性 ---
+lsattr(){
+    for test_attr_path in "$@"; do
+        case "${test_attr_path}" in
+            -*) continue ;;
+        esac
+        if [ -f "${test_attr_path}/.locked" ] || \
+           [ -f "$(dirname "${test_attr_path}")/.$(basename "${test_attr_path}").locked" ]; then
+            echo "----i------e-- ${test_attr_path}"
+        else
+            echo "-------------- ${test_attr_path}"
+        fi
+    done
+}
+chattr(){
+    test_chattr_mode=""
+    test_chattr_path=""
+    for test_chattr_arg in "$@"; do
+        case "${test_chattr_arg}" in
+            +i) test_chattr_mode="lock" ;;
+            -i) test_chattr_mode="unlock" ;;
+            -*) ;;
+            *) test_chattr_path="${test_chattr_arg}" ;;
+        esac
+    done
+    [ -n "${test_chattr_path}" ] || return 0
+    if [ -d "${test_chattr_path}" ]; then
+        case "${test_chattr_mode}" in
+            lock) : > "${test_chattr_path}/.locked" ;;
+            unlock) rm -f "${test_chattr_path}/.locked" ;;
+        esac
+    else
+        case "${test_chattr_mode}" in
+            lock) : > "$(dirname "${test_chattr_path}")/.$(basename "${test_chattr_path}").locked" ;;
+            unlock) rm -f "$(dirname "${test_chattr_path}")/.$(basename "${test_chattr_path}").locked" ;;
+        esac
+    fi
+}
 '''
-
-STUB_CHATTR = r'''#!/bin/sh
-# stub: 用 .locked 标记文件模拟 immutable
-mode=""
-path=""
-for arg in "$@"; do
-  case "$arg" in
-    +i) mode="lock" ;;
-    -i) mode="unlock" ;;
-    -*) ;;
-    *) path="$arg" ;;
-  esac
-done
-[ -z "$path" ] && exit 0
-if [ -d "$path" ]; then
-  case "$mode" in
-    lock) touch "$path/.locked" ;;
-    unlock) rm -f "$path/.locked" ;;
-  esac
-else
-  case "$mode" in
-    lock) touch "$(dirname "$path")/.$(basename "$path").locked" ;;
-    unlock) rm -f "$(dirname "$path")/.$(basename "$path").locked" ;;
-  esac
-fi
-'''
-
-
-def make_stubs(stub_dir):
-    stub_dir.mkdir(parents=True, exist_ok=True)
-    for name, body in (('lsattr', STUB_LSATTR), ('chattr', STUB_CHATTR)):
-        p = stub_dir / name
-        p.write_text(body, encoding='utf-8', newline='\n')
-        p.chmod(0o755)
 
 
 def build_env(base):
@@ -146,7 +140,10 @@ def build_env(base):
 
     p = mod / 'scripts' / 'ad.sh'
     d = p.read_text(encoding='utf-8')
-    d = d.replace('source "/data/adb/modules/SAM/scripts/base.sh"', f'source "{mod_posix}/scripts/base.sh"')
+    source_line = f'source "{mod_posix}/scripts/base.sh"'
+    # 在 source 之后注入 lsattr/chattr 函数，保证 ad.sh 内的调用命中测试实现
+    d = d.replace('source "/data/adb/modules/SAM/scripts/base.sh"', source_line + '\n' + STUB_FUNCS)
+    assert 'source "' in d and 'lsattr(){' in d, 'stub 注入失败'
     d = d.replace('HOLD_LIST="${AD_HOLD_LIST}"', f'HOLD_LIST="{base_posix}/SAM-ad-hold.list"')
     d = d.replace('"/data/system/ifw"', f'"{(test_root / EXCLUDE_CASE).as_posix()}"')
     d = re.sub(r'ad_path=\(.*?\n\)\n', lambda m: newarray, d, count=1, flags=re.S)
@@ -155,15 +152,13 @@ def build_env(base):
     return mod, test_root
 
 
-def run_ad(mod, base, args, stub_dir):
-    env = dict(os.environ)
-    env['PATH'] = f'{stub_dir.as_posix()}{os.pathsep}{env.get("PATH", "")}'
+def run_ad(mod, base, args):
     # 设备上是 mksh；Linux 的 sh 可能是 dash，不支持 ad.sh 里用到的 let
     shell = shutil.which('mksh') or shutil.which('sh') or 'sh'
     result = subprocess.run(
         [shell, (mod / 'scripts' / 'ad.sh').as_posix()] + args,
         capture_output=True, text=True, encoding='utf-8', errors='replace',
-        env=env, cwd=base.as_posix(),
+        cwd=base.as_posix(),
     )
     return result
 
@@ -196,13 +191,11 @@ def main():
 
     base = pathlib.Path(tempfile.mkdtemp(prefix='sam_ad_test_'))
     try:
-        stub_dir = base / 'stub'
-        make_stubs(stub_dir)
         mod, test_root = build_env(base)
         c = Checker(args.verbose)
 
         print('[1] 屏蔽后: 内容改名保留, 原位置清空')
-        run_ad(mod, base, ['block'], stub_dir)
+        run_ad(mod, base, ['block'])
         c.check('目录内容移到 .samhold',
                 (test_root / 'test/A/files/ad.samhold/ad.jpg').read_text(encoding='utf-8'),
                 'ad-content')
@@ -220,13 +213,13 @@ def main():
         c.check('清单不含 exclude 路径', 'files/ads' in manifest.read_text(encoding='utf-8'), False)
 
         print('[2] 连续屏蔽两次: 幂等')
-        run_ad(mod, base, ['block'], stub_dir)
+        run_ad(mod, base, ['block'])
         c.check('清单条数不变', len(manifest.read_text(encoding='utf-8').strip().split('\n')), 5)
         c.check('没有 .samhold.samhold',
                 list(test_root.rglob('*.samhold.samhold')), [])
 
         print('[3] 恢复: 内容原样还原, 备份与清单清干净')
-        run_ad(mod, base, ['recovery'], stub_dir)
+        run_ad(mod, base, ['recovery'])
         c.check('目录内容还原',
                 (test_root / 'test/A/files/ad/ad.jpg').read_text(encoding='utf-8'),
                 'ad-content')
@@ -247,15 +240,15 @@ def main():
         shutil.rmtree(legacy)
         legacy.mkdir(parents=True)
         (legacy / '.locked').write_text('', encoding='utf-8')
-        run_ad(mod, base, ['recovery'], stub_dir)
+        run_ad(mod, base, ['recovery'])
         c.check('旧空壳被清理', legacy.exists(), False)
         c.check('其它路径不受影响', (test_root / 'test/A/files/ad/ad.jpg').is_file(), True)
 
         print('[5] 屏蔽期间 App 又写入: 新内容不丢')
-        run_ad(mod, base, ['block'], stub_dir)
+        run_ad(mod, base, ['block'])
         (test_root / 'test/A/files/ad/new.txt').write_text('app-new', encoding='utf-8')
         (test_root / 'test/A/files/ad_prefs.xml').write_text('app-new-pref', encoding='utf-8')
-        run_ad(mod, base, ['recovery'], stub_dir)
+        run_ad(mod, base, ['recovery'])
         c.check('原数据回填',
                 (test_root / 'test/A/files/ad/ad.jpg').read_text(encoding='utf-8'),
                 'ad-content')
@@ -270,14 +263,14 @@ def main():
                 'app-new-pref')
 
         print('[6] 备份丢失(App 被卸载)时恢复不报错')
-        run_ad(mod, base, ['block'], stub_dir)
+        run_ad(mod, base, ['block'])
         shutil.rmtree(test_root / 'test/A/files/ad.samhold', ignore_errors=True)
-        result = run_ad(mod, base, ['recovery'], stub_dir)
+        result = run_ad(mod, base, ['recovery'])
         c.check('命令退出码为 0', result.returncode, 0)
 
         print('[7] list 输出格式')
-        run_ad(mod, base, ['block'], stub_dir)
-        result = run_ad(mod, base, ['list'], stub_dir)
+        run_ad(mod, base, ['block'])
+        result = run_ad(mod, base, ['list'])
         # stdout 前面会混入 base.sh 的提示行(如"未找到设置文件"), 只取表格行
         lines = [x for x in result.stdout.strip().split('\n')
                  if x.startswith('APP|') or x.count('|') == 3]
@@ -287,7 +280,7 @@ def main():
                 any('已锁定(有备份)' in x for x in lines[1:]), True)
 
         print('[8] hold 输出占用总量')
-        result = run_ad(mod, base, ['hold'], stub_dir)
+        result = run_ad(mod, base, ['hold'])
         c.check('输出含合计行', '合计' in result.stdout, True)
 
         return c.report()

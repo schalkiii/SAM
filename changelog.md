@@ -1,3 +1,37 @@
+# 2026.10.25.8
+- 审计第三轮修复（`docs/AUDIT-REPORT-2026-10-25-3.md` 的 S-2~S-11）
+  - 修复: 下游上游选择收敛为 `base.sh dns_chain_upstream`。原 `update/mihomo.sh` 与
+    `update/agh.sh` 各写一份回退链，且模式 1 下 SmartDNS 掉线时会把 Mihomo 的上游设成
+    运行中的 AGH——而 AGH 的上游正是 Mihomo，两者互指形成 DNS 转发环（查询一直转发到超时）。
+    现在沿链路向后取第一个可用节点，绝不回头
+  - 修复: `dns_entry_port` 不再读 `SMARTDNS_PORT` 变量（该变量只有 `iptables/dns.sh` 会设，
+    watchdog/webui 里为空 → SmartDNS 永远选不上）。改为从 `smartdns.conf` 解析实际监听端口，
+    修复「只有 SmartDNS 在跑时整机 DNS 被判成无入口并清掉重定向」的黑洞
+  - 修复: watchdog「有进程但端口未监听」分支改调 `dns.sh disable`。原实现依赖
+    `enable` 在空端口时"顺手清规则"的副作用，日志与命令名相反，改 enable 该分支即会静默失效
+  - 修复: 开机 `service.sh` 删除自建的绝对路径软链，改用 `ensure_module_links`
+    （相对目标 + 悬空链重建的唯一规则源）
+  - 修复: WebUI「host 挂载」失败时回写 `HOST_ENABLE`，避免配置与真实挂载状态相反
+  - 修复: WebUI 保存时数组项失败不再停在半途——仍执行 `apply` 并明确提示"部分保存"，
+    避免"以为什么都没保存、重启服务后新标量却生效"
+  - 修复: `ad.sh` 的屏蔽计数只统计真正处理成功的项；`list` 的 lsattr 批量展开改用数组，
+    路径含空格不再被拆词
+  - 修复: `update/mihomo.sh` 的 `add_smart_conf` 定位插入行前重读当前配置（旧快照行号会错位）
+  - 修复: `inotify/module.sh` 的 remove 流程补齐卸载清理（广告清单 / 恢复入口 / 历史版本目录），
+    与 `uninstall.sh` 同语义；不直接调 `manual.sh uninstall`（其 kill_monitor 会杀掉当前 inotify 子进程）
+  - 变更: 出厂 `etc/crontabs/root` 的自动更新 / 每日重启 / hosts 三条任务改为**默认注释**。
+    `CRONTAB_ENABLE=true` 只启动 crond，不再等于同意每日自动更新与重启；README 与 setting.conf 补说明
+  - 变更: TTL 校验边界由 `setting_api get` 下发（`SMARTDNS_TTL_FLOOR/CEIL` 只读字段），
+    `main.js` 不再硬编码 60/86400
+  - 测试: `test_ad_sh` 的 immutable 模拟改为注入 shell 函数。原实现用 PATH 注入假
+    lsattr/chattr，MSYS 的 sh 会把 `/usr/bin` 前置导致模拟失效、本机 26/27 伪失败；现恢复 27/27
+  - 测试: 新增 `test_setting_transaction.py`（31 项，set/setarr 事务、端口批量校验、边界键只读）；
+    `test_dns_entry` 扩到 107 项（下游上游链路 + check_dns_chain 的 `--to-ports` 参数级断言）；
+    `test_module_links` 增加开机脚本静态断言。九套件合计 327 项（本机 Windows 325 项）
+  - 门禁: `check_version_sync.py` 增加 README/AGENTS 默认密码与 `smartdns.conf` 同值、
+    `module.prop` description 非占位两项检查
+  - 打包: `pack_module.py` 跳过 `docs/`，审计报告不再随模块包分发
+
 # 2026.10.25.7
 - 默认凭据恢复 root/root，并纠正模块描述里的错误文案
   - 默认密码在 v20261025.1 被改成 `sam123456`，但模块描述仍写「所有服务默认

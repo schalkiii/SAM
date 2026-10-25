@@ -14,20 +14,10 @@ trap mihomo_cleanup EXIT HUP INT TERM
 # 读取配置内容
 content=$(cat "${MIHOMO_PATH}/base.yaml")
 
-# 获取 SmartDNS 端口
-SMARTDNS_PORT=$(smartdns_port)
-
-# DNS 端口
-# 期望链路不可用时必须回退到真正可用的上游，不能把 Mihomo 指向已经死亡的 AGH/SmartDNS
-if [ "${MODULE_DNS_MODE}" = 1 ] && [ "${SMARTDNS_ENABLE}" = true ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
-    DNS_PORT=${SMARTDNS_PORT}
-elif [ "${MODULE_DNS_MODE}" = 2 ] && [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
-    DNS_PORT=${AGH_DNS_PORT}
-elif [ "${SMARTDNS_ENABLE}" = true ] && isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}"; then
-    DNS_PORT=${SMARTDNS_PORT}
-elif [ "${AGH_ENABLE}" = true ] && isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}"; then
-    DNS_PORT=${AGH_DNS_PORT}
-fi
+# DNS 端口: 沿服务链取 Mihomo 的下一个可用上游(模式 2 是 AGH，模式 1 是 SmartDNS)
+# 链路顺序与可用性判定统一在 base.sh dns_chain_upstream，不再在这里维护第二份回退链；
+# 它也保证不会把上游设成"上游正指回 Mihomo"的服务(否则两者互指形成转发环)
+DNS_PORT=$(dns_chain_upstream "${MIHOMO_BIN}")
 
 # 修改订阅配置
 modify_sub(){
@@ -305,11 +295,12 @@ add_smart_conf(){
     # 不是 Smart 内核则返回
     mihomo -v | grep -q "smart" || return 0
     log "i" "添加 Smart 内核配置"
+    # 定位插入行前必须重读当前配置: 前面 modify_dns_mode / ZeroTier / EasyTier
+    # 都会插入新行，用旧快照的行号会把内容插错位置
+    content=$(cat ${MIHOMO_CONF})
     # 获取插入行
     line=$(echo "${content}" | sed -n "/profile:/=")
     let "line++"
-    # 读取配置内容
-    content=$(cat ${MIHOMO_CONF})
     # 插入配置
     smart_conf="$(placeholder 2)# Smart 数据采集文件大小\n  smart-collector-size: 100"
     content=$(echo "${content}" | sed "${line}i ${smart_conf}")

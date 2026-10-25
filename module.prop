@@ -1,7 +1,7 @@
 id=SAM
 name=SmartDNS + AdGuardHome + Mihomo
-version=20261025.7
-versionCode=2026102507
+version=20261025.8
+versionCode=2026102508
 author=Schalkiii
-description=模块未启动
+description=SmartDNS + AdGuardHome + Mihomo（运行状态自动更新）
 updateJson=https://raw.githubusercontent.com/schalkiii/SAM/main/update.json

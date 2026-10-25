@@ -10,6 +10,8 @@ start(){
         return 1
     fi
 
+    # 本地短路: 没订阅时 Mihomo 起不来。外部"是否该运行"的判定统一用
+    # base.sh 的 mihomo_expected(启用 + 有订阅 + 非直通)，这里只做启动前检查
     if [ ${#SUB_URL[@]} = 0 ]; then
         log "i" "未填写订阅地址，无法启动 ${MIHOMO_BIN}"
         return 1

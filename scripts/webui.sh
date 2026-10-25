@@ -9,7 +9,7 @@ get_service_number(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && number=$((number + 1))
     [ "${AGH_ENABLE}" = "true" ] && number=$((number + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+    if mihomo_expected; then
         number=$((number + 1))
     fi
 
@@ -23,7 +23,7 @@ get_process_number(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && isRun ${SMARTDNS_BIN} && number=$((number + 1))
     [ "${AGH_ENABLE}" = "true" ] && isRun ${AGH_BIN} && number=$((number + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+    if mihomo_expected; then
         isRun ${MIHOMO_BIN} && number=$((number + 1))
     fi
 
@@ -165,7 +165,7 @@ get_process_number_from(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && [ "${1}" = "已运行" ] && number=$((number + 1))
     [ "${AGH_ENABLE}" = "true" ] && [ "${2}" = "已运行" ] && number=$((number + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+    if mihomo_expected; then
         [ "${3}" = "已运行" ] && number=$((number + 1))
     fi
 

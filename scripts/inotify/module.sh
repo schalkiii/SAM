@@ -47,11 +47,26 @@ if [ "${MONITOR_FILE}" = "remove" ]; then
         # 这里先把配置备份和广告恢复做完，避免走到重启后的竞态
         stop_all
         [ -f "${SCRIPTS_PATH}/backup.sh" ] && sh "${SCRIPTS_PATH}/backup.sh" save > /dev/null 2>&1
-        [ -f "${SCRIPTS_PATH}/ad.sh" ] && "${SCRIPTS_PATH}/ad.sh" recovery > /dev/null 2>&1
+        # 广告恢复失败时必须保留清单(.samhold 的唯一索引)，与 uninstall.sh 同语义
+        ad_recovery_ok=1
+        if [ -f "${SCRIPTS_PATH}/ad.sh" ]; then
+            "${SCRIPTS_PATH}/ad.sh" recovery > /dev/null 2>&1 || ad_recovery_ok=0
+        fi
+        if [ ${ad_recovery_ok} -eq 1 ]; then
+            rm -f "/data/adb/SAM-ad-hold.list" 2>/dev/null
+        fi
         if [ -f "${MODULE_PATH}/etc/mihomo/config.yaml" ] && grep -q "BACKUP_CONF=true" "${MODULE_PATH}/setting.conf" 2>/dev/null; then
             mkdir -p "$(dirname "${MIHOMO_CONF}")" 2>/dev/null
             cp -f "${MODULE_PATH}/etc/mihomo/config.yaml" "${MIHOMO_CONF}" 2>/dev/null
         fi
+        # 与 uninstall.sh 保持一致: 清掉模块外的恢复入口与历史版本目录，
+        # 否则 repair 会把已卸载的模块复活。这里不能直接调 manual.sh uninstall:
+        # 它的 kill_monitor 会把当前 inotifyd 子进程一起杀掉，导致卸载半途中断
+        rm -f "/data/adb/SAM-activate.sh" "/data/adb/SAM-activate.log" 2>/dev/null
+        rm -rf "/data/adb/SAM.previous" 2>/dev/null
+        for sam_residue in /data/adb/SAM.rejected.* /data/adb/SAM.old.*; do
+            [ -d "${sam_residue}" ] && rm -rf "${sam_residue}"
+        done
     elif [ "${EVENT}" = "d" ]; then
         # remove 标记被删除 = 取消卸载；模块本身仍是禁用状态时不要拉起服务
         rm -f "${MIHOMO_CONF}" 2>/dev/null

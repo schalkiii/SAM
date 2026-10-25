@@ -379,7 +379,7 @@ is_hold_item(){
 
 # 判断路径是否在排除列表里
 is_excluded(){
-    for exclude_path in ${ad_exclude[@]}; do
+    for exclude_path in "${ad_exclude[@]}"; do
         [ "${1}" = "${exclude_path}" ] && return 0
     done
     return 1
@@ -390,6 +390,9 @@ is_excluded(){
 # 原位置仍建一个空的锁定目录, App 侧的效果与旧版一致(读不到广告资源), 但数据可还原
 block_ad(){
     ad_target="${1}"
+    # 只有真正完成"改名 + 记录"才计数: 目标既不是目录也不是普通文件时
+    # (符号链接等)两个分支都不进，原来的实现会把日志里的"已屏蔽 N 个"算虚
+    ad_blocked=0
 
     # 在排除列表里则跳过
     is_excluded "${ad_target}" && return 0
@@ -430,6 +433,7 @@ block_ad(){
                 log "e" "chattr +i 失败，仅以权限屏蔽: ${ad_target}"
             fi
             hold_record "${ad_target}"
+            ad_blocked=1
         else
             # 改名失败时宁可跳过，也不能退回到删除数据
             log "e" "改名保留失败，跳过屏蔽: ${ad_target}"
@@ -450,12 +454,13 @@ block_ad(){
                 log "e" "chattr +i 失败，仅以权限屏蔽: ${ad_target}"
             fi
             hold_record "${ad_target}"
+            ad_blocked=1
         else
             log "e" "改名保留失败，跳过屏蔽: ${ad_target}"
             return 0
         fi
     fi
-    let "block_number++"
+    [ "${ad_blocked}" -eq 1 ] && let "block_number++"
 }
 
 # 广告恢复
@@ -763,10 +768,16 @@ list_ad(){
     done < "${0}"
 
     # 第二遍: 一次性读取所有存在路径的属性, 避免逐个 fork lsattr
+    # 用数组展开而不是 $(cat "${ad_paths}"): 后者按空白分词，路径含空格时会被拆坏
     : > "${ad_attrs}"
     if [ -s "${ad_paths}" ] && command -v lsattr > /dev/null 2>&1; then
-        # shellcheck disable=SC2046
-        lsattr -d $(cat "${ad_paths}") 2>/dev/null > "${ad_attrs}"
+        ad_lsattr_paths=()
+        while IFS= read -r ad_lsattr_path; do
+            [ -n "${ad_lsattr_path}" ] && ad_lsattr_paths+=("${ad_lsattr_path}")
+        done < "${ad_paths}"
+        if [ ${#ad_lsattr_paths[@]} -gt 0 ]; then
+            lsattr -d "${ad_lsattr_paths[@]}" 2>/dev/null > "${ad_attrs}"
+        fi
     fi
 
     # 第三遍: 统计各备份占用

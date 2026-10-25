@@ -11,6 +11,8 @@ OTA 认为无需升级，zipUrl 没跟上则下载 404。这个脚本把「三�
   2. module.prop 的 versionCode  == update.json 的 versionCode
   3. update.json 的 zipUrl 资产名 == SAM_<version>_release.zip
   4. changelog 存在该版本的节(version 20261025.3 对应 "# 2026.10.25.3")
+  5. README.md / AGENTS.md 声明的默认密码 == smartdns.conf 的 smartdns-ui.password
+  6. module.prop 的 description 不能是占位值「模块未启动」
 
 用法:
     python tools/check_version_sync.py        # 校验并在失败时 exit 1
@@ -50,6 +52,12 @@ def changelog_header(version):
     year, month, day, serial = m.groups()
     header = f'# {year}.{month}.{day}'
     return f'{header}.{serial}' if serial else header
+
+
+def first_backticked(text, keyword):
+    """取 keyword 之后第一个反引号包裹的值(同一行内)"""
+    match = re.search(keyword + r'[^`\n]*`([^`]+)`', text)
+    return match.group(1) if match else ''
 
 
 def main():
@@ -111,13 +119,40 @@ def main():
                           for line in changelog_text.splitlines())
         check(f'changelog 存在版本节 {expected_header}', has_section, True)
 
+    # 默认凭据必须与配置真身一致: v20261025.7 曾出现 README 摘要写 sam123456、
+    # 实际 smartdns.conf 是 root 的矛盾，只校验版本号的门禁完全放行，
+    # 用户照着文档登录必然失败。这里把它变成确定性检查。
+    smartdns_conf = REPO / 'etc' / 'SmartDNS' / 'smartdns.conf'
+    conf_text = smartdns_conf.read_text(encoding='utf-8') if smartdns_conf.is_file() else ''
+    conf_match = re.search(r'^smartdns-ui\.password\s+(\S+)', conf_text, re.M)
+    conf_password = conf_match.group(1) if conf_match else ''
+    if not conf_password:
+        failures.append('无法从 etc/SmartDNS/smartdns.conf 读取 smartdns-ui.password')
+
+    readme_path = REPO / 'README.md'
+    readme_password = first_backticked(readme_path.read_text(encoding='utf-8'), '默认密码') \
+        if readme_path.is_file() else ''
+    agents_path = REPO / 'AGENTS.md'
+    agents_password = first_backticked(agents_path.read_text(encoding='utf-8'), '默认密码') \
+        if agents_path.is_file() else ''
+
+    check('README 默认密码与 SmartDNS 配置一致', readme_password, conf_password,
+          actual_label='README', expected_label='smartdns.conf')
+    check('AGENTS 默认密码与 SmartDNS 配置一致', agents_password, conf_password,
+          actual_label='AGENTS', expected_label='smartdns.conf')
+
+    # 发版包里的 module.prop 不能是占位描述: 首次启动前模块列表显示的就是它
+    description = props.get('description', '').strip()
+    if description == '模块未启动':
+        failures.append('module.prop 的 description 仍是占位值「模块未启动」，发版前请写成正式文案')
+
     if failures:
-        print(f'[x] 版本号不一致（检查 {checks} 项）:')
+        print(f'[x] 版本/文档一致性检查失败（检查 {checks} 项）:')
         for item in failures:
             print(f'    - {item}')
         return 1
 
-    print(f'[√] 版本号三处一致: {prop_version} / {prop_code}（检查 {checks} 项）')
+    print(f'[√] 版本/文档一致性通过: {prop_version} / {prop_code}（检查 {checks} 项）')
     return 0
 
 

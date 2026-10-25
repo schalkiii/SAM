@@ -38,6 +38,9 @@ jobs:
 
       # 配置接口 / 归档安全 / 能力探测 / 备份语义回归
       # 这些用例从脚本中抽取真实函数或搭临时模块目录，不依赖设备环境
+      - name: 配置事务回归测试
+        run: python tools/test_setting_transaction.py
+
       - name: 定时任务校验回归测试
         run: python tools/test_cron_validate.py
 

@@ -132,11 +132,19 @@ def main():
         defs = build_defs()
         c = Checker(verbose=args.verbose)
 
+        # ---- 场景6(静态): 开机脚本必须复用 ensure_module_links ----
+        # 开机路径曾自己用绝对目标建链、且只看 -L 就跳过悬空链，与 base.sh 的
+        # "相对目标 + 悬空重建"规则相反(v20261025.5 修的正是这类故障)。
+        # 这条断言不依赖文件系统能力，任何平台都会执行
+        boot_script = (REPO / 'service.sh').read_text(encoding='utf-8')
+        c.check('[开机脚本] 调用 ensure_module_links', 'ensure_module_links' in boot_script, True)
+        c.check('[开机脚本] 不再自建软链(无重复实现)', 'ln -s' in boot_script, False)
+
         # 能力门控: 有些文件系统/环境里 ln -s 会退化成拷贝，那测不出软链语义
         probe = run_shell(base, 'mkdir -p probe && ln -s tgt probe/l && [ -L probe/l ] && echo LINK')
         if 'LINK' not in probe.stdout:
-            print('  SKIP  当前文件系统不支持 symlink，跳过软链用例')
-            return 0
+            print('  SKIP  当前文件系统不支持 symlink，跳过软链行为用例(静态断言仍已执行)')
+            return c.report()
 
         # ---- 场景1: 全新目录，三条链按相对目标创建 ----
         mod = make_tree(base)

@@ -406,9 +406,19 @@ dns_entry_port(){
     dns_agh_port=""
     dns_mihomo_port=""
     dns_smartdns_port=""
+    # SmartDNS 的实际监听端口从配置解析(可被 LAN_ACCESS 改写成 [::]:3721)，
+    # 不能读 SMARTDNS_PORT 变量: 那个变量只有 iptables/dns.sh 才会设，
+    # watchdog/webui 里是空的，is_port_listening "" 恒失败 -> SmartDNS 永远选不上，
+    # 表现为"只有 SmartDNS 在跑时整机 DNS 被判成无入口并清掉重定向"
+    dns_sd_listen_port=""
+    if isRun ${SMARTDNS_BIN}; then
+        dns_sd_listen_port=$(smartdns_port)
+        if [ -n "${dns_sd_listen_port}" ] && is_port_listening "${dns_sd_listen_port}"; then
+            dns_smartdns_port=${dns_sd_listen_port}
+        fi
+    fi
     isRun ${AGH_BIN} && is_port_listening "${AGH_DNS_PORT}" && dns_agh_port=${AGH_DNS_PORT}
     isRun ${MIHOMO_BIN} && is_port_listening "${MIHOMO_DNS_PORT}" && dns_mihomo_port=${MIHOMO_DNS_PORT}
-    isRun ${SMARTDNS_BIN} && is_port_listening "${SMARTDNS_PORT}" && dns_smartdns_port=${SMARTDNS_PORT}
     if [ "${MODULE_DNS_MODE}" = "2" ]; then
         # 期望链路: Mihomo -> AdGuardHome -> SmartDNS
         [ -n "${dns_mihomo_port}" ] && { echo "Mihomo:${dns_mihomo_port}"; return 0; }
@@ -420,6 +430,53 @@ dns_entry_port(){
     fi
     [ -n "${dns_smartdns_port}" ] && echo "SmartDNS:${dns_smartdns_port}"
     return 0
+}
+
+# 沿 DNS 服务链找 consumer 的下一个可用上游端口，输出端口号；找不到返回 1
+# 链路按 MODULE_DNS_MODE 定义:
+#   模式 2: Mihomo -> AdGuardHome -> SmartDNS
+#   模式 1: AdGuardHome -> Mihomo -> SmartDNS
+# 只允许沿链路向后找: 若允许回头，模式 1 下 SmartDNS 掉线时会把 Mihomo 的上游
+# 设成 AGH，而 AGH 的上游正是 Mihomo —— 两者互指形成转发环，查询一直转发到超时。
+# 下游配置(update/agh.sh、update/mihomo.sh)必须共用这里，避免各自维护一份回退链
+dns_chain_upstream(){
+    dns_chain_consumer="${1}"
+    case "${MODULE_DNS_MODE}" in
+        2) dns_chain_list="${MIHOMO_BIN} ${AGH_BIN} ${SMARTDNS_BIN}" ;;
+        *) dns_chain_list="${AGH_BIN} ${MIHOMO_BIN} ${SMARTDNS_BIN}" ;;
+    esac
+
+    dns_chain_passed=0
+    for dns_chain_bin in ${dns_chain_list}; do
+        if [ "${dns_chain_passed}" -eq 0 ]; then
+            [ "${dns_chain_bin}" = "${dns_chain_consumer}" ] && dns_chain_passed=1
+            continue
+        fi
+        case "${dns_chain_bin}" in
+            "${SMARTDNS_BIN}")
+                if [ "${SMARTDNS_ENABLE}" = "true" ] && isRun ${SMARTDNS_BIN}; then
+                    dns_chain_port=$(smartdns_port)
+                    [ -n "${dns_chain_port}" ] && is_port_listening "${dns_chain_port}" && \
+                        { echo "${dns_chain_port}"; return 0; }
+                fi
+                ;;
+            "${AGH_BIN}")
+                if [ "${AGH_ENABLE}" = "true" ] && isRun ${AGH_BIN} && \
+                   is_port_listening "${AGH_DNS_PORT}"; then
+                    echo "${AGH_DNS_PORT}"
+                    return 0
+                fi
+                ;;
+            *)
+                if mihomo_expected && isRun ${MIHOMO_BIN} && \
+                   is_port_listening "${MIHOMO_DNS_PORT}"; then
+                    echo "${MIHOMO_DNS_PORT}"
+                    return 0
+                fi
+                ;;
+        esac
+    done
+    return 1
 }
 wait_port(){
     wait_port_value="${1}"

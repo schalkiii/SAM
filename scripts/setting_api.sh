@@ -73,7 +73,7 @@ apply_bypass_only(){
             rm -f "${CHANGED_FILE}"
             return 1
         fi
-        if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && ! isRun ${MIHOMO_BIN}; then
+        if mihomo_expected && ! isRun ${MIHOMO_BIN}; then
             sh "${SERVICE_PATH}/mihomo.sh" start > /dev/null 2>&1
         fi
         file_log "直通模式关闭：仅重建 DNS 劫持并恢复 Mihomo，未重启 AGH/SmartDNS"
@@ -143,6 +143,12 @@ get_all(){
             index=$((index + 1))
         done
     done
+
+    # 校验边界随 get 一起下发: WebUI 的输入校验直接读这两项，
+    # 不再在 main.js 里各写一份 60/86400(改范围时只需改 setting.sh)
+    # 只读字段，不属于 setting.conf 的键，set 会按"不支持的设置项"拒绝写入
+    printf 'SMARTDNS_TTL_FLOOR=%s\n' "${SMARTDNS_TTL_FLOOR}"
+    printf 'SMARTDNS_TTL_CEIL=%s\n' "${SMARTDNS_TTL_CEIL}"
 }
 
 # 把配置文件统一成 LF 且去掉 BOM
@@ -379,7 +385,7 @@ apply_settings(){
     expected_services=0
     [ "${SMARTDNS_ENABLE}" = "true" ] && expected_services=$((expected_services + 1))
     [ "${AGH_ENABLE}" = "true" ] && expected_services=$((expected_services + 1))
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+    if mihomo_expected; then
         expected_services=$((expected_services + 1))
     fi
     running_services=0

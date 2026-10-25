@@ -83,6 +83,10 @@ function parseKeyValues(text) {
 // 最近一次状态快照，启动/停止后直接复用，省掉两次脚本调用
 let lastStatus = {};
 
+// 数字输入的合法边界由服务端(setting_api get)下发，默认值与 setting.sh 一致。
+// 不在前端写死 60/86400: 否则调整范围时会出现"前端放行、服务端拒绝"的矛盾。
+let settingBounds = { ttlMin: 60, ttlMax: 86400 };
+
 // 服务页的端口说明按真实配置显示，避免改过端口后文案还是旧值
 // 数据来源: allstatus 的 smartdns_port + 设置页的 AGH/Mihomo DNS 端口
 function updatePortLabels(values) {
@@ -287,6 +291,10 @@ async function loadSettings(silent) {
         return;
     }
     const parsed = parseSettingOutput(result.stdout);
+    settingBounds = {
+        ttlMin: Number(parsed.values.SMARTDNS_TTL_FLOOR) || 60,
+        ttlMax: Number(parsed.values.SMARTDNS_TTL_CEIL) || 86400,
+    };
 
     document.querySelectorAll("[data-key]").forEach(el => {
         const key = el.dataset.key;
@@ -519,12 +527,12 @@ async function saveSettings() {
 
         const value = String(el.value).trim();
 
-        // 端口必须是 1-65535 的数字；TTL 下限 60 秒(压到 30 秒会频繁回查、拖慢网络)
+        // 端口必须是 1-65535 的数字；TTL 的上下限来自服务端下发值
         if (el.type === "number") {
             const valueNumber = Number(value);
             const isTtl = key === "SMARTDNS_TTL_MIN";
-            const min = isTtl ? 60 : 1;
-            const max = isTtl ? 86400 : 65535;
+            const min = isTtl ? settingBounds.ttlMin : 1;
+            const max = isTtl ? settingBounds.ttlMax : 65535;
             if (!value || !/^[0-9]+$/.test(value) || valueNumber < min || valueNumber > max) {
                 invalid = key + " 必须是 " + min + "-" + max + " 之间的数字";
                 return;
@@ -556,14 +564,16 @@ async function saveSettings() {
             return;
         }
 
+        // 数组项是独立事务(setarr 单独提交)，失败时标量已经落盘。
+        // 这里不能直接 return: 否则配置停在"半套新值"且从未 apply，
+        // 用户以为"什么都没保存"，重启服务后却按新标量生效。
+        // 正确做法是继续 apply 并明确告知哪一项没保存成功。
+        let arrayError = "";
         for (let i = 0; i < arrays.length; i++) {
             const item = arrays[i];
             const arrResult = await runShellArgs("setting_api.sh", ["setarr", item.key].concat(item.values));
             const arrErr = resultMessage(arrResult);
-            if (arrErr) {
-                showToast("保存失败: " + arrErr, 6000);
-                return;
-            }
+            if (arrErr && !arrayError) arrayError = item.key + " 保存失败: " + arrErr;
         }
 
         toast("正在应用配置，请稍等......");
@@ -574,7 +584,6 @@ async function saveSettings() {
             showToast("应用失败: " + applyErr, 6000);
             return;
         }
-        setSettingsDirty(false);
         // 保存成功后同步服务页端口说明(AGH/Mihomo DNS 端口可能刚改过)
         const savedPorts = {};
         scalars.forEach(item => {
@@ -582,6 +591,12 @@ async function saveSettings() {
             if (pos > 0) savedPorts[item.slice(0, pos)] = item.slice(pos + 1);
         });
         updatePortLabels(savedPorts);
+        if (arrayError) {
+            // 标量已保存并应用，数组项失败: 保留未保存标记，提示可单独重试
+            showToast("配置已部分保存并应用；" + arrayError, 7000);
+            return;
+        }
+        setSettingsDirty(false);
         showToast(out(applyResult) || "已保存并应用", 4000);
     } finally {
         savingSettings = false;
@@ -819,14 +834,19 @@ async function mountControls(){
     }
     mountActionBusy = true;
     try {
-        const hostMountStatus = document.getElementById("host-mount-status");
         var host_mount_status = await runShell("webui.sh", "mount");
         // 读不到挂载状态时不能猜: 猜错会把 HOST_ENABLE 写成相反的值
         if (!isOk(host_mount_status)) {
             showToast("挂载状态读取失败: " + resultMessage(host_mount_status), 6000);
             return;
         }
-        if ( out(host_mount_status) == "已挂载" ) {
+        const wasMounted = out(host_mount_status) == "已挂载";
+        // 挂载/卸载失败时必须把 HOST_ENABLE 写回原值: 否则配置与真实状态相反，
+        // 下次启动会按错误的值重新挂载或卸载，用户看到的状态与刚才的提示矛盾
+        const rollbackHostEnable = async () => {
+            await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=" + (wasMounted ? "true" : "false")]);
+        };
+        if ( wasMounted ) {
             const saved = await runShellArgs("setting_api.sh", ["set", "HOST_ENABLE=false"]);
             const saveErr = resultMessage(saved);
             if (saveErr) {
@@ -836,7 +856,8 @@ async function mountControls(){
             const unmountResult = await runCommand("umount /system/etc/hosts");
             const unmountErr = resultMessage(unmountResult);
             if (unmountErr) {
-                showToast("卸载失败: " + unmountErr, 6000);
+                await rollbackHostEnable();
+                showToast("卸载失败: " + unmountErr + "（HOST_ENABLE 已还原）", 6000);
                 return;
             }
             showToast(`Host 未挂载`);
@@ -850,7 +871,8 @@ async function mountControls(){
             const mountResult = await runCommand(`mount -o bind ${module_path}/etc/hosts /system/etc/hosts`);
             const mountErr = resultMessage(mountResult);
             if (mountErr) {
-                showToast("挂载失败: " + mountErr, 6000);
+                await rollbackHostEnable();
+                showToast("挂载失败: " + mountErr + "（HOST_ENABLE 已还原）", 6000);
                 return;
             }
             showToast(`Host 已挂载`);

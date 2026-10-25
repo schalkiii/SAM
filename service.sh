@@ -28,12 +28,12 @@ rm -f "${MODULE_PATH}/tmp/"*.log.rot "${MODULE_PATH}/tmp/setting.clean."* "${MOD
 # 加载设置(自动处理 BOM / CRLF / 语法错误 / 缺失项)
 source "${SCRIPTS_PATH}/base.sh"
 
-# 创建软链接
-if [ ! -e "${MODULE_PATH}/bin/smartdns" ] && [ ! -L "${MODULE_PATH}/bin/smartdns" ]; then
-    ln -s "${MODULE_PATH}/etc/SmartDNS/smartdns" "${MODULE_PATH}/bin/smartdns"
-    ln -s "${MODULE_PATH}/etc/SmartDNS/lib/libc.so" "${MODULE_PATH}/etc/SmartDNS/lib/ld-musl-aarch64.so.1"
-    ln -s "${MODULE_PATH}/etc/SmartDNS/lib/ld-musl-aarch64.so.1" "${MODULE_PATH}/etc/SmartDNS/lib/ld-linux.so"
-fi
+# 创建/修复 SmartDNS 软链接
+# 规则只有 base.sh ensure_module_links 一处: 目标必须用相对路径(模块更新先建在
+# modules_update 再 mv 到 modules，绝对目标在 mv 后即悬空)，且悬空链必须删掉重建。
+# 开机这里不再自己写 ln，否则会多出一套"绝对路径 + 只看 -L 就跳过"的旧规则，
+# 正是 v20261025.5 修复的那类故障。
+ensure_module_links
 
 # 重置描述: 开机阶段先标记正在启动，服务就绪后由 scripts/update/desc.sh 更新为实际状态
 sed -i "s/^description=.*/description=正在启动（等待服务就绪）/" "${MODULE_PATH}/module.prop"

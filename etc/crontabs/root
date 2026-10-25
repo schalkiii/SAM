@@ -1,11 +1,15 @@
 # 定时配置
 # 格式：分 时 日 月 周 命令
+# 这些任务只在 setting.conf 的 CRONTAB_ENABLE=true 时由 busybox crond 执行
+#
+# 出厂默认全部注释: 打开「定时执行」不等于同意"每天自动更新组件 + 每天重启服务"，
+# 需要哪条就删掉行首的 # (也可以在 WebUI 工具页的「定时任务」卡片里编辑保存)
 
-# 每天4点更新服务
-0 4 * * * /data/adb/modules/SAM/scripts/update.sh
+# 每天4点更新服务(联网替换 SmartDNS/AGH/Mihomo 二进制，失败会自动回滚)
+# 0 4 * * * /data/adb/modules/SAM/scripts/update.sh
 
-# 每天5点重启
-0 5 * * * /data/adb/modules/SAM/scripts/service.sh restart
+# 每天5点重启(会中断 DNS 数秒)
+# 0 5 * * * /data/adb/modules/SAM/scripts/service.sh restart
 
-# 每周一8点更新 host 规则
-0 8 * * 1 /data/adb/modules/SAM/scripts/update/host.sh update force
+# 每周一8点更新 host 规则(强制刷新，不受 24 小时节流限制)
+# 0 8 * * 1 /data/adb/modules/SAM/scripts/update/host.sh update force

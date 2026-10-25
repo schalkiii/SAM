@@ -8,9 +8,6 @@ IPV6_DNS_CHAIN="REDIRECT_IPV6_DNS"
 # 阻断 ipv6 链
 BLOCK_IPV6_CHAIN="BLOCK_IPV6_DNS"
 
-# 获取 SmartDNS 端口
-SMARTDNS_PORT=$(smartdns_port)
-
 # 记录选中的入口，日志与状态检查统一显示"服务名:端口"，
 # 避免只看到 5300 却不知道当前是哪个服务在接 DNS
 # 选择实际可用的 DNS 转发端口

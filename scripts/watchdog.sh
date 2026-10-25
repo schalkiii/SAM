@@ -258,9 +258,11 @@ ensure_dns_rules(){
             ;;
         2)
             # 有进程但端口没在监听: 旧规则可能还指向死端口，清理一次避免 DNS 黑洞
+            # 用 disable 而不是 enable: 空端口时 enable 恰好也会清规则，但那是副作用，
+            # 日志与命令名必须一致，否则将来改 enable 的空端口分支会静默失效
             if [ "${no_dns_cleaned}" != "1" ]; then
                 log "e" "守护: 有 DNS 进程但端口未监听，移除重定向避免黑洞"
-                ${IPTABLES_PATH}/dns.sh enable
+                ${IPTABLES_PATH}/dns.sh disable
                 no_dns_cleaned=1
             fi
             ;;
