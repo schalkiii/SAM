@@ -249,10 +249,13 @@ set_scalar(){
         case "${item_value}" in
             ''|*[!0-9]*) echo "取值非法: ${item_key} 只能是数字" >&2; return 1 ;;
         esac
-        # 下限 60: TTL 压到 30 秒这种值时客户端很快就会再来查，
+        # 范围与 setting.sh 的加载期校验同源(SMARTDNS_TTL_FLOOR/CEIL)，
+        # 否则会出现"保存时放行、加载时被回退"的矛盾。
+        # 下限意义: TTL 压到 30 秒这种值时客户端很快就会再来查，
         # 冷查询与测速被反复触发，表现为"网络变慢 + 上游流量暴涨"
-        if ! awk -v p="${item_value}" 'BEGIN { exit !(p >= 60 && p <= 86400) }'; then
-            echo "取值非法: ${item_key} 必须在 60-86400 之间" >&2
+        if ! awk -v p="${item_value}" -v lo="${SMARTDNS_TTL_FLOOR}" -v hi="${SMARTDNS_TTL_CEIL}" \
+            'BEGIN { exit !(p >= lo && p <= hi) }'; then
+            echo "取值非法: ${item_key} 必须在 ${SMARTDNS_TTL_FLOOR}-${SMARTDNS_TTL_CEIL} 之间" >&2
             return 1
         fi
         replace_line "${item_key}" "${item_key}=${item_value}" || return 1

@@ -243,6 +243,19 @@ def main():
         r = run_api(mod, base, ['cron', 'get'])
         c.check('cron get 不取锁', lock_calls(mod), [])
 
+        # ---- TTL 边界: 写入校验与 setting.sh 加载期校验同源 ----
+        # 范围常量在 setting.sh 的 SMARTDNS_TTL_FLOOR/CEIL，这里锁定两端行为，
+        # 防止出现"保存时放行、加载时被回退"的矛盾
+        r = run_api(mod, base, ['set', 'SMARTDNS_TTL_MIN=5'])
+        c.check('TTL 低于下限被拒', r.returncode != 0, True)
+        c.check('TTL 拒绝提示含取值非法', '取值非法' in (r.stderr + r.stdout), True)
+        r = run_api(mod, base, ['set', 'SMARTDNS_TTL_MIN=100000'])
+        c.check('TTL 超上限被拒', r.returncode != 0, True)
+        r = run_api(mod, base, ['set', 'SMARTDNS_TTL_MIN=300'])
+        c.check('TTL 合法值接受', r.returncode, 0)
+        c.check('TTL 合法值已写入',
+                'SMARTDNS_TTL_MIN=300' in (mod / 'setting.conf').read_text(encoding='utf-8'), True)
+
         return c.report()
     finally:
         shutil.rmtree(base, ignore_errors=True)

@@ -5,6 +5,13 @@
 #       表现为"改完设置后服务再也起不来"。
 # 处理: 清洗 -> 语法预检 -> 坏行逐行抢救 -> 缺失/非法项回退默认值，保证脚本永远能继续跑。
 
+# SmartDNS 缓存 TTL 下限的默认值与合法范围: 默认值、缺失修复值、越界回退值、
+# 以及 setting_api 写入前的校验都必须同源，否则调整范围时会漏改一处，
+# 出现"能保存进去但加载时被回退"的矛盾
+SMARTDNS_TTL_DEFAULT=600
+SMARTDNS_TTL_FLOOR=60
+SMARTDNS_TTL_CEIL=86400
+
 # 默认设置(与 setting.conf 保持一致)
 setting_default(){
     SMARTDNS_ENABLE=true
@@ -25,7 +32,7 @@ setting_default(){
     SMARTDNS_RESPONSE_MODE=first-ping
     SMARTDNS_SPEED_CHECK=ping,tcp:80,tcp:443
     SMARTDNS_DUALSTACK=true
-    SMARTDNS_TTL_MIN=600
+    SMARTDNS_TTL_MIN=${SMARTDNS_TTL_DEFAULT}
     NETWORK_REFRESH=true
     AD_BLOCK_ENABLE=true
     BACKUP_CONF=true
@@ -221,7 +228,7 @@ setting_validate(){
 
     setting_fix_port AGH_DNS_PORT 5300
     setting_fix_port MIHOMO_DNS_PORT 1053
-    setting_fix_number SMARTDNS_TTL_MIN 600
+    setting_fix_number SMARTDNS_TTL_MIN ${SMARTDNS_TTL_DEFAULT}
 
     # SmartDNS 固定监听 3721，三个 DNS 端口不能互相冲突
     if [ "${AGH_DNS_PORT}" = "3721" ]; then
@@ -241,14 +248,14 @@ setting_validate(){
         fi
     fi
 
-    if [ "${SMARTDNS_TTL_MIN}" -gt 86400 ]; then
-        log "e" "设置项 SMARTDNS_TTL_MIN 取值越界，已回退为 600"
-        SMARTDNS_TTL_MIN=600
+    if [ "${SMARTDNS_TTL_MIN}" -gt ${SMARTDNS_TTL_CEIL} ]; then
+        log "e" "设置项 SMARTDNS_TTL_MIN 取值越界(上限 ${SMARTDNS_TTL_CEIL})，已回退为 ${SMARTDNS_TTL_DEFAULT}"
+        SMARTDNS_TTL_MIN=${SMARTDNS_TTL_DEFAULT}
     fi
-    # 下限 60 秒: 30 秒这种值会让客户端频繁回查，冷查询/测速被反复触发
-    if [ "${SMARTDNS_TTL_MIN}" -lt 60 ]; then
-        log "e" "设置项 SMARTDNS_TTL_MIN 低于 60 秒，已回退为 600"
-        SMARTDNS_TTL_MIN=600
+    # 下限: 30 秒这种值会让客户端频繁回查，冷查询/测速被反复触发
+    if [ "${SMARTDNS_TTL_MIN}" -lt ${SMARTDNS_TTL_FLOOR} ]; then
+        log "e" "设置项 SMARTDNS_TTL_MIN 低于 ${SMARTDNS_TTL_FLOOR} 秒，已回退为 ${SMARTDNS_TTL_DEFAULT}"
+        SMARTDNS_TTL_MIN=${SMARTDNS_TTL_DEFAULT}
     fi
 
     setting_fix_enum MODULE_DNS_MODE 2 1 2
