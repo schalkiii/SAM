@@ -361,6 +361,17 @@ is_port_listening(){
     return 0
 }
 
+# Mihomo 是否应该参与运行: 启用 + 有订阅地址 + 非直通模式
+# 三条件缺一不可，漏判的后果各不相同:
+#   - 没有订阅地址时 Mihomo 本身起不来，不该被当成异常反复重启刷日志
+#   - 直通模式的目的是让系统使用网络下发的 DNS，Mihomo 的 TUN(auto-route +
+#     dns-hijack) 会在路由层继续劫持，必须停掉
+# 判定点分布在启动编排(service.sh)、健康检查与拓扑刷新(watchdog.sh)，
+# 集中在这里避免各处条件漂移
+mihomo_expected(){
+    [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]
+}
+
 # 计算当前 DNS 入口: 按 MODULE_DNS_MODE 逐级回退，输出 "名称:端口"，无可用入口时输出空
 # 三处消费方必须同序，否则会出现"规则指向已死端口"或"规则正常但显示异常":
 #   iptables/dns.sh select_dns_port(建重定向规则)

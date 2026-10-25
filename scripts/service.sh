@@ -18,7 +18,7 @@ has_abnormal_service(){
 
     [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && abnormal=1
     [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && abnormal=1
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+    if mihomo_expected; then
         ! isRun ${MIHOMO_BIN} && abnormal=1
     fi
 
@@ -162,7 +162,7 @@ start(){
     # 明确返回健康状态，供 apply/update 判断，不能永远返回成功
     [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && return 1
     [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && return 1
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ] && ! isRun ${MIHOMO_BIN}; then
+    if mihomo_expected && ! isRun ${MIHOMO_BIN}; then
         return 1
     fi
     record_service_event "start complete"

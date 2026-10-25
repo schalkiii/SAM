@@ -1,4 +1,13 @@
 # Unreleased
+- 修复与加固（第二轮审计 S-2~S-9）
+  - restore 在拷贝前无条件清理上次被中断留下的 `${target}.restore.*` 临时文件：残留的 `etc/crontabs/root.restore.<pid>` 会被 busybox crond 当作 crontab 加载并重复执行其中的 cron 行（`crond -c` 加载目录下所有文件）
+  - 补注释说明 restore 的目标选取有意在锁外——并发双重 restore 是幂等的（都恢复同一目标）；挪进锁内会变成「后一次恢复前一次的快照」
+  - TTL 默认值与合法范围收敛为单一定义（`SMARTDNS_TTL_DEFAULT`/`FLOOR`/`CEIL`）：原四处写死 600 + `setting_api` 另有一份 60-86400 写入校验，调整范围会漏改，出现「保存时放行、加载时被回退」
+  - 新增 `tools/check_version_sync.py` 并纳入 CI：`module.prop`/`update.json`/`changelog` 三处版本、versionCode、zipUrl 资产名、版本节必须对齐（漏一处则 OTA 拿旧版号或 404）
+  - 新增 `tools/test_watchdog_logic.py`（20 项）：`any_dns_service` / `all_services_running`（刷新网络的健康门，判宽会导致 WiFi 反复断开）/ `agh_config_blocked`（cksum 判等，否则每 5 秒重试）
+  - 「Mihomo 是否应参与运行」三条件判定在 `service.sh`(×2) 与 `watchdog.sh`(×3) 重复五处，收敛为 `base.sh mihomo_expected()`
+  - 锁竞争「活进程持锁」用例按 shell 的 `kill -0` 能力启用（本机 sh.EXE 检测不到进程会跳过，CI mksh 下执行）
+  - 测试合计 137 → 233 项；`AGENTS.md` 门禁清单补全并记录测试编写约定
 - 架构: DNS 入口选择链三处重复实现合一（审计 A-1，v20261024.18 计数器归零故障的复发面）
   - 新增 `base.sh dns_entry_port()`：按 `MODULE_DNS_MODE` 逐级回退（模式 2 Mihomo→AGH→SmartDNS，模式 1 AGH→Mihomo→SmartDNS），判定口径统一为 `isRun` + `is_port_listening`（进程活着不代表端口可用），输出「名称:端口」或空
   - 三处消费方改为调用共享函数，只保留各自格式化：`iptables/dns.sh select_dns_port`（解析端口/名称建规则，删除 `set_dns_entry`）、`watchdog.sh current_dns_entry`（拓扑比对，空时输出 none）、`webui.sh resolve_dns_entry`（状态页显示，保留直通模式分支；SmartDNS 端口来源从配置解析改为设置项，与建规则一方同源）

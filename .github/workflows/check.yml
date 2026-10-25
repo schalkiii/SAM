@@ -54,3 +54,7 @@ jobs:
       # 的一致性: 改动回退顺序或判定口径必须全绿
       - name: DNS 入口链一致性回归测试
         run: python tools/test_dns_entry.py
+
+      # 守护循环的纯判定逻辑(健康判定/配置阻塞)，不启动守护循环本身
+      - name: watchdog 纯逻辑回归测试
+        run: python tools/test_watchdog_logic.py

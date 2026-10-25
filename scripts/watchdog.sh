@@ -65,7 +65,7 @@ any_dns_service(){
 all_services_running(){
     [ "${SMARTDNS_ENABLE}" = "true" ] && ! isRun ${SMARTDNS_BIN} && return 1
     [ "${AGH_ENABLE}" = "true" ] && ! isRun ${AGH_BIN} && return 1
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+    if mihomo_expected; then
         isRun ${MIHOMO_BIN} || return 1
     fi
     return 0
@@ -199,7 +199,7 @@ ensure_service(){
     fi
 
     # Mihomo 没有订阅时本身起不来，不反复重试刷日志；直通模式下停用
-    if [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ] && ! isRun ${MIHOMO_BIN}; then
+    if mihomo_expected && ! isRun ${MIHOMO_BIN}; then
         if [ ${mihomo_backoff} -le 0 ]; then
             capture_auto_stop_snapshot "${MIHOMO_BIN}"
             record_service_event "watchdog restart ${MIHOMO_BIN}"
@@ -459,7 +459,7 @@ while true; do
         mihomo_before=$(cksum "${MIHOMO_CONF}" 2>/dev/null)
         ${UPDATE_PATH}/mihomo.sh > /dev/null 2>&1
         mihomo_after=$(cksum "${MIHOMO_CONF}" 2>/dev/null)
-        if [ "${mihomo_before}" != "${mihomo_after}" ] && [ "${MIHOMO_ENABLE}" = "true" ] && [ "${#SUB_URL[@]}" -gt 0 ] && [ "${BYPASS_ENABLE}" != "true" ]; then
+        if [ "${mihomo_before}" != "${mihomo_after}" ] && mihomo_expected; then
             ${SERVICE_PATH}/mihomo.sh stop > /dev/null 2>&1
             ${SERVICE_PATH}/mihomo.sh start > /dev/null 2>&1
         fi

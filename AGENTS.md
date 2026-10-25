@@ -10,8 +10,9 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 卸载（不需要重启）：`sh scripts/manual.sh uninstall`
 - 打包：`python tools/pack_module.py`；只检查用 `--check`；不改源文件用 `--no-write`；打包会跳过 `tools/`、`dist/`、`.workbuddy/` 等非模块内容
 - 广告屏蔽回归测试：`python tools/test_ad_sh.py`（改 `scripts/ad.sh` 后必跑，27 项断言）
-- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_backup_semantics.py`（backup.sh，43 项）、`test_cron_validate.py`（setting_api.sh 的 cron，29 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口回退链三处消费方一致性，66 项）。六套件合计 203 项断言
-- 测试编写约定（照现有任一测试为范例）：driver 搭临时模块目录/路径重写、或从脚本**原样抽取真实函数体**（不复制实现，重构会立刻失败）；mock 用可执行文件或 driver 内函数覆盖；Checker 类统一输出「通过 N 项, 失败 M 项」；shell 函数不能当变量用（mksh 里 `${fn}` 展开为空）
+- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_backup_semantics.py`（backup.sh，48 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口回退链三处消费方一致性，66 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞，20 项）。七套件合计 233 项断言
+- 版本一致性：`python tools/check_version_sync.py`（module.prop / update.json / changelog 三处必须对齐，CI 每次 push 跑）
+- 测试编写约定（照现有任一测试为范例）：driver 搭临时模块目录/路径重写、或从脚本**原样抽取真实函数体**（不复制实现，重构会立刻失败）；mock 用可执行文件或 driver 内函数覆盖；Checker 类统一输出「通过 N 项, 失败 M 项」；shell 函数不能当变量用（mksh 里 `${fn}` 展开为空）；依赖 PID 可见性的用例用 `live_pid_visible()` 门控（本机 sh.EXE 的 `kill -0` 看不到任何进程）
 
 ## 技术栈
 - 设备端 `/system/bin/sh` 是 mksh：支持数组、`(( ))`、`let`；不要用 bash 专属语法
