@@ -14,6 +14,9 @@
   - restore 持配置锁覆盖文件写入期(与 WebUI set/cron set 互斥)，
     成功与失败路径都释放；文件写入为同目录临时文件 + mv 的原子替换，
     正常与失败路径都不留临时残留
+  - 活进程持锁时 restore 拒绝且不碰文件(按 shell 的 kill -0 能力启用:
+    本机 sh.EXE 检测不到进程会跳过，CI mksh 下执行)
+  - restore 会清掉上次被中断留下的 .restore.* 临时文件(防 crond 重复加载)
 
 用法:
     python tools/test_backup_semantics.py            # 跑全部用例
@@ -91,6 +94,9 @@ def build_env(base, backup_conf='true'):
     d = d.replace('BACKUP_ROOT="/data/adb/SAM-backup"', f'BACKUP_ROOT="{base_posix}/SAM-backup"')
     d = d.replace('BACKUP_EXTRA_FILES="/data/adb/SAM-ad-hold.list"',
                   f'BACKUP_EXTRA_FILES="{base_posix}/SAM-ad-hold.list"')
+    # 锁等待超时从 30s 压到 2s: 超时值不是被测行为(锁的接线才是)，
+    # 否则「活进程持锁拒绝」用例要白等 30 秒
+    d = d.replace('sam_lock_acquire "setting" 30', 'sam_lock_acquire "setting" 2')
     p.write_text(d, encoding='utf-8', newline='\n')
 
     return mod
@@ -129,6 +135,20 @@ def lock_calls(mod):
 
 def clear_lock_calls(mod):
     (mod / 'tmp' / 'lock.calls').unlink(missing_ok=True)
+
+
+def live_pid_visible():
+    """被测 shell 能否通过 kill -0 检测到本进程——决定能否跑「活进程持锁」用例
+
+    本机 PortableGit 的 sh.EXE 的 kill -0 看不到任何进程(实测)，会把活锁
+    误判成陈旧锁；CI 的 mksh/dash 正常，用例在那里自动启用。
+    """
+    shell = shutil.which('mksh') or shutil.which('sh') or 'sh'
+    r = subprocess.run(
+        [shell, '-c', f'kill -0 {os.getpid()}'],
+        capture_output=True, cwd='.',
+    )
+    return r.returncode == 0
 
 
 def leftover_temps(root):
@@ -308,6 +328,23 @@ def main():
         c.check('restore 后锁目录不残留', lock_dir.exists(), False)
         c.check('restore 后模块内无临时残留', leftover_temps(mod_off2), [])
         c.check('restore 后 extra 无临时残留', leftover_temps(off2), [])
+
+        # 8a-2 活进程持锁(用测试进程自己的 PID): restore 必须拒绝且不碰文件。
+        # 本机 sh.EXE 的 kill -0 检测不到进程，该 shell 下跳过(CI mksh 会跑)
+        if live_pid_visible():
+            lock_dir.mkdir()
+            (lock_dir / 'pid').write_text(f'{os.getpid()}\n', encoding='utf-8')
+            hosts_before = (mod_off2 / 'etc' / 'hosts').read_text(encoding='utf-8')
+            r = run_backup(mod_off2, off2, ['restore'])
+            c.check('持锁时 restore 被拒绝', r.returncode, 1)
+            c.check('持锁拒绝提示', '获取配置锁失败' in r.stdout, True)
+            c.check('持锁拒绝后文件不变',
+                    (mod_off2 / 'etc' / 'hosts').read_text(encoding='utf-8'), hosts_before)
+            c.check('持锁拒绝后锁未被抢夺', lock_dir.is_dir(), True)
+            shutil.rmtree(lock_dir, ignore_errors=True)
+        else:
+            print('  SKIP  活进程持锁用例: 当前 shell 的 kill -0 无法检测进程'
+                  '(本机 sh.EXE 限制，CI mksh 下自动启用)')
 
         # 8b 记录型 stub: 验证 acquire/release 调用序列(锁的接线)
         stub_lock(mod_off2)

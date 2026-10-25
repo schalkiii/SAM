@@ -9,6 +9,9 @@
   - 文件不存在时 get 输出占位提示
   - 配置锁: cron set 与 set/setarr/apply 同一互斥语义(成功/失败路径都取锁并释放、
     陈旧锁自动恢复、get 读路径不取锁)
+  - 活进程持锁时拒绝且不碰文件(按 shell 的 kill -0 能力启用: 本机 sh.EXE
+    检测不到进程会跳过，CI mksh 下执行)
+  - TTL 边界: 低于下限/超上限被拒，合法值接受(与 setting.sh 加载期校验同源)
 
 用法:
     python tools/test_cron_validate.py            # 跑全部用例
@@ -98,6 +101,21 @@ def lock_calls(mod):
 
 def clear_lock_calls(mod):
     (mod / 'tmp' / 'lock.calls').unlink(missing_ok=True)
+
+
+def live_pid_visible():
+    """被测 shell 能否通过 kill -0 检测到本进程——决定能否跑「活进程持锁」用例
+
+    本机 WorkBuddy 自带 PortableGit 的 sh.EXE 的 kill -0 看不到任何进程
+    (连 pid 1 都报 No such process，实测)，会把活锁误判成陈旧锁并抢走；
+    CI 的 mksh/dash 能正常检测，该用例在那里自动启用。
+    """
+    shell = shutil.which('mksh') or shutil.which('sh') or 'sh'
+    r = subprocess.run(
+        [shell, '-c', f'kill -0 {os.getpid()}'],
+        capture_output=True, cwd='.',
+    )
+    return r.returncode == 0
 
 
 class Checker:
@@ -215,6 +233,22 @@ def main():
         r = run_api(mod, base, ['cron', 'set', '0 9 * * * /bin/echo nine'])
         c.check('陈旧锁自动恢复后成功', r.returncode, 0)
         c.check('陈旧锁恢复后释放', lock_dir.exists(), False)
+
+        # 活进程持锁(用测试进程自己的 PID): 必须拒绝、不碰文件、不抢锁。
+        # 本机 sh.EXE 的 kill -0 检测不到进程，该 shell 下跳过(CI mksh 会跑)
+        if live_pid_visible():
+            lock_dir.mkdir()
+            (lock_dir / 'pid').write_text(f'{os.getpid()}\n', encoding='utf-8')
+            r = run_api(mod, base, ['cron', 'set', '0 12 * * * /bin/echo twelve'])
+            c.check('持锁时 cron set 被拒绝', r.returncode != 0, True)
+            c.check('持锁拒绝提示', '获取配置锁失败' in (r.stderr + r.stdout), True)
+            c.check('持锁拒绝后原文件不变', cron_file.read_text(encoding='utf-8'),
+                    '0 9 * * * /bin/echo nine\n')
+            c.check('持锁拒绝后锁未被抢夺', lock_dir.is_dir(), True)
+            shutil.rmtree(lock_dir, ignore_errors=True)
+        else:
+            print('  SKIP  活进程持锁用例: 当前 shell 的 kill -0 无法检测进程'
+                  '(本机 sh.EXE 限制，CI mksh 下自动启用)')
 
         # ---- 锁接线: 记录型 stub 覆盖真实锁实现，验证取锁/放锁调用序列 ----
         # 真实锁的阻塞竞争由 base.sh 的 sam_lock_acquire 负责(set/setarr/apply
