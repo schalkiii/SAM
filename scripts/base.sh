@@ -237,7 +237,33 @@ protect_process(){
         [ -n "${protect_pid}" ] || continue
         [ -w "/proc/${protect_pid}/oom_score_adj" ] || continue
         echo -1000 > "/proc/${protect_pid}/oom_score_adj" 2>/dev/null
+        protect_cgroup "${protect_pid}"
     done
+}
+
+# 把进程迁出调用方 cgroup（best-effort）
+# 背景: oom_score_adj=-1000 只挡内核 OOM 与 LMKD 的分数选择。若进程继承了
+#       调用方(管理器 App / 某个 su 会话)的 cgroup，该 cgroup 被整组 kill 时
+#       所有成员会同一秒消失，而我们的脚本收不到任何信号、日志里也没有事件——
+#       现象正是"三服务 + watchdog 一起没了，service.state 还是 running"。
+# 做法: 迁到 init 所在的 system 组(后台清理不会整组清扫它)。
+#       内核/SELinux 不允许时只记一条 INFO，不改变原有行为。
+protect_cgroup(){
+    pc_pid="${1}"
+    [ -f "/proc/${pc_pid}/cgroup" ] || return 0
+    pc_current=$(sed -n 's/^0:://p' "/proc/${pc_pid}/cgroup" 2>/dev/null)
+    case "${pc_current}" in
+        /system|/system/*) return 0 ;;
+    esac
+    for pc_target in /sys/fs/cgroup/system/cgroup.procs /sys/fs/cgroup/cgroup.procs; do
+        [ -w "${pc_target}" ] || continue
+        if echo "${pc_pid}" > "${pc_target}" 2>/dev/null; then
+            log_file "cgroup: pid=${pc_pid} ${pc_current:-未知} -> ${pc_target%/*}"
+            return 0
+        fi
+    done
+    log_file "cgroup: pid=${pc_pid} 仍在 ${pc_current:-未知}(迁出失败)"
+    return 0
 }
 
 # 设置飞行模式: Android 11+ 优先用 cmd connectivity，老系统回退 settings + broadcast

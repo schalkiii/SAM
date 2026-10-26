@@ -16,6 +16,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **服务页语义明确**：启动/停止/重启全部服务；「软重启后恢复」会额外重挂 hosts、启动监控并按设置刷新网络；存在待激活包时按钮自动变为「激活并恢复新版」，不会再恢复旧版
 - **DNS 入口可见**：监控页显示当前 53 端口实际转发到的服务与端口，区分「DNS 规则正常」和「查询真的经过模块」
 - **守护循环**：进程掉线自动拉起、iptables 规则被清自动重建、日志 100KB 轮转（服务存活 5 秒检查，规则 10 秒）；服务恢复后只在 DNS 入口真正变化时才重写下游上游并重启，同名端口恢复不重启 AGH/Mihomo（缓存与统计保留）；只有服务全部恢复且距离上次自动刷新超过 10 分钟时才刷新网络，避免服务反复掉线时反复开关 WiFi
+- **守护自愈**：`scripts/supervisor.sh` 专盯 watchdog 存活（不在就 30 秒内重新拉起），KernelSU 下由 `initrc/sam.rc` 交给 init 托管——服务与 watchdog 被外力整组 SIGKILL 时也能恢复；进程启动时 best-effort 迁出调用方 cgroup（`oom_score_adj=-1000` 挡不住 cgroup 整组 kill）
 - **配置安全加载**：`setting.conf` 出现 BOM / CRLF / 语法错误仍能启动，坏行单独跳过
 - **全量配置备份**：卸载/更新/恢复前自动备份到 `/data/adb/SAM-backup/<时间>/`（root-only，含 AGH/SmartDNS/Mihomo 用户数据目录、crontabs 与广告屏蔽清单；任一复制失败会返回失败并保留清单，避免假备份）。备份带完成标记，`list`/`restore` 只认完整备份；`restore` 前会先自动留存一份当前配置快照，还原可回退；守护循环每天自动备份一次
 - **定时任务 WebUI**：工具页「定时任务」卡片可直接编辑 `/etc/crontabs/root`（一行一条，保存时逐行校验时间字段），busybox crond 下一分钟自动生效，无需重启服务
@@ -35,7 +36,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## ⚠️ 当前已知问题与发布状态
 
-- 线上最新 Release 为 **v20261025.11**：自动停止诊断修复（区分软重启/整组清理/模块主动停止，新增 boot_count 取证与完整 snapshot 输出）+ 第五轮审计遗留项（配置键五处一致性、凭据门禁、免重启安装保护、无 curl 组件更新降级）；十二套件 423 项全部通过。刷入后需完整重启，或用「工具 → 激活待更新版本」免重启激活。
+- 线上最新 Release 为 **v20261026.1**：服务与 watchdog 整组消失的恢复能力（`supervisor.sh` + KernelSU `initrc` 托管 + cgroup 迁出）与 auto-stop 取证增补（uptime / cgroup / 其他模块进程 / `am_kill`）；十二套件 423 项全部通过。刷入后需完整重启，或用「工具 → 激活待更新版本」免重启激活。
 - 逐版变更、历史修复与已知问题的处理记录只维护在 [changelog.md](changelog.md)。本段不重复版本叙事，避免与 changelog 二次维护后漂移。
 
 ## ⚙️功能
@@ -78,28 +79,56 @@ KernelSU/Magisk 的升级包通常先进入 `/data/adb/modules_update/SAM`，正
 
 激活会先校验模块结构，保留上一版到 `/data/adb/SAM.previous`，失败自动回滚；只有成功后才删除 `modules_update`。安装器还会在 `/data/adb/SAM-activate.sh` 留下模块外恢复入口，避免 active 目录消失后无法自救。
 
+## 日志与取证（一次性取全）
+
+排查时不需要在 WebUI 里逐个按钮运行再分段复制。运行一次
+`sh /data/adb/modules/SAM/scripts/collect.sh`（或 WebUI「工具 → 日志取证 → 一键收集日志」），
+它会把同一时刻的所有证据写进一个报告：
+
+- `tmp/module.log`、`module.log.1`、`module.log.boot.1`（三代完整）
+- `tmp/auto-stop.*.log`、`service.state`、`service.abnormal`、`boot.count`、`watchdog.heartbeat`
+- SmartDNS / AdGuardHome / Mihomo 自身日志尾部
+- `diagnose.sh` 全量只读输出
+- 相关进程与 cgroup、iptables/ip6tables 链与监听端口
+- `dmesg` 的 OOM 记录、`logcat -b events` 的 `am_kill`、deviceidle 白名单
+
+报告固定写在 `/data/adb/SAM-debug/SAM-report-<时间>.txt`（root-only，保留最近 10 份，
+`collect.sh list` 查看）。手机端不方便读 `/data` 时用「导出报告到下载目录」或
+`sh collect.sh share`，它会在 `/sdcard/Download` 再复制一份——报告含订阅链接、节点地址与
+查询日志，发送前确认接收方与渠道。
+
+日志文件的职责分工：`tmp/module.log` 是模块自身事件（含 SERVICE-EVENT/ERROR）；
+`tmp/smartdns.out`/`smartdns.log`、`tmp/AdGuardHome.log`、`tmp/mihomo.log` 是服务自己吐的
+输出；`tmp/auto-stop.<bin>.<时间>.log` 是 watchdog 发现服务异常消失时的现场快照；
+`/data/adb/SAM-activate.log` 是安装后自动激活的日志。
+
 ## 服务过一段时间自动停止
 
-按下面顺序区分“系统杀后台 / 整组清理 / 软重启”与“模块自身停止”。
+先看一个判据：**模块自身的停止路径一定会留痕**。`service.sh stop`（含 WebUI 按钮、WiFi 黑名单、
+定时重启）会写 `stop requested` + `stop complete`；禁用/卸载监控会先走 `service.sh stop`；
+`sd.sh/agh.sh/mihomo.sh stop` 会写“停止成功”。所以「三服务 + watchdog 在同一窗口消失、
+`module.log` 里没有任何事件、`service.state` 仍是 `running`」只可能来自**模块外的整组 SIGKILL**，
+不是模块自己停的。
 
-首先强调一点：`tmp/module.log` 里的 `[SERVICE-EVENT] stop requested reason=stopped` 是**历史事件**，
-不代表当前状态。日志会随服务启停累加，几小时/几天前的主动停止会一直留在文件里；
-只看它而不看“停止之后有没有再次 start complete”会误判。诊断结论（`--auto-stop`）已改成
-“当前 `service.state` + 最新日志顺序 + `boot_count`”三要素判定：
+排查顺序：
 
 1. 跑 `sh scripts/diagnose.sh --auto-stop`（root，或 WebUI「工具 → 自动停止分析」）。
-   - 结论若为「系统框架已重启（boot_count 变化）」：**这是软重启**。软重启不会执行模块开机脚本，
-     watchdog 与服务一起被杀，属正常现象，用服务页「软重启后恢复」即可。
-   - 结论若为「整组清理」：watchdog、服务 **同时**消失但 boot_count 未变，是厂商后台策略 / 一键清理 /
-     kill -9，不是模块自身退出。
-   - 结论若为「模块主动停止」：`service.state` 是 `stopped`（或 `stopped-by-wifi`），才是真的停过。
-     看 `tmp/module.log` 最后一条 SERVICE-EVENT 的时间来定位是谁触发的。
-2. 看 `tmp/auto-stop.*.log`（诊断现已完整打印取件内容）。watchdog 在服务异常消失时会抓
-   `logcat` 里的 `lmkd/ActivityManager kill/Force stopping` 线索。
-3. 小米设备把模块相关进程设为“无限制后台”、关闭电池优化，并在最近任务中锁定；
-   `oom_score_adj=-1000` 只挡内核 OOM/LMKD 的分数选择，挡不住厂商守护进程与 kill -9。
-4. 若诊断显示 `service.state=stopped` 但没有对应 SERVICE-EVENT，或结论仍未定向，
-   把整段诊断输出回传定位。
+   - 「系统框架已重启（boot_count 变化）」：**软重启**。软重启不执行模块开机脚本，watchdog 与服务
+     一起被杀，属正常现象，用服务页「软重启后恢复」即可。
+   - 「定向 kill」：只有服务与 watchdog 消失，crond / inotifyd / WiFi 监控还在 → 按进程名/脚本名做的
+     kill（其它 root 清理类 App、其它模块、单条 kill 脚本），重点排查 fellow root 工具。
+   - 「整组清理」：所有模块进程一起消失且 boot_count 未变 → 应用 cgroup 被整组 kill 或厂商强杀。
+   - 「模块主动停止」：`service.state` 是 `stopped`（或 `stopped-by-wifi`），看最后一条 SERVICE-EVENT 定位。
+2. 看诊断里的「其他模块进程 / cgroup」两段：进程若在 `uid_10xxx`（应用组）里，就会被清理后台连带杀死；
+   在 `system` 组则不会。本版已把进程 best-effort 迁到 `system`，`tmp/module.log` 里有
+   `cgroup: pid=... -> ...` 或 `迁出失败` 记录。
+3. 看 `tmp/auto-stop.*.log`（诊断会完整打印）与 `logcat -b events` 的 `am_kill` Reason。
+   注意：模块进程不是 App 进程，AMS 通常不记录；**没有记录不等于没被杀**。
+4. 恢复不再依赖手动操作：`scripts/supervisor.sh` 每 30 秒确认 watchdog 存活，KernelSU 下由
+   `initrc/sam.rc` 交给 init 托管（被强杀后 init 会重新拉起）。若诊断里 `supervisor` 也显示「未运行」
+   且长期如此，说明你的管理器没有加载 initrc，可在 root shell 里确认 `ksud initrc refresh` 是否可用。
+5. 仍然反复发生时，跑一次 `sh scripts/collect.sh` 把整份报告回传定位（报告含 cgroup、
+   其他模块进程、`am_kill` 三段，以及 module.log 三代与 auto-stop 取证）。
 
 ## WiFi 慢 / 5G 正常
 

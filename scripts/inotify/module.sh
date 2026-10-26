@@ -14,6 +14,7 @@ SYSTEM_HOSTS="/system/etc/hosts"
 # 杀本模块的常驻监控(不杀当前这个 module.sh 监控进程)
 kill_monitors(){
     for monitor_pid in $(pgrep -f "${SCRIPTS_PATH}/watchdog.sh" 2>/dev/null) \
+                        $(pgrep -f "${SCRIPTS_PATH}/supervisor.sh" 2>/dev/null) \
                         $(pgrep -f "${SCRIPTS_PATH}/wifi.monitor.sh" 2>/dev/null) \
                         $(pgrep -f "${SCRIPTS_PATH}/inotify/host.sh" 2>/dev/null); do
         kill -9 "${monitor_pid}" 2>/dev/null

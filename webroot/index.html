@@ -443,6 +443,16 @@
             </div>
 
             <div class="content-section">
+                <h3>日志取证</h3>
+                <div class="tool-grid">
+                    <button class="tool-btn" data-script="collect.sh" data-args="">一键收集日志</button>
+                    <button class="tool-btn" data-script="collect.sh" data-args="share">导出报告到下载目录</button>
+                    <button class="tool-btn" data-script="collect.sh" data-args="list">已有报告</button>
+                </div>
+                <div class="setting-desc">「一键收集日志」把 module.log 三代、auto-stop 取证、三服务自身日志、完整诊断、进程 cgroup、iptables、dmesg/logcat 击杀记录汇总成一个报告，保存在 /data/adb/SAM-debug（root-only，保留最近 10 份），执行后会把路径显示在下方输出框。「导出报告到下载目录」额外复制一份到 /sdcard/Download，方便直接发送；报告含订阅链接与节点地址，发送前确认渠道。</div>
+            </div>
+
+            <div class="content-section">
                 <h3>配置备份</h3>
                 <div class="tool-grid">
                     <button class="tool-btn" data-script="backup.sh" data-args="save">立即备份</button>

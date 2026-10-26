@@ -41,6 +41,11 @@ fi
 # 守护循环自身也要免被回收，否则没人拉起掉线的服务
 protect_process "$$"
 
+# 被 kill(TERM/INT/HUP) 时留证据再退出
+# 整组 SIGKILL 拦不住，但"被要求退出"与"被强杀"在日志里必须能区分，
+# 否则诊断只能看到心跳突然中断，无法定位是谁动的手
+trap 'log "e" "守护循环收到退出信号，已停止"; sam_lock_release "watchdog_instance"; exit 0' HUP INT TERM
+
 # 记录本次启动时的系统 boot_count
 # 软重启/系统框架重启不会重新执行模块开机脚本，watchdog 与服务会被一起杀掉；
 # 下次诊断对比 boot_count 就能区分「系统重启」与「整组进程被清理」。

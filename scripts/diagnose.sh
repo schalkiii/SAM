@@ -33,7 +33,7 @@ cfg(){ grep -m1 "^${1}=" "${SETTING}" 2>/dev/null | cut -d= -f2-; }
 
 # 自动停止结论(纯函数，供测试抽取；不依赖外部命令)
 # 参数: state services_down watchdog_dead heartbeat_age boot_state
-#       start_fail kill_evidence wifi_stops
+#       start_fail kill_evidence wifi_stops peer_alive
 diag_conclusion(){
     d_state="${1}"
     d_down="${2}"
@@ -43,6 +43,7 @@ diag_conclusion(){
     d_start_fail="${6}"
     d_kill="${7}"
     d_wifi="${8}"
+    d_peer="${9}"
 
     if [ "${d_start_fail:-0}" -gt 0 ] && [ -z "${d_kill}" ]; then
         echo "  倾向启动失败/自行退出(不是被系统杀)：module.log 有 ${d_start_fail} 次服务启动失败记录。"
@@ -52,6 +53,11 @@ diag_conclusion(){
         echo "  存在进程级击杀证据(内核 OOM / ActivityManager / Force stopping)，服务是被外力杀掉的。"
         echo "  注意：oom_score_adj=-1000 只挡住内核 OOM 与 LMKD 的分数选择，挡不住厂商守护进程与 kill -9。"
         echo "  建议：设为无限制后台、关闭电池优化、锁定最近任务，并观察 watchdog 心跳。"
+    elif [ "${d_state}" = "running" ] && [ "${d_watchdog_dead}" -eq 1 ] && [ "${d_down}" -gt 0 ] && [ "${d_peer:-0}" -eq 1 ]; then
+        echo "  crond/inotifyd/wifi 监控仍在，只有服务与 watchdog 消失：这不是应用 cgroup 整组清理，"
+        echo "  更像按进程名/脚本名做的定向 kill(其它 root 清理类 App、其它模块、或单条 kill 脚本)。"
+        echo "  下一步：看上面的 logcat events(am_kill 的 Reason)；反复发生时优先排查 fellow root 工具。"
+        echo "  已做防护：cgroup 迁出(system 组) + initrc 托管的监督进程会自动把 watchdog 拉回来。"
     elif [ "${d_state}" = "running" ] && [ "${d_watchdog_dead}" -eq 1 ] && [ "${d_down}" -gt 0 ]; then
         echo "  watchdog 与服务同时消失，且没有 SERVICE-EVENT/异常标记：不是模块主动停止。"
         case "${d_boot}" in
@@ -120,6 +126,11 @@ analyze_auto_stop(){
         kv "watchdog.heartbeat" "无"
     fi
 
+    # 系统运行时长(秒): 与 boot_count 交叉验证——软重启会重置它，
+    # 而"整组被杀"不会
+    uptime_sec=$(cut -d. -f1 /proc/uptime 2>/dev/null)
+    [ -n "${uptime_sec}" ] && kv "系统已运行" "${uptime_sec}s"
+
     services_down=0
     watchdog_dead=0
     for service_name in smartdns AdGuardHome mihomo watchdog.sh; do
@@ -127,6 +138,9 @@ analyze_auto_stop(){
         [ -z "${service_pid}" ] && service_pid=$(pgrep -f "${service_name}" 2>/dev/null | head -n 1)
         if [ -n "${service_pid}" ]; then
             kv "${service_name}" "PID ${service_pid}, oom=$(cat "/proc/${service_pid}/oom_score_adj" 2>/dev/null)"
+            # cgroup 决定「被整组清理」时会不会一起死: 应用组(uid_10xxx)会被
+            # 清理后台/中止应用连带杀死，system 组(init 所在)不会
+            kv "  ${service_name} cgroup" "$(sed -n 's/^0:://p' "/proc/${service_pid}/cgroup" 2>/dev/null)"
         else
             kv "${service_name}" "未运行"
             if [ "${service_name}" = "watchdog.sh" ]; then
@@ -134,6 +148,21 @@ analyze_auto_stop(){
             else
                 services_down=$((services_down + 1))
             fi
+        fi
+    done
+
+    # 其他模块进程是否还活着: 全死 = 整组清理；只有服务与 watchdog 死 = 定向 kill
+    peer_alive=0
+    echo ""
+    echo "其他模块进程(区分整组清理与定向 kill):"
+    for peer_name in crond inotifyd wifi.monitor supervisor; do
+        peer_pid=$(pidof "${peer_name}" 2>/dev/null)
+        [ -z "${peer_pid}" ] && peer_pid=$(pgrep -f "${peer_name}" 2>/dev/null | head -n 1)
+        if [ -n "${peer_pid}" ]; then
+            peer_alive=1
+            kv "  ${peer_name}" "PID ${peer_pid}, cgroup=$(sed -n 's/^0:://p' "/proc/${peer_pid}/cgroup" 2>/dev/null)"
+        else
+            kv "  ${peer_name}" "未运行"
         fi
     done
 
@@ -196,6 +225,15 @@ analyze_auto_stop(){
     done
 
     echo ""
+    echo "近期进程击杀记录(logcat events):"
+    kill_log=$(logcat -b events -d 2>/dev/null | grep -E "am_kill|am_proc_died" | tail -n 12)
+    if [ -n "${kill_log}" ]; then
+        echo "${kill_log}" | sed 's/^/  /'
+    else
+        echo "  无(模块进程不是 App 进程，AMS 通常不记录；无记录不等于没被杀)"
+    fi
+
+    echo ""
     echo "MIUI/系统限制:"
     kv "  MIUI" "$(getprop ro.miui.ui.version.name 2>/dev/null)"
     if command -v dumpsys > /dev/null 2>&1; then
@@ -208,7 +246,7 @@ analyze_auto_stop(){
     # 历史 stop requested 次数判成模块主动停止（用户报告的实际误判）
     diag_conclusion "${service_state:-}" "${services_down}" "${watchdog_dead}" \
         "${heartbeat_age:-}" "${boot_state}" "${start_fail_total}" \
-        "${kill_evidence}" "${wifi_stops:-0}"
+        "${kill_evidence}" "${wifi_stops:-0}" "${peer_alive:-0}"
 
     # 只出现厂商的 handleLmkdMessage 而没有任何进程级击杀记录时，明确说明
     # 它不算证据，避免下次又按"被系统杀"去调后台策略

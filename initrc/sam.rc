@@ -1,0 +1,14 @@
+# KernelSU initrc: 交给 init 托管 watchdog 的监督进程
+#
+# 服务与 watchdog 被外力整组 SIGKILL 时，模块自身没有任何进程能把它拉回来。
+# 2026-10-26 实测: 开机约 35 秒后三服务 + watchdog 在同一窗口消失，
+# module.log 无任何事件、boot_count 未变化(不是软重启)——只能靠外部监督恢复。
+# init 托管的进程不属于应用 cgroup，退出后由 init 重新拉起。
+# Magisk 不读取 initrc/，该文件只在 KernelSU 生效；未加载时
+# scripts/service.sh start 会自己拉起监督进程。
+# 手动刷新: ksud initrc refresh
+service sam-supervisor /system/bin/sh /data/adb/modules/SAM/scripts/supervisor.sh
+    user root
+    group root
+    seclabel u:r:ksu:s0
+    class late_start

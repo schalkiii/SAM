@@ -1,3 +1,29 @@
+# 2026.10.26.1
+- 修复: 开机后服务与 watchdog 反复整组消失（用户反馈「重启完服务很快就又都停」）。
+  现象固定为 4 个进程同一窗口内消失、`service.state` 仍是 `running`、`module.log` 无任何
+  事件、`boot_count` 未变化。模块侧没有任何主动停止路径会产生这种组合（`service.sh stop`、
+  禁用/卸载监控、卸载流程都会写 SERVICE-EVENT），因此按「外力整组 SIGKILL + 缺人拉起」处理
+  - 新增 `scripts/supervisor.sh`：只盯一件事——watchdog 不在就 30 秒内重新拉起；不碰服务、
+    规则与配置，避免与 watchdog/service.sh 职责重叠；`stopped*` 状态不拉起
+  - 新增 `initrc/sam.rc`：KernelSU 下把监督进程交给 init 托管（init 在进程退出后会重新拉起，
+    且不受应用 cgroup 清理影响）；Magisk 与未加载 initrc 时由 `service.sh start` 兜底拉起
+  - 修复: `base.sh protect_process` 现在同时把进程 best-effort 迁到 `system` cgroup。
+    `oom_score_adj=-1000` 只挡内核 OOM/LMKD 的分数选择，挡不住 cgroup 整组 kill；
+    迁出失败只记 INFO，不改变原有行为
+  - 修复: watchdog 增加 HUP/INT/TERM trap（记录「收到退出信号」后再退出），
+    让「被要求退出」与「被 SIGKILL」在日志里可区分
+  - 取证: `diagnose.sh --auto-stop` 增补 `/proc/uptime`、各进程 cgroup、其他模块进程
+    (crond/inotifyd/wifi 监控/supervisor)存活情况、`logcat -b events` 的 `am_kill` 记录；
+    结论新增「定向 kill」分支（只有服务与 watchdog 消失、其余模块进程仍在）
+  - 清理: `inotify/module.sh` 与 `manual.sh` 的 kill 列表加入 supervisor，
+    避免禁用/卸载后监督进程把 watchdog 复活
+  - 新增: `scripts/collect.sh` 一键取证。把 module.log 三代、`tmp` 取证文件、
+    三服务自身日志尾部、`diagnose.sh` 全量输出、进程 cgroup、iptables/ip6tables、
+    dmesg/logcat `am_kill` 聚合为单个报告，写到 `/data/adb/SAM-debug/`
+    （root-only，保留最近 10 份）；`share` 额外导出到 `/sdcard/Download`，`list` 看历史。
+    WebUI 工具页新增「日志取证」卡片，排查时一次取全，不必逐个按钮运行再分段复制
+  - 文档: README「服务过一段时间自动停止」重写排查顺序，去掉"一定是厂商清理"的单一归因
+
 # 2026.10.25.11
 - 第五轮审计遗留项推进（`docs/AUDIT-REPORT-2026-10-25-5.md` S-5-8~S-5-10）
   - 测试: 新增 `test_setting_keys.py`（15 项），静态校验 27 个配置键在

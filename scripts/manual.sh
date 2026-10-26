@@ -323,6 +323,7 @@ kill_monitor(){
     target_dir="${1}"
     for monitor_pid in $(pgrep -f "${target_dir}/scripts/inotify/" 2>/dev/null) \
                         $(pgrep -f "${target_dir}/scripts/wifi.monitor.sh" 2>/dev/null) \
+                        $(pgrep -f "${target_dir}/scripts/supervisor.sh" 2>/dev/null) \
                         $(pgrep -f "${target_dir}/scripts/watchdog.sh" 2>/dev/null); do
         kill -9 "${monitor_pid}" 2>/dev/null
     done

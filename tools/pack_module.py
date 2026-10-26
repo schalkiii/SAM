@@ -266,6 +266,7 @@ def main():
         "scripts/backup.sh",
         "scripts/update.sh",
         "scripts/diagnose.sh",
+        "scripts/collect.sh",
         "scripts/webui.sh",
         "scripts/service/sd.sh",
         "scripts/service/agh.sh",

@@ -142,6 +142,11 @@ start(){
     if ! pgrep -f "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1; then
         detach_exec "${SCRIPTS_PATH}/watchdog.sh" > /dev/null 2>&1
     fi
+    # watchdog 的监督进程: KernelSU 下由 initrc/sam.rc 交给 init 托管，
+    # 这里兜底 Magisk 与未加载 initrc 的情况(init 拉起时会先占住实例锁)
+    if ! pgrep -f "${SCRIPTS_PATH}/supervisor.sh" > /dev/null 2>&1; then
+        detach_exec "${SCRIPTS_PATH}/supervisor.sh" > /dev/null 2>&1
+    fi
 
     # 上一次停止时发现服务已经异常消失(被系统回收)，
     # 说明系统的网络状态可能已经被判成"无网络"，恢复后需要重新验证一次。

@@ -24,6 +24,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - `service.sh` 开机入口；`scripts/service.sh` 负责 start / stop / restart
 - `scripts/watchdog.sh` 5 秒守护：拉起掉线服务；iptables/DNS 链与日志轮转每 10 秒检查；配置按 mtime 热加载；备份清单非空时每 5 分钟清理已卸载 App 的广告锁定；网络自动刷新有 10 分钟节流
 - `scripts/diagnose.sh` 只读诊断（服务/端口/AGH 配置校验/防火墙/DNS/MTU/私人 DNS/v6 REJECT/DROP 采样）；WebUI 工具页「一键诊断」调用它
+- `scripts/collect.sh` 一键取证：把 module.log 三代、`tmp` 取证文件、三服务自身日志尾部、`diagnose.sh` 全量输出、进程 cgroup、iptables/ip6tables、dmesg/logcat `am_kill` 聚合为单个报告，写到 `/data/adb/SAM-debug/SAM-report-<时间>.txt`（root-only，保留最近 10 份）；`share` 额外复制到 `/sdcard/Download`（含敏感信息，仅显式导出）；`list` 列历史报告。WebUI 工具页「日志取证」三个按钮对应这三个入口；排查问题优先要这份报告，不要让用户逐个按钮运行再分段复制
 - `scripts/agh_reset.sh`：备份后用 `etc/AdGuardHome/AdGuardHome.template.yaml` 重置 AGH 配置，再跑 `update/agh.sh`、`--check-config` 并按服务状态重启；WebUI「危险操作 → 重置 AGH 配置」调用它
 - `etc/AdGuardHome/AdGuardHome.template.yaml` 是重置模板，不是运行时配置；改 AGH 默认字段时同步模板（schema 需与内置二进制匹配）
 - **WebUI 语义**：服务页的「启动/停止/重启全部服务」只控制服务；「软重启后恢复」额外重挂 hosts、启动监控并按设置刷新网络；存在待激活包时按钮变为「激活并恢复新版」并会先激活。工具页只放一次性维护命令，不要再加「恢复运行」。监控页显示「DNS 入口」（当前 53 实际转到哪个服务），规则正常 ≠ 有查询经过
@@ -34,7 +35,8 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - **服务启停互斥**：`service.sh start/stop/restart`、watchdog 的服务/规则恢复、`setting_api apply` 共用 `base.sh` 的 PID 目录锁；watchdog 拿锁后会再次检查 `service.state`，避免停止屏障失效。WiFi 查询失败时保持现状，不把空 SSID 当成非黑名单。
 - **常驻脚本信号**：HUP/INT/TERM 的 trap 必须显式 `exit`（只 `trap ... HUP INT TERM` 时处理器返回后循环继续，`kill` 停不掉进程）；`wifi.monitor.sh`、`ad.sh`、`update.sh`、`update/mihomo.sh` 均按「EXIT 释放锁 + 信号释放后退出」两行拆开。
 - **配置事务写入**：`setting_api.sh set/setarr` 先写临时副本，全部校验通过后一次 `mv`；端口冲突按同一批最终候选值校验，TTL 边界 60-86400 由 `setting.sh` 的 `SMARTDNS_TTL_FLOOR/CEIL` 单一定义，并通过 `get` 下发（`SMARTDNS_TTL_FLOOR/CEIL` 两行只读字段），WebUI 不再硬编码。
-- **服务自动停止取证**：watchdog 在服务异常消失时写 `tmp/auto-stop.<bin>.*.log`，启动时把系统 `boot_count` 写入 `tmp/boot.count`（变化时留 `.previous` 并写 SERVICE-EVENT）；`diagnose.sh` 按“当前 `service.state` + 最新日志顺序 + boot_count”区分软重启/整组清理/模块主动停止，并完整打印取证文件。历史 `stop requested` 不等于当前停止，不能单独作为结论。
+- **服务自动停止取证**：watchdog 在服务异常消失时写 `tmp/auto-stop.<bin>.*.log`，启动时把系统 `boot_count` 写入 `tmp/boot.count`（变化时留 `.previous` 并写 SERVICE-EVENT）；`diagnose.sh` 按“当前 `service.state` + 最新日志顺序 + boot_count”区分软重启/整组清理/模块主动停止，并完整打印取证文件；`--auto-stop` 还会输出 `/proc/uptime`、各进程 cgroup、其他模块进程（crond/inotifyd/wifi 监控/supervisor）存活情况与 `logcat -b events` 的 `am_kill`，据此新增「定向 kill」分支（只有服务与 watchdog 消失、其余模块进程仍在）。历史 `stop requested` 不等于当前停止，不能单独作为结论
+- **守护自愈**：`scripts/supervisor.sh` 只做「watchdog 不在就 30 秒内拉起」，不碰服务/规则/配置；由 `initrc/sam.rc` 交给 KernelSU init 托管（init 会重新拉起，且不在应用 cgroup 内），Magisk 或未加载 initrc 时由 `service.sh start` 兜底。`inotify/module.sh` 与 `manual.sh` 的 kill 列表必须包含 supervisor，否则禁用/卸载后它会把 watchdog 复活。`base.sh protect_process` 除 `oom_score_adj=-1000` 外还 best-effort 把进程迁到 `system` cgroup（应用 cgroup 会被整组 kill）；watchdog 的 HUP/INT/TERM trap 必须记日志再 `exit`，用来区分「被要求退出」与 SIGKILL。
 - **广告恢复保护**：文件类路径屏蔽期间的新内容改名到 `.samnew`，恢复失败返回非零；卸载只有全部恢复成功才删除 `/data/adb/SAM-ad-hold.list`。
 - **更新与安装安全**：组件下载优先校验 `.sha256`，下载统一走 `fetch_url`/`fetch_file`（缺 curl 退回 wget）；tar 拒绝绝对路径/`..`/链接；AGH/Mihomo 替换失败会回滚；`customize.sh` 解压或关键文件失败会中止安装。
 - **hosts 更新**：内容必须逐行是 `IP 域名`，更新使用 PID 锁与唯一临时文件，失败不覆盖原 hosts。下载统一走 `base.sh` 的 `fetch_url`（curl 优先，**缺 curl 退回 wget**——部分 ROM 没有 curl）；候选源 ghfast.top 优先、raw 直连备用、jsdelivr 兜底；更新前 `wait_network 60`（开机网络常晚于服务就绪），未取全的规则 30 秒后补拉一次；`etc/hosts` 出厂预置最新 GitHub/FCM 规则，断网首启也有解析
@@ -63,7 +65,8 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261025.11**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
+- 发布状态：线上最新 Release 为 **v20261026.1**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
+- **整组消失的判据**：模块所有停止路径都会写 SERVICE-EVENT（`service.sh stop`、禁用/卸载监控、`sd/agh/mihomo.sh stop`）。「三服务 + watchdog 同一窗口消失 + `service.state=running` + 无事件」只可能是模块外 SIGKILL，不要再去改模块的停止逻辑；恢复靠 supervisor（initrc 托管）与 cgroup 迁出
 - **端口监听判定**：任一协议（TCP 或 UDP）在监听即可用，不能要求同时监听——SmartDNS 默认只有 UDP bind，收紧会把运行中的服务判成未监听、计数归零。`is_port_listening` 因此按「任一协议」实现
 - `iptables/dns.sh` 有 `owner_supported` 探测（无 `xt_owner` 跳过 owner 规则，缓存 `tmp/owner.supported`）；`BLOCK_IPV6_DNS=false` 分支只清 IPv6 侧（`dns.sh disablev6`），不碰 IPv4 劫持
 - **watchdog 下游刷新按拓扑门控**：`current_dns_entry` 计算入口（薄包装 `base.sh dns_entry_port`，SmartDNS 端口从 `smartdns.conf` 解析后实测监听，不依赖调用方预置变量），入口变化**或链内服务被守护循环成功拉起**时跑 `update/agh.sh`+`update/mihomo.sh`，且重启前比对配置 cksum，内容不变只做等价重写——同名端口恢复（SmartDNS 重启仍是 3721）不再重启 AGH/Mihomo，缓存与统计保留。只看入口会漏掉「模式 1 下 AGH 一直在跑、Mihomo 恢复」这类入口不变但上游选择已变的情况
