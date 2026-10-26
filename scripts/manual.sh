@@ -299,6 +299,19 @@ mount_host(){
     mount -o bind "${target_dir}/etc/hosts" "${SYSTEM_HOSTS}" && ok "hosts 已挂载" || warn "hosts 挂载失败"
 }
 
+# 卸载 hosts 绑定挂载
+# 历史版本每次只摘一层，叠挂时会留下指向旧模块文件的挂载；
+# 这里循环摘到没有为止（上限 8 层，单次失败即停，避免刷日志）
+umount_host(){
+    umount_try=0
+    while mount | grep -q " ${SYSTEM_HOSTS} "; do
+        umount_try=$((umount_try + 1))
+        [ "${umount_try}" -le 8 ] || break
+        umount "${SYSTEM_HOSTS}" 2>/dev/null || break
+    done
+    return 0
+}
+
 # 启动监控(inotifyd 不存在就跳过，不要因此阻断启动)
 start_monitor(){
     target_dir="${1}"
@@ -344,6 +357,12 @@ resume_module(){
     need_active
 
     ensure_busybox
+
+    # 免重启更新后，watchdog/supervisor/wifi 监控是常驻 shell 进程，脚本文件被
+    # 替换后它们仍在跑内存里的旧代码（本次升级后 watchdog 就仍是旧版本，且还留在
+    # 应用 cgroup 里）。先全部停掉，由下面的 restart/start 重新拉起新代码；
+    # 软重启后恢复时这些进程本来就不存在，这一步等价于空操作。
+    kill_monitor "${ACTIVE_DIR}"
 
     say "启动服务"
     sh "${ACTIVE_DIR}/scripts/service.sh" restart
@@ -406,7 +425,12 @@ uninstall_module(){
         kill_monitor "${ACTIVE_DIR}"
 
         if mount | grep -q " ${SYSTEM_HOSTS} "; then
-            umount "${SYSTEM_HOSTS}" 2>/dev/null && ok "已卸载 hosts" || warn "卸载 hosts 失败"
+            umount_host
+            if mount | grep -q " ${SYSTEM_HOSTS} "; then
+                warn "卸载 hosts 失败"
+            else
+                ok "已卸载 hosts"
+            fi
         fi
 
         # 先备份配置，再恢复广告文件；备份失败时不应先改变广告目录

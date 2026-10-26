@@ -255,9 +255,53 @@ def main():
         c.check('无法读取成员列表 -> 拒绝', r.stdout.strip(), 'UNSAFE')
 
         print('[5] install_zip 保留范围: 定时任务与规则提供者')
-        manual_text = (REPO / 'scripts' / 'manual.sh').read_text(encoding='utf-8')
+        manual = REPO / 'scripts' / 'manual.sh'
+        manual_text = manual.read_text(encoding='utf-8')
         c.check('保留 etc/crontabs/root', 'etc/crontabs/root' in manual_text, True)
         c.check('保留 etc/mihomo/rule_provider', 'etc/mihomo/rule_provider' in manual_text, True)
+
+        print('[6] hosts 叠挂: 循环 umount 摘干净')
+        # 用 driver 内函数覆盖 mount/umount，模拟 N 层 bind 挂载；
+        # 不依赖真实 root 与 /system，Windows 与 CI 行为一致
+        umount_mock = '''SYSTEM_HOSTS="/system/etc/hosts"
+LAYER_FILE="${TEST_LAYER_FILE}"
+mount(){
+    layers=$(cat "${LAYER_FILE}" 2>/dev/null)
+    [ "${layers:-0}" -gt 0 ] && echo "/dev/block/x on /system/etc/hosts type ext4 (rw)"
+    return 0
+}
+umount(){
+    [ "${TEST_UMOUNT_FAIL:-0}" = "1" ] && return 1
+    layers=$(cat "${LAYER_FILE}" 2>/dev/null)
+    [ "${layers:-0}" -gt 0 ] && echo $((layers - 1)) > "${LAYER_FILE}"
+    return 0
+}
+'''
+
+        def check_umount(label, script_path, func_name, layers, fail, expected):
+            layer_file = base / 'layers.txt'
+            layer_file.write_text(str(layers), encoding='utf-8')
+            script = DRIVER_HEADER + umount_mock + extract_function(script_path, func_name) \
+                     + '\n' + func_name + '\ncat "${LAYER_FILE}"\n'
+            env = {'TEST_LAYER_FILE': layer_file.as_posix()}
+            if fail:
+                env['TEST_UMOUNT_FAIL'] = '1'
+            r = run_shell(base, script, env)
+            lines = r.stdout.strip().splitlines()
+            c.check(label, lines[-1] if lines else '', expected)
+
+        check_umount('manual.sh: 4 层叠挂 -> 全部摘除', manual, 'umount_host', 4, False, '0')
+        check_umount('base.sh: 4 层叠挂 -> 全部摘除',
+                     REPO / 'scripts' / 'base.sh', 'umount_hosts', 4, False, '0')
+        check_umount('umount 失败 -> 保留现场并停止', manual, 'umount_host', 4, True, '4')
+        check_umount('未挂载 -> 不做多余 umount', manual, 'umount_host', 0, False, '0')
+
+        print('[7] resume: 免重启更新后先重启常驻监控')
+        resume_fn = extract_function(manual, 'resume_module')
+        monitor_pos = resume_fn.find('kill_monitor "${ACTIVE_DIR}"')
+        restart_pos = resume_fn.find('service.sh" restart')
+        c.check('kill_monitor 在 service.sh restart 之前',
+                monitor_pos >= 0 and monitor_pos < restart_pos, True)
 
         return c.report()
     finally:

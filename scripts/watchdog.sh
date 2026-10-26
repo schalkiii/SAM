@@ -384,6 +384,10 @@ while true; do
     loop_count=$((loop_count + 1))
     date +%s > "${TMP_PATH}/watchdog.heartbeat" 2>/dev/null
 
+    # 模块更新会把 tmp 换成新目录，boot.count 随之丢失；缺文件就补写，
+    # 否则诊断里的「软重启 / 整组清理」判定会长期停留在"无法确认"
+    [ -f "${TMP_PATH}/boot.count" ] || record_boot_count
+
     # 手动停止 / WiFi 黑名单触发的停止，都不自动拉起
     case "$(cat "${STATE_FILE}" 2>/dev/null)" in
         stopped*)

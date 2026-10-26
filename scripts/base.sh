@@ -184,12 +184,26 @@ hosts_mounted(){
     mount | grep -q " /system/etc/hosts "
 }
 
+# 卸载 hosts 绑定挂载
+# 历史实现每次只 umount 一层，而重复挂载/卸载会留下叠层（mount 里同一目标
+# 出现多条），只摘一层等于没摘干净；这里循环摘到没有为止。
+# 上限 8 层防止异常时死循环；单次 umount 失败（如目标忙）立即停止，避免刷日志。
+umount_hosts(){
+    umount_try=0
+    while mount | grep -q " /system/etc/hosts "; do
+        umount_try=$((umount_try + 1))
+        [ "${umount_try}" -le 8 ] || break
+        umount /system/etc/hosts 2>/dev/null || break
+    done
+    return 0
+}
+
 # 把当前 hosts 文件重新挂到系统路径
 # mv 替换文件后 inode 会变，bind 挂载点仍指向旧 inode，必须 umount 后重挂
 remount_hosts(){
     [ "${HOST_ENABLE}" = "true" ] || return 0
     [ -f "${HOSTS_FILE}" ] || return 1
-    umount /system/etc/hosts 2>/dev/null
+    umount_hosts
     mount -o bind "${HOSTS_FILE}" /system/etc/hosts 2>/dev/null
 }
 

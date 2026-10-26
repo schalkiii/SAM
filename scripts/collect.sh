@@ -130,13 +130,19 @@ do_collect(){
     : > "${REPORT}" || exit 1
 
     section "报告信息"
+    # boot_count 在 MIUI 上是 settings 的 global 项，/proc/sys/kernel/boot_count
+    # 并不存在；读不到时退回 watchdog 记录的 tmp/boot.count，避免报告头一直是空的
+    boot_count_now="$(settings get global boot_count 2>/dev/null)"
+    case "${boot_count_now}" in
+        ''|null|*[!0-9]*) boot_count_now="$(cat "${TMP_PATH}/boot.count" 2>/dev/null)" ;;
+    esac
     {
         echo "生成时间: $(date '+%Y-%m-%d %H:%M:%S')"
         echo "模块目录: ${MODULE_PATH}"
         echo "模块版本: $(grep -m1 '^version=' "${MODULE_PATH}/module.prop" 2>/dev/null | cut -d= -f2-)"
         echo "模块描述: $(grep -m1 '^description=' "${MODULE_PATH}/module.prop" 2>/dev/null | cut -d= -f2-)"
         echo "系统运行秒数: $(cut -d' ' -f1 /proc/uptime 2>/dev/null)"
-        echo "boot_count: $(cat /proc/sys/kernel/boot_count 2>/dev/null)"
+        echo "boot_count: ${boot_count_now:-未知}"
         echo "SELinux: $(getenforce 2>/dev/null)"
         echo "设备型号: $(getprop ro.product.model 2>/dev/null)"
         echo "Android: $(getprop ro.build.version.release 2>/dev/null) (SDK $(getprop ro.build.version.sdk 2>/dev/null))"

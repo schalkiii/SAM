@@ -24,9 +24,13 @@ kill_monitors(){
 # 模块禁用/移除时停干净: 服务、规则、hosts 挂载、监控
 stop_all(){
     [ -f "${SCRIPTS_PATH}/service.sh" ] && sh "${SCRIPTS_PATH}/service.sh" stop > /dev/null 2>&1
-    if mount | grep -q " ${SYSTEM_HOSTS} "; then
-        umount "${SYSTEM_HOSTS}" 2>/dev/null
-    fi
+    # 历史实现只摘一层，叠挂时会有残留；循环摘到没有为止（上限 8 层）
+    umount_try=0
+    while mount | grep -q " ${SYSTEM_HOSTS} "; do
+        umount_try=$((umount_try + 1))
+        [ "${umount_try}" -le 8 ] || break
+        umount "${SYSTEM_HOSTS}" 2>/dev/null || break
+    done
     kill_monitors
 }
 

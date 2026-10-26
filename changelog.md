@@ -1,3 +1,22 @@
+# 2026.10.26.2
+- 修复: 免重启激活/恢复后，常驻脚本仍在跑更新前的代码（由用户导出的取证报告暴露）
+  - `manual.sh resume` 在 `service.sh restart` 前先 `kill_monitor`，把 watchdog /
+    supervisor / WiFi 监控 / inotifyd 全部停掉再重建。此前 watchdog 从更新前一直存活
+    （日志里 pid 启动于更新前 37 分钟），cgroup 仍留在应用组，新加的迁出与 trap 都没生效
+  - `watchdog.sh` 每轮检查 `tmp/boot.count`，缺失即补写。模块更新会换成新 tmp 目录，
+    旧实现只在 watchdog 启动时写一次，导致自动停止诊断长期无法区分软重启与整组清理
+  - `collect.sh` 的 boot_count 改读 `settings get global boot_count`，读不到再回退
+    `tmp/boot.count`。设备上不存在 `/proc/sys/kernel/boot_count`，报告头此前一直是空的
+  - 修复: hosts 绑定挂载叠层。`base.sh remount_hosts`、`service.sh` 关闭 hosts、
+    `inotify/module.sh` 禁用/移除、`manual.sh` 与 `uninstall.sh` 卸载原先都只 umount
+    一层；实际 mount 里已叠到 4 层，卸载后会残留指向旧模块文件的挂载。现统一循环
+    umount（上限 8 层，单次失败即停）再重挂
+  - 测试: `test_manual_repair.py` 增加 5 项（叠挂全摘 / umount 失败保留 / 未挂载空操作 /
+    base.sh 同一语义 / resume 重启顺序）。十二套件合计 428 项（CI/mksh），
+    Windows 本机 397 项
+- 说明: SmartDNS 日志中的腾讯 DoH 429 限流（522 条 WARN）经评估不影响解析，
+  其余上游正常兜底，本版不调整上游列表
+
 # 2026.10.26.1
 - 修复: 开机后服务与 watchdog 反复整组消失（用户反馈「重启完服务很快就又都停」）。
   现象固定为 4 个进程同一窗口内消失、`service.state` 仍是 `running`、`module.log` 无任何

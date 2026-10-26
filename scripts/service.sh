@@ -115,7 +115,9 @@ start(){
         detach_exec sh -c "sleep 10; sh '${UPDATE_PATH}/host.sh' update" > /dev/null 2>&1
     else
         # 关掉开关时要真正卸载，否则旧 hosts 会一直生效
-        mount | grep -q " /system/etc/hosts " && umount /system/etc/hosts 2>/dev/null
+        if hosts_mounted; then
+            umount_hosts
+        fi
     fi
 
     # 确保模块 / hosts 监控在跑

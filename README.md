@@ -36,7 +36,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## ⚠️ 当前已知问题与发布状态
 
-- 线上最新 Release 为 **v20261026.1**：服务与 watchdog 整组消失的恢复能力（`supervisor.sh` + KernelSU `initrc` 托管 + cgroup 迁出）与 auto-stop 取证增补（uptime / cgroup / 其他模块进程 / `am_kill`）；十二套件 423 项全部通过。刷入后可免重启激活（模块管理器安装后自动执行，或「工具 → 激活待更新版本」），激活时 `service.sh start` 会兜底拉起 supervisor、cgroup 迁出即时生效；只有 `initrc` 托管需要下次完整重启（KernelSU 可先试 `ksud initrc refresh`）。
+- 线上最新 Release 为 **v20261026.2**：在 v20261026.1 的整组消失恢复能力（`supervisor.sh` + KernelSU `initrc` 托管 + cgroup 迁出）之上，修复免重启更新后 watchdog 仍跑旧代码、hosts bind 挂载叠层、boot_count 取证断档；十二套件 428 项全部通过。刷入后可免重启激活（模块管理器安装后自动执行，或「工具 → 激活待更新版本」），激活时 `service.sh start` 会兜底拉起 supervisor、cgroup 迁出即时生效；只有 `initrc` 托管需要下次完整重启（KernelSU 可先试 `ksud initrc refresh`）。
 - 逐版变更、历史修复与已知问题的处理记录只维护在 [changelog.md](changelog.md)。本段不重复版本叙事，避免与 changelog 二次维护后漂移。
 
 ## ⚙️功能

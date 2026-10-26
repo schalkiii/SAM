@@ -48,7 +48,13 @@ else
 fi
 
 # 卸载 hosts 绑定，避免残留挂载
-mount | grep -q " /system/etc/hosts " && umount "/system/etc/hosts" 2>/dev/null
+# 叠挂时只摘一层会留下指向已删除模块文件的旧挂载，循环摘到没有为止
+umount_try=0
+while mount | grep -q " /system/etc/hosts "; do
+    umount_try=$((umount_try + 1))
+    [ "${umount_try}" -le 8 ] || break
+    umount "/system/etc/hosts" 2>/dev/null || break
+done
 
 # 直接删除，不依赖 reboot 与 remove 标记
 rm -rf "${MODULE_PATH}"
