@@ -81,6 +81,7 @@ update_setting(){
     modify_setting "${old_content}" "${out_content}" "TUN_DEVICE"
     modify_setting "${old_content}" "${out_content}" "IP_IPTABLES"
     modify_setting "${old_content}" "${out_content}" "HOST_ENABLE"
+    modify_setting "${old_content}" "${out_content}" "HOST_METHOD"
     modify_setting "${old_content}" "${out_content}" "CRONTAB_ENABLE"
     modify_setting "${old_content}" "${out_content}" "MODULE_DNS_MODE"
     modify_setting "${old_content}" "${out_content}" "BYPASS_ENABLE"

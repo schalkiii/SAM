@@ -175,13 +175,37 @@ async function updateServiceStatus() {
     }
 
     const host_mount_action = document.getElementById("host-mount-action");
-    if (host_mount_action) {
-        if ( status.host == "已挂载" ) {
-            host_mount_action.classList.add('disable');
-            host_mount_action.textContent = "禁用";
+    const host_mode_hint = document.getElementById("host-mode-hint");
+    const host_method = status.host_method === "mount" ? "mount" : "dns";
+    if (host_mode_hint) {
+        if (status.host === "未启用") {
+            host_mode_hint.textContent = "Hosts 规则已关闭；广告拦截仍由 AdGuardHome 规则负责";
+            host_mode_hint.classList.remove("warning");
+        } else if (host_method === "mount") {
+            host_mode_hint.textContent = "传统挂载会在 mountinfo 暴露 /system/etc/hosts，可能被环境检测命中；建议改回 AGH DNS 重写";
+            host_mode_hint.classList.add("warning");
         } else {
-            host_mount_action.classList.remove('disable');
-            host_mount_action.textContent = "启用";
+            host_mode_hint.textContent = "当前使用 AGH DNS 重写，不产生 /system/etc/hosts 挂载条目";
+            host_mode_hint.classList.remove("warning");
+        }
+    }
+    if (host_mount_action) {
+        if (status.host === "未启用") {
+            host_mount_action.dataset.action = "none";
+            host_mount_action.textContent = "未启用";
+            host_mount_action.disabled = true;
+            host_mount_action.classList.add("disable");
+        } else if (host_method === "mount") {
+            const mounted = status.host === "已挂载";
+            host_mount_action.dataset.action = "mount";
+            host_mount_action.textContent = mounted ? "禁用" : "启用";
+            host_mount_action.disabled = false;
+            host_mount_action.classList.toggle("disable", mounted);
+        } else {
+            host_mount_action.dataset.action = "dns";
+            host_mount_action.textContent = "更新规则";
+            host_mount_action.disabled = false;
+            host_mount_action.classList.remove("disable");
         }
     }
 
@@ -825,8 +849,31 @@ async function serviceControls(text, cmd) {
     }
 }
 
-// 挂载控制
-// 挂载状态必须与 HOST_ENABLE 保持一致，否则下次启动服务会被设置重新挂回去
+// Hosts 规则控制
+// DNS 重写模式只刷新 AGH 本地过滤器；传统挂载模式保留原来的 mount/umount 行为
+async function updateHostRules(){
+    if (mountActionBusy) {
+        showToast("Hosts 操作进行中，请稍候", 2000);
+        return;
+    }
+    mountActionBusy = true;
+    try {
+        toast("正在更新 Hosts 规则，请稍等......");
+        const result = await runShellArgs("update/host.sh", ["update", "force"]);
+        await updateServiceStatus();
+        const message = resultMessage(result);
+        if (message) {
+            showToast("更新失败: " + message, 6000);
+            return;
+        }
+        showToast("Hosts 规则已更新");
+    } finally {
+        mountActionBusy = false;
+    }
+}
+
+// 传统挂载控制
+// 挂载状态必须与 HOST_ENABLE/HOST_METHOD 保持一致，否则下次启动服务会被设置重新挂回去
 async function mountControls(){
     if (mountActionBusy) {
         showToast("挂载操作进行中，请稍候", 2000);
@@ -1072,11 +1119,15 @@ async function resumeModule() {
         adListBtn.addEventListener("click", showAdScope);
     }
 
-    // host 挂载按钮点击事件
+    // host 规则按钮: 根据 HOST_METHOD 分流到 DNS 更新或传统挂载控制
     const hostMountAction = document.getElementById("host-mount-action");
     if (hostMountAction) {
         hostMountAction.addEventListener('click', () => {
-            mountControls();
+            if (hostMountAction.dataset.action === "dns") {
+                updateHostRules();
+            } else if (hostMountAction.dataset.action === "mount") {
+                mountControls();
+            }
         });
     }
 

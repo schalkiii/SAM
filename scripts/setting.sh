@@ -34,6 +34,7 @@ setting_default(){
     TUN_DEVICE=Meta
     IP_IPTABLES=false
     HOST_ENABLE=true
+    HOST_METHOD=dns
     CRONTAB_ENABLE=false
     MODULE_DNS_MODE=2
     BYPASS_ENABLE=false
@@ -272,6 +273,7 @@ setting_validate(){
     setting_fix_enum WHITELIST_MODE 1 1 2
     setting_fix_enum MIHOMO_DNS_MODE fake-ip fake-ip redir-host
     setting_fix_enum SMARTDNS_RESPONSE_MODE first-ping first-ping fastest-ip fastest-response
+    setting_fix_enum HOST_METHOD dns dns mount
 
     # 测速方式只允许 none / ping / tcp:端口 的组合
     if ! setting_speed_check_valid "${SMARTDNS_SPEED_CHECK}"; then

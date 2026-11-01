@@ -179,7 +179,19 @@ service_exec(){
     detach_exec "$@"
 }
 
-# 判断 hosts 是否已挂载到系统路径
+# 判断 hosts 规则是否走 AGH DNS 重写
+# 默认路径: 不修改 /system/etc/hosts，也不在 mountinfo 留下挂载条目
+hosts_dns_enabled(){
+    [ "${HOST_ENABLE}" = "true" ] && [ "${HOST_METHOD}" = "dns" ]
+}
+
+# 判断是否启用传统 hosts bind-mount
+# 保留给明确选择 HOST_METHOD=mount 的用户；该路径会暴露 /system/etc/hosts 挂载
+hosts_mount_enabled(){
+    [ "${HOST_ENABLE}" = "true" ] && [ "${HOST_METHOD}" = "mount" ]
+}
+
+# 判断 hosts 文件是否已挂载到系统路径
 hosts_mounted(){
     mount | grep -q " /system/etc/hosts "
 }
@@ -201,10 +213,20 @@ umount_hosts(){
 # 把当前 hosts 文件重新挂到系统路径
 # mv 替换文件后 inode 会变，bind 挂载点仍指向旧 inode，必须 umount 后重挂
 remount_hosts(){
-    [ "${HOST_ENABLE}" = "true" ] || return 0
+    hosts_mount_enabled || return 0
     [ -f "${HOSTS_FILE}" ] || return 1
     umount_hosts
     mount -o bind "${HOSTS_FILE}" /system/etc/hosts 2>/dev/null
+}
+
+# 按 HOST_METHOD 把 hosts 数据同步到实际生效面
+# dns: 生成 AGH 本地过滤器；mount: 重挂系统 hosts
+sync_hosts_runtime(){
+    if hosts_dns_enabled; then
+        sh "${UPDATE_PATH}/agh_hosts.sh" sync
+    else
+        remount_hosts
+    fi
 }
 
 # 清洗配置文件里的 UTF-8 BOM 与 CR

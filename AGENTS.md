@@ -10,7 +10,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - 卸载（不需要重启）：`sh scripts/manual.sh uninstall`
 - 打包：`python tools/pack_module.py`；只检查用 `--check`；不改源文件用 `--no-write`；打包会跳过 `tools/`、`docs/`、`dist/`、`.workbuddy/` 等非模块内容
 - 广告屏蔽回归测试：`python tools/test_ad_sh.py`（改 `scripts/ad.sh` 后必跑，27 项断言）
-- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_setting_transaction.py`（setting_api.sh 的 set/setarr 事务与端口批量校验，31 项）、`test_backup_semantics.py`（backup.sh，48/52 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34/38 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口/下游上游选择 + check_dns_chain 参数 + WebUI 快检，115 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞/拓扑刷新/信号处理/自动停止结论，36 项）、`test_module_links.py`（SmartDNS 三条软链 + 开机脚本复用 ensure_module_links，22 项）、`test_manual_repair.py`（manual.sh 的目录选择/结构校验/标记清理/zip 成员校验/hosts 叠挂摘除，28 项）、`test_host_sources.py`（hosts/组件下载降级与源顺序，26 项）、`test_setting_keys.py`（配置键五处一致性，15 项）。十二套件合计 428 项（CI/mksh 环境）；Windows 本机 397 项（软链行为、锁阻塞与不可执行位用例按环境门控跳过）。语法自检统一走 `setting.sh` 的 `SETTING_SYNTAX_SHELL`（加载期优先 mksh）——dash 不支持 `SUB_URL=()`，会让合法配置被判成语法错误
+- 其余回归测试按改动选跑（全部由 CI 执行，本地改动后对应跑）：`test_setting_transaction.py`（setting_api.sh 的 set/setarr 事务与端口批量校验，31 项）、`test_backup_semantics.py`（backup.sh，48/52 项）、`test_cron_validate.py`（setting_api.sh 的 cron 与 TTL 边界，34/38 项）、`test_tar_guard.py`（update.sh 的 safe_tar_extract，18 项）、`test_owner_probe.py`（iptables/dns.sh 的 owner_supported，20 项）、`test_dns_entry.py`（DNS 入口/下游上游选择 + check_dns_chain 参数 + WebUI 快检，115 项）、`test_watchdog_logic.py`（watchdog 健康判定/配置阻塞/拓扑刷新/信号处理/自动停止结论，36 项）、`test_module_links.py`（SmartDNS 三条软链 + 开机脚本复用 ensure_module_links，22 项）、`test_manual_repair.py`（manual.sh 的目录选择/结构校验/标记清理/zip 成员校验/hosts 叠挂摘除，28 项）、`test_host_sources.py`（hosts/组件下载降级与源顺序，26 项）、`test_hosts_dns.py`（etc/hosts 转 AGH `$dnsrewrite` 本地过滤器，13 项）、`test_setting_keys.py`（配置键五处一致性，15 项）。十三套件合计 441 项（CI/mksh 环境）；Windows 本机 410 项（软链行为、锁阻塞与不可执行位用例按环境门控跳过）。语法自检统一走 `setting.sh` 的 `SETTING_SYNTAX_SHELL`（加载期优先 mksh）——dash 不支持 `SUB_URL=()`，会让合法配置被判成语法错误
 - 发布前用 WSL 复跑一遍全部套件（`wsl -- python3 tools/test_*.py`）：本机 Windows 会跳过软链行为/锁阻塞/不可执行位用例，WSL 的 mksh 与 CI 一致
 - 版本/文档一致性：`python tools/check_version_sync.py`（9 项：module.prop / update.json / changelog 版本对齐 + README/AGENTS/desc.sh/customize.sh/WebUI 的凭据与 smartdns.conf 同值 + description 非占位，CI 每次 push 跑）
 - 测试编写约定（照现有任一测试为范例）：driver 搭临时模块目录/路径重写、或从脚本**原样抽取真实函数体**（不复制实现，重构会立刻失败）；mock 优先用 **driver 内函数覆盖**，不要用 PATH 注入的假可执行文件（MSYS 的 sh 会把 `/usr/bin` 前置，假程序永远排不上号，test_ad_sh 曾因此出现伪失败）；Checker 类统一输出「通过 N 项, 失败 M 项」；shell 函数不能当变量用（mksh 里 `${fn}` 展开为空）；依赖 PID 可见性的用例用 `live_pid_visible()` 门控（本机 sh.EXE 的 `kill -0` 看不到任何进程）
@@ -43,7 +43,8 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - **IPv6 DNS 阻断**：`iptables/dns.sh` 优先用 REJECT（UDP `icmp6-port-unreachable`、TCP `tcp-reset`），内核不支持时回退 DROP；探测结果写入 `tmp/ipv6.block.mode`，避免守护循环反复删加规则
 - SmartDNS 启动失败时把 `tmp/smartdns.log` 最后 5 行写入 module.log（`smartdns.out` 只有 wrapper 提示）
 - **服务异常检测**：`service.sh` 的 `has_abnormal_service` 返回 0 才表示有服务缺失；正常重启不应写 `tmp/service.abnormal`。异常标记只在全部启用服务恢复后才消费并刷新网络，仍缺失时保留标记等下次
-- **hosts 启动更新**：服务启动后延迟 10 秒拉起，`update/host.sh` 内部再 `wait_network 60` 等网络就绪；单个候选源失败记 INFO，最终失败才记 ERROR；GitHub 与 FCM 都成功才写 24 小时时间戳
+- **Hosts 生效方式**：`HOST_ENABLE` 是规则总开关，`HOST_METHOD=dns|mount` 选择实现；默认 `dns`，由 `scripts/update/agh_hosts.sh` 把 `etc/hosts` 转成 AdGuardHome 本地过滤器 `$dnsrewrite`，不挂载 `/system/etc/hosts`。传统 `mount` 保留给明确选择的用户，WebUI 必须提示其 mountinfo 暴露风险
+- **hosts 启动更新**：服务启动后延迟 10 秒拉起，`update/host.sh` 内部再 `wait_network 60` 等网络就绪；单个候选源失败记 INFO，最终失败才记 ERROR；GitHub 与 FCM 都成功才写 24 小时时间戳；更新完成后按 `HOST_METHOD` 同步 AGH 过滤器或重挂 bind mount
 - **网络刷新**：`base.sh` 的 `refresh_network` 自动刷新最多 10 分钟一次并用目录锁互斥，手动工具/保存配置传 `force`；只有所有启用服务真正恢复后才自动刷新，WiFi 黑名单触发的停止不写异常标记，避免“刷新→WiFi 断开→监控启动/停止”循环
 - **免重启激活/恢复**：`scripts/manual.sh activate` 直接合并 `modules_update`；`repair` 会按 `active -> modules_update -> /data/adb/SAM.previous` 恢复模块目录。激活前做结构校验，上一版保留到 `/data/adb/SAM.previous`，失败回滚。安装器把 `manual.sh` 复制到模块外的 `/data/adb/SAM-activate.sh`；Android 已启动时安装结束后自动延迟执行 `autoactivate`，无需 WebUI/命令行，日志 `/data/adb/SAM-activate.log`。
 - **模块描述**：`scripts/update/desc.sh` 用逐行重写（不依赖 awk ENVIRON）更新 active 的 `module.prop`，并把 `modules_update` 的待激活包标记为“已安装，待重启/激活生效”；写入失败会记 ERROR。刷入后**软重启本身不会激活待生效包**，需完整重启、`manual.sh activate`，或使用会自动先激活的 `manual.sh resume`；WebUI 服务页会显示待激活徽章，监控页显示 module.prop 实际描述
@@ -52,7 +53,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 - `scripts/ad.sh list` 输出广告屏蔽的影响范围（App|路径|状态|备份KB），WebUI「查看影响范围」用它；`scripts/ad.sh hold` 列出广告备份路径与占用总量
 - 广告屏蔽是**改名保留**不是删除：屏蔽时把内容 `mv` 到 `<路径>.samhold`，原位置重建空目录并 `chattr +i`；恢复时改回原名。备份清单在 `/data/adb/SAM-ad-hold.list`（模块目录外，重装不丢）；二次屏蔽发现「有旧备份但未锁定」时**跳过屏蔽并提示先 recovery**（`.prev.*` 另存方案已废弃，见设计文档 §14），rename 失败同样跳过而不是删数据；`cleanup purge` 会清理历史版本遗留的 `.samhold.prev.*` 孤立目录
 - `chattr +i` 会阻止系统卸载时删除 App 数据：`ad.sh cleanup` 在包已不存在时解除 immutable 并删除空壳（默认保留 `.samhold`），`cleanup purge` 才删孤儿备份；由启动、守护循环与 WebUI 工具触发，`ad.sh` 有进程锁
-- hosts 监控监听 `etc/` 目录而不是单个文件：`update/host.sh` 用 mv 原子替换后 inode 会变，必须重挂 bind mount；`inotify/host.sh` 处理 moved_to/close_write
+- hosts 监控监听 `etc/` 目录而不是单个文件：`update/host.sh` 用 mv 原子替换后 inode 会变；`inotify/host.sh` 处理 moved_to/close_write 后按 `HOST_METHOD` 重新生成 AGH 过滤器或重挂 bind mount
 - `scripts/update.sh` 先检查版本并下载，替换当前组件前停服务，替换后做 `-v` 自检并自动回滚；不要在服务运行时直接 `cp` 二进制
 - WebUI「工具」页是各脚本命令的图形入口：新增带子命令的脚本时，同步在 `webroot/index.html` 加 `data-script` / `data-args` 按钮
 - 配置真身只有 `setting.conf`，注释即文档。**新增配置键必须同步五处**：
@@ -65,7 +66,7 @@ Magisk / KernelSU 模块：SmartDNS + AdGuardHome + Mihomo 三合一，负责本
 
 ## 当前状态与下一步
 - 已具备：直通模式（暂停 Mihomo）、WebUI 设置页、守护循环、全量配置备份、打包校验、免重启激活/卸载、定时任务 WebUI、每日自动备份
-- 发布状态：线上最新 Release 为 **v20261026.2**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
+- 发布状态：线上最新 Release 为 **v20261101.1**。逐版变更与发布历史只维护在 `changelog.md`，用户可见摘要见 README「⚠️ 当前已知问题与发布状态」；**规则文件不重复版本叙事**（历史上两次文档漂移都源于此处重复维护）
 - **整组消失的判据**：模块所有停止路径都会写 SERVICE-EVENT（`service.sh stop`、禁用/卸载监控、`sd/agh/mihomo.sh stop`）。「三服务 + watchdog 同一窗口消失 + `service.state=running` + 无事件」只可能是模块外 SIGKILL，不要再去改模块的停止逻辑；恢复靠 supervisor（initrc 托管）与 cgroup 迁出
 - **常驻脚本必须随更新重启**：`manual.sh resume` 在 `service.sh restart` 前先 `kill_monitor`。watchdog / supervisor / wifi.monitor 是常驻 shell 进程，文件更新不会替换内存里的旧代码；不重启会出现「新版本已激活但 watchdog 仍跑旧逻辑、还留在应用 cgroup」。`watchdog` 每轮发现 `tmp/boot.count` 缺失会补写，因为更新会换新 tmp 目录
 - **hosts 卸载必须循环**：同一目标可能因历史卸载残留多层 bind mount，`umount` 只摘一层会留下指向旧模块文件的挂载。base.sh 的 `umount_hosts`、manual.sh 的 `umount_host`、uninstall/inotify 停止路径都循环摘除（上限 8 层，单次失败即停），禁止再写单次 `umount /system/etc/hosts`

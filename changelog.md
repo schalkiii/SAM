@@ -1,3 +1,13 @@
+# 2026.11.01.1
+- Hosts 规则默认改为 AGH DNS 重写
+  - 新增 `HOST_METHOD=dns|mount`，默认 `dns`；`HOST_ENABLE` 保留为规则总开关
+  - `scripts/update/agh_hosts.sh` 把 `etc/hosts` 转成 AdGuardHome 本地过滤器 `$dnsrewrite` 规则，并自动登记到 `filters`
+  - DNS 重写模式不再 bind-mount `/system/etc/hosts`，避免 `mountinfo` 出现独立挂载条目
+  - 传统 bind-mount 仍保留，但必须手动选择 `HOST_METHOD=mount`；WebUI 显示风险说明
+  - `service.sh` / `manual.sh` / `inotify/host.sh` / `webui.sh` / `desc.sh` 全部按 `HOST_METHOD` 分支
+  - WebUI 设置页新增 Hosts 实现方式；挂载页改为 Hosts 规则状态、规则数和模式提示
+  - 新增 `tools/test_hosts_dns.py`，CI 与本地回归覆盖 hosts 转换、过滤器幂等和 AGH 配置追加
+
 # 2026.10.26.2
 - 修复: 免重启激活/恢复后，常驻脚本仍在跑更新前的代码（由用户导出的取证报告暴露）
   - `manual.sh resume` 在 `service.sh restart` 前先 `kill_monitor`，把 watchdog /

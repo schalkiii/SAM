@@ -50,6 +50,15 @@ start(){
     # 补齐 SmartDNS 的软链接(软重启/临时 root 下开机脚本不会执行)
     ensure_module_links
 
+    # Hosts 生效面准备:
+    # - dns: 必须在 AGH 启动前生成/登记本地过滤器
+    # - mount/off: 清空 DNS 重写，避免同一批规则同时走两条路径
+    if hosts_dns_enabled; then
+        sh "${UPDATE_PATH}/agh_hosts.sh" sync > /dev/null 2>&1
+    elif [ "${HOST_ENABLE}" != "true" ] || hosts_mount_enabled; then
+        sh "${UPDATE_PATH}/agh_hosts.sh" clear > /dev/null 2>&1
+    fi
+
     # 启动 SmartDNS
     ${SERVICE_PATH}/sd.sh start
     if [ "${BYPASS_ENABLE}" = "true" ]; then
@@ -106,12 +115,17 @@ start(){
     if [ -s "${AD_HOLD_LIST}" ]; then
         detach_exec "${SCRIPTS_PATH}/ad.sh" cleanup > /dev/null 2>&1
     fi
-    if [ "${HOST_ENABLE}" = "true" ]; then
-        # 只更新文件不挂载是不会生效的，这里补上挂载动作
-        # (在 WebUI 里把「Hosts 挂载」从关改到开时，走的就是这条路径)
+    if hosts_mount_enabled; then
+        # 传统挂载模式: 只更新文件不挂载是不会生效的，这里补上挂载动作
         mount | grep -q " /system/etc/hosts " || mount -o bind "${MODULE_PATH}/etc/hosts" /system/etc/hosts
         # 刚重启时系统网络/解析可能还没就绪，立即拉取会让所有源一起失败；
         # 延后 10 秒再更新，旧 hosts 在更新完成前继续生效
+        detach_exec sh -c "sleep 10; sh '${UPDATE_PATH}/host.sh' update" > /dev/null 2>&1
+    elif hosts_dns_enabled; then
+        # DNS 重写模式: 必须确保历史 bind mount 已摘干净，避免检测器仍看到挂载
+        if hosts_mounted; then
+            umount_hosts
+        fi
         detach_exec sh -c "sleep 10; sh '${UPDATE_PATH}/host.sh' update" > /dev/null 2>&1
     else
         # 关掉开关时要真正卸载，否则旧 hosts 会一直生效
@@ -127,7 +141,7 @@ start(){
         if ! pgrep -f "${INOTIFY_PATH}/module.sh" > /dev/null 2>&1; then
             detach_exec inotifyd "${INOTIFY_PATH}/module.sh" "${MODULE_PATH}" > /dev/null 2>&1
         fi
-        if mount | grep -q " /system/etc/hosts "; then
+        if hosts_mount_enabled || hosts_dns_enabled; then
             if ! pgrep -f "${INOTIFY_PATH}/host.sh" > /dev/null 2>&1; then
                 detach_exec inotifyd "${INOTIFY_PATH}/host.sh" "${MODULE_PATH}/etc" > /dev/null 2>&1
             fi

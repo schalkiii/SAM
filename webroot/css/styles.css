@@ -318,6 +318,10 @@ body {
     color: #f39c12;
 }
 
+.mount-desc.warning {
+    color: #f39c12;
+}
+
 .page-intro {
     padding: 0 15px 10px;
     font-size: 12px;

@@ -282,21 +282,36 @@ autoactivate_module(){
     repair_module
 }
 
-# 挂载 hosts
+# 让 hosts 规则按 HOST_METHOD 生效
 mount_host(){
     target_dir="${1}"
 
-    grep -q "HOST_ENABLE=true" "${target_dir}/setting.conf" 2>/dev/null || {
-        say "Host 未启用，跳过挂载"
-        return 0
-    }
-
-    if mount | grep -q " ${SYSTEM_HOSTS} "; then
-        ok "hosts 已处于挂载状态"
+    if ! grep -q "HOST_ENABLE=true" "${target_dir}/setting.conf" 2>/dev/null; then
+        umount_host
+        [ -f "${target_dir}/scripts/update/agh_hosts.sh" ] && \
+            sh "${target_dir}/scripts/update/agh_hosts.sh" clear > /dev/null 2>&1
+        say "Hosts 未启用，跳过"
         return 0
     fi
 
-    mount -o bind "${target_dir}/etc/hosts" "${SYSTEM_HOSTS}" && ok "hosts 已挂载" || warn "hosts 挂载失败"
+    if grep -q "^HOST_METHOD=mount" "${target_dir}/setting.conf" 2>/dev/null; then
+        [ -f "${target_dir}/scripts/update/agh_hosts.sh" ] && \
+            sh "${target_dir}/scripts/update/agh_hosts.sh" clear > /dev/null 2>&1
+        if mount | grep -q " ${SYSTEM_HOSTS} "; then
+            ok "hosts 已处于挂载状态"
+            return 0
+        fi
+        mount -o bind "${target_dir}/etc/hosts" "${SYSTEM_HOSTS}" && ok "hosts 已挂载" || warn "hosts 挂载失败"
+    else
+        # 缺省和显式 dns 都走 AGH 本地过滤器，避免 mountinfo 暴露 /system/etc/hosts
+        umount_host
+        if [ -f "${target_dir}/scripts/update/agh_hosts.sh" ]; then
+            sh "${target_dir}/scripts/update/agh_hosts.sh" sync
+            say "Hosts 使用 AGH DNS 重写"
+        else
+            warn "缺少 agh_hosts.sh，Hosts DNS 重写未同步"
+        fi
+    fi
 }
 
 # 卸载 hosts 绑定挂载
@@ -323,7 +338,7 @@ start_monitor(){
 
     pgrep -f "${target_dir}/scripts/inotify/module.sh" > /dev/null 2>&1 || \
         detach_start inotifyd "${target_dir}/scripts/inotify/module.sh" "${target_dir}"
-    if mount | grep -q " ${SYSTEM_HOSTS} "; then
+    if grep -q "HOST_ENABLE=true" "${target_dir}/setting.conf" 2>/dev/null; then
         pgrep -f "${target_dir}/scripts/inotify/host.sh" > /dev/null 2>&1 || \
             detach_start inotifyd "${target_dir}/scripts/inotify/host.sh" "${target_dir}/etc"
     fi
@@ -557,10 +572,16 @@ show_status(){
         fi
     done
 
-    if mount | grep -q " ${SYSTEM_HOSTS} "; then
-        ok "hosts 已挂载"
+    if ! grep -q "HOST_ENABLE=true" "${ACTIVE_DIR}/setting.conf" 2>/dev/null; then
+        say "-    hosts 未启用"
+    elif grep -q "^HOST_METHOD=mount" "${ACTIVE_DIR}/setting.conf" 2>/dev/null; then
+        if mount | grep -q " ${SYSTEM_HOSTS} "; then
+            ok "hosts 已挂载(传统模式)"
+        else
+            say "-    hosts 未挂载(传统模式)"
+        fi
     else
-        say "-    hosts 未挂载"
+        ok "hosts 使用 AGH DNS 重写(未挂载)"
     fi
 
     # 只判断链存在会漏掉"链还在但端口已经死了"的情况，

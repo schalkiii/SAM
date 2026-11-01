@@ -17,16 +17,25 @@ if [ -n "${WATCH_NAME}" ] && [ "${WATCH_NAME}" != "hosts" ]; then
 fi
 
 # mv 会先产生 moved_to，编辑器保存则产生 close_write/modify；
-# 这些事件都意味着磁盘上的 hosts 已经换成新内容，需要重挂
+# 这些事件都意味着磁盘上的 hosts 已经换成新内容，需要按当前模式重新生效
 case "${EVENT}" in
     m|0|w)
         [ "${HOST_ENABLE}" = "true" ] || exit 0
         log "i" "检测到 hosts 文件发生改变"
-        log "i" "重新挂载 hosts 文件"
-        if remount_hosts; then
-            log "i" "重新挂载成功"
-        else
-            log "e" "重新挂载失败"
+        if hosts_dns_enabled; then
+            log "i" "重新生成 AGH Hosts DNS 重写规则"
+            if sh "${UPDATE_PATH}/agh_hosts.sh" sync; then
+                log "i" "DNS 重写规则已同步"
+            else
+                log "e" "DNS 重写规则同步失败"
+            fi
+        elif hosts_mount_enabled; then
+            log "i" "重新挂载 hosts 文件"
+            if remount_hosts; then
+                log "i" "重新挂载成功"
+            else
+                log "e" "重新挂载失败"
+            fi
         fi
         ;;
 esac

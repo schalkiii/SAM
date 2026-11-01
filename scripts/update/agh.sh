@@ -190,3 +190,9 @@ modify_web_addr || agh_failed=1
 modify_cache || agh_failed=1
 rm -f "${AGH_TMP}"
 [ ${agh_failed} -eq 0 ] || exit 1
+
+# AGH 配置重写完成后，把 Hosts 数据登记成本地过滤器
+# 这里只在 dns 模式同步；mount/off 模式由 service.sh/manual.sh 清空
+if hosts_dns_enabled; then
+    sh "${UPDATE_PATH}/agh_hosts.sh" sync > /dev/null 2>&1
+fi

@@ -26,6 +26,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - **打包校验**：`python tools/pack_module.py` 强制 LF、写权限位、CRC、`mksh -n` 校验；`.gitattributes` 保证 Windows 检出也是 LF
 - **一键诊断**：WebUI「工具 → 一键诊断」或 `scripts/diagnose.sh` 只读采集服务、端口、AGH 配置校验、防火墙、DNS、MTU 与 IPv6 阻断方式/计数
 - **AGH 配置恢复**：`--check-config` 失败会暂停自动拉起并区分 YAML / schema / 编码原因；schema 不兼容时可从工具页「重置 AGH 配置」恢复内置模板（先完整备份）
+- **Hosts 默认 DNS 重写**：GitHub/FCM/ROM 域名覆盖默认转成 AdGuardHome 本地 `$dnsrewrite` 过滤器，不再 bind-mount `/system/etc/hosts`；传统挂载仍保留，但默认关闭，WebUI 会提示其 mountinfo 暴露风险
 - **IPv6 DNS 快速回退**：阻断优先用 `REJECT`（UDP `icmp6-port-unreachable`、TCP `tcp-reset`），让解析器立即回退 IPv4；内核不支持时记录并回退 `DROP`
 - **Mihomo 默认关闭**：没有订阅地址时它本身也起不来；需要代理时在设置里开启并填写订阅
 - **广告过滤加入 GOODBYEADS 规则集与其放行列表**（AdGuardHome 侧）
@@ -36,7 +37,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 
 ## ⚠️ 当前已知问题与发布状态
 
-- 线上最新 Release 为 **v20261026.2**：在 v20261026.1 的整组消失恢复能力（`supervisor.sh` + KernelSU `initrc` 托管 + cgroup 迁出）之上，修复免重启更新后 watchdog 仍跑旧代码、hosts bind 挂载叠层、boot_count 取证断档；十二套件 428 项全部通过。刷入后可免重启激活（模块管理器安装后自动执行，或「工具 → 激活待更新版本」），激活时 `service.sh start` 会兜底拉起 supervisor、cgroup 迁出即时生效；只有 `initrc` 托管需要下次完整重启（KernelSU 可先试 `ksud initrc refresh`）。
+- 线上最新 Release 为 **v20261101.1**：Hosts 规则默认改为 AdGuardHome DNS 重写，不再 bind-mount `/system/etc/hosts`，`mountinfo` 里不再出现独立挂载条目（这是环境检测最容易命中的一点）。新增 `HOST_METHOD=dns|mount`，默认 `dns`；传统挂载仍保留但需在设置页显式选择，WebUI 会标出其 mountinfo 暴露风险。`service.sh`/`manual.sh`/`inotify`/`webui.sh`/`desc.sh` 全按模式分派，十三套件 441 项全部通过。承继 v20261026.2 的整组消失恢复能力（`supervisor.sh` + KernelSU `initrc` 托管 + cgroup 迁出）与免重启更新修复。
 - 逐版变更、历史修复与已知问题的处理记录只维护在 [changelog.md](changelog.md)。本段不重复版本叙事，避免与 changelog 二次维护后漂移。
 
 ## ⚙️功能
@@ -61,7 +62,7 @@ SAM 是 SmartDNS、AdGuardHome 和 Mihomo 三合一的 Magisk 模块。每一个
 - WebUI 服务页出现「待激活更新」徽章时，说明新包还没激活；此时服务页按钮会变为「激活并恢复新版」，点击会先激活再恢复。监控页「模块描述」显示的是 `module.prop` 里的实际值
 - 如果 KernelSU 模块描述仍是旧状态，先确认 `cat /data/adb/modules/SAM/module.prop` 的 `description`，再返回/刷新模块页；管理器会缓存上次读取的模块列表
 - 广告屏蔽会对目录设置 immutable（`chattr +i`），可能阻止系统卸载时清理 App 数据；卸载 App 前建议先在「工具」页执行「恢复广告文件」。如果直接卸载，模块会在启动和每 5 分钟自动解除已卸载 App 的锁定（默认保留 `.samhold` 备份）；系统卸载当下仍可能提示删除数据失败，可用工具页「清理已卸载 App 及备份」删除孤儿备份
-- hosts 更新默认 24 小时节流；工具页的「更新 hosts」与每周定时任务会强制刷新
+- hosts 更新默认 24 小时节流；工具页的「更新 Hosts 规则」与每周定时任务会强制刷新。默认通过 AGH DNS 重写生效，不会挂载 `/system/etc/hosts`
 - AGH 大版本升级会迁移配置 schema；回退旧二进制后若报 `unknown current schema version`，用「工具 → 重置 AGH 配置」恢复模板（会先完整备份并保留单文件副本，但会丢失面板密码与自定义过滤规则）
 - 禁止该文件随意修改
   - /data/adb/modules/SAM/etc/mihomo/base.yaml
@@ -134,7 +135,7 @@ KernelSU/Magisk 的升级包通常先进入 `/data/adb/modules_update/SAM`，正
 
 如果只在某个 WiFi 下慢，按顺序隔离：
 
-1. 打开「直通模式」测速。仍慢：关闭 Hosts 挂载并停止服务再测；仍慢基本不是模块，查 WiFi/路由器。
+1. 打开「直通模式」测速。仍慢：关闭 Hosts 规则并停止服务再测；仍慢基本不是模块，查 WiFi/路由器。
 2. 直通正常：只停 Mihomo 再测。变快 → TUN/代理；仍慢 → DNS/IPv6。
 3. DNS 方向逐项试：关闭「阻断 IPv6 DNS」、关闭「双栈 IP 优选」、测速方式改 `tcp:443`。
 4. 下载/大流量慢再试 TUN MTU（1500/1400）；高带宽 WiFi 下 gvisor 可能 CPU 打满，测速时看 mihomo 的 CPU。

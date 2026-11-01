@@ -102,8 +102,6 @@ get_host(){
         log "e" "hosts 原子替换失败，保留临时文件供排查"
         return 1
     }
-    # update 用 mv 换掉了 inode，系统里的 bind 挂载仍指向旧文件，必须重挂才生效
-    remount_hosts || log "e" "hosts 重挂载失败，新规则将在下次启动后生效"
     log "i" "写入 hosts 文件"
 }
 
@@ -125,6 +123,10 @@ https://cdn.jsdelivr.net/gh/Mice-Tailor-Infra/fcm-hosts-next@master/fcm_dual.hos
 
 case "$1" in
     update)
+        if [ "${HOST_ENABLE}" != "true" ]; then
+            log "i" "Hosts 规则未启用，跳过更新"
+            exit 0
+        fi
         # 服务每次启动都会调用 update；24 小时内只更新一次，避免重复下载。
         # 手动更新/定时任务用 "update force" 强制刷新。
         host_stamp="${TMP_PATH}/hosts.updated"
@@ -171,6 +173,7 @@ case "$1" in
             log "e" "host 规则部分更新失败，未记录更新时间，下次启动会重试"
         fi
         sam_lock_release "host_update"
+        sync_hosts_runtime || log "e" "Hosts 规则同步失败，请检查当前 HOST_METHOD 对应服务"
         ;;
     *)
         echo "使用: update [force](更新)"

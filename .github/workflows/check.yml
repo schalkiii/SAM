@@ -77,3 +77,7 @@ jobs:
       # hosts 抓取降级(缺 curl / 网络未就绪 / 直连被墙)
       - name: hosts 抓取回归测试
         run: python tools/test_host_sources.py
+
+      # Hosts DNS 重写(etc/hosts -> AGH $dnsrewrite 本地过滤器)
+      - name: Hosts DNS 重写回归测试
+        run: python tools/test_hosts_dns.py

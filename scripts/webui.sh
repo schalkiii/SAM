@@ -30,9 +30,25 @@ get_process_number(){
     echo ${number}
 }
 
-# 获取挂载状态
-get_mount_status(){
-    hosts_mounted && echo "已挂载" || echo "未挂载"
+# 获取 Hosts 规则生效状态
+# DNS 重写模式下不能只看 mount 表，否则会把正常状态误报成"未挂载"
+get_host_status(){
+    if [ "${HOST_ENABLE}" != "true" ]; then
+        echo "未启用"
+        return 0
+    fi
+
+    if [ "${HOST_METHOD}" = "mount" ]; then
+        hosts_mounted && echo "已挂载" || echo "未挂载"
+        return 0
+    fi
+
+    if [ -f "${HOSTS_FILTER_FILE}" ] && grep -q '^||' "${HOSTS_FILTER_FILE}" 2>/dev/null; then
+        host_rule_count=$(grep -c '^||' "${HOSTS_FILTER_FILE}" 2>/dev/null)
+        echo "DNS 重写(${host_rule_count:-0} 条)"
+    else
+        echo "DNS 未生成"
+    fi
 }
 
 # 获取监控
@@ -111,8 +127,8 @@ get_all_status(){
     echo "smartdns=${smartdns_running}"
     echo "agh=${agh_running}"
     echo "mihomo=${mihomo_running}"
-    # 与 hosts_mounted 同一判定(带空格边界)，避免把 /system/etc/hosts.bak 之类误判为已挂载
-    hosts_mounted && echo "host=已挂载" || echo "host=未挂载"
+    echo "host=$(get_host_status)"
+    echo "host_method=${HOST_METHOD}"
 
     wifi_pid=$(get_monitor_pid wifi)
     host_pid=$(get_monitor_pid host)
@@ -233,7 +249,7 @@ case "$1" in
         get_process_number
         ;;
     mount)
-        get_mount_status
+        get_host_status
         ;;
     allstatus)
         get_all_status

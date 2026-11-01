@@ -95,15 +95,16 @@
                 <h2>挂载</h2>
             </div>
             <div class="content-section">
-                <h3>Hosts</h3>
+                <h3>Hosts 规则</h3>
                 <div class="mount-item" data-id="1">
                     <div class="mount-info">
-                        <h4>广告拦截 | GitHub加速 | 小米ROM下载加速</h4>
-                        <div class="mount-desc">源路径: /data/adb/modules/SAM/etc/hosts </br> 目标路径: /system/etc/hosts</div>
-                        <span id="host-mount-status" class="mount-status status-inactive">未挂载</span>
+                        <h4>GitHub加速 | FCM | 小米ROM下载加速</h4>
+                        <div class="mount-desc">规则源: /data/adb/modules/SAM/etc/hosts </br> 默认生效方式: AdGuardHome DNS 重写；传统模式才会挂载 /system/etc/hosts</div>
+                        <div id="host-mode-hint" class="mount-desc">当前使用 AGH DNS 重写，不产生 /system/etc/hosts 挂载条目</div>
+                        <span id="host-mount-status" class="mount-status status-inactive">未启用</span>
                     </div>
                     <div class="mount-actions">
-                        <button id="host-mount-action" class="action-btn toggle-btn disable">禁用</button>
+                        <button id="host-mount-action" class="action-btn toggle-btn disable">更新规则</button>
                     </div>
                 </div>
             </div>
@@ -341,8 +342,15 @@
                 </div>
 
                 <div class="setting-row">
-                    <div class="setting-info"><h4>Hosts 挂载</h4><div class="setting-desc">用模块 hosts 覆盖系统 hosts(广告拦截、GitHub 加速)</div></div>
+                    <div class="setting-info"><h4>Hosts 规则</h4><div class="setting-desc">启用 GitHub/FCM/小米 ROM 域名覆盖。默认由 AdGuardHome 以 DNS 重写实现，不挂载系统 hosts；广告拦截仍由 AGH 规则负责，不依赖此开关</div></div>
                     <label class="switch"><input type="checkbox" data-key="HOST_ENABLE"><span class="track"></span></label>
+                </div>
+                <div class="setting-row">
+                    <div class="setting-info"><h4>Hosts 实现方式</h4><div class="setting-desc">AGH DNS 重写：不修改 /system/etc/hosts，避免 mountinfo 暴露独立挂载。传统挂载：直接覆盖系统 hosts，但会在挂载表出现 /system/etc/hosts，可能被环境检测命中，仅手动选择</div></div>
+                    <select class="setting-select setting-select-wide" data-key="HOST_METHOD">
+                        <option value="dns">AGH DNS 重写（推荐）</option>
+                        <option value="mount">传统 hosts 挂载（不推荐）</option>
+                    </select>
                 </div>
                 <div class="setting-row">
                     <div class="setting-info"><h4>定时任务</h4><div class="setting-desc">按 etc/crontabs/root 定时执行</div></div>
@@ -471,7 +479,7 @@
                     <button class="tool-btn" data-script="ad.sh" data-args="hold">备份占用</button>
                     <button class="tool-btn" data-script="ad.sh" data-args="cleanup">清理已卸载 App 的锁定</button>
                     <button class="tool-btn danger" data-script="ad.sh" data-args="cleanup purge" data-confirm="1">清理已卸载 App 及备份</button>
-                    <button class="tool-btn" data-script="update/host.sh" data-args="update force">更新 hosts</button>
+                    <button class="tool-btn" data-script="update/host.sh" data-args="update force">更新 Hosts 规则</button>
                 </div>
                 <div class="setting-desc">这些按钮是立即执行一次；是否随服务自动屏蔽由「设置 → 屏蔽 App 广告文件」决定。「清理已卸载 App 的锁定」只解除 immutable 并删除空壳；带「及备份」会同时删除孤儿 .samhold 备份，不可恢复。</div>
             </div>

@@ -48,7 +48,15 @@ out_content+=" 🚦直通: "
 [ "${BYPASS_ENABLE}" = "true" ] && out_content+="[已开启]" || out_content+="[已关闭]"
 
 out_content+=" 🌐Host: "
-[ "${HOST_ENABLE}" = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
+if [ "${HOST_ENABLE}" = true ]; then
+    if [ "${HOST_METHOD}" = "mount" ]; then
+        out_content+="[挂载]"
+    else
+        out_content+="[DNS重写]"
+    fi
+else
+    out_content+="[已禁用]"
+fi
 out_content+=" ⏰定时: "
 [ "${CRONTAB_ENABLE}" = true ] && out_content+="[已启用]" || out_content+="[已禁用]"
 

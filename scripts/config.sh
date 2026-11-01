@@ -40,6 +40,11 @@ AGH_BIN="AdGuardHome"
 AGH_PATH="${MODULE_PATH}/etc/AdGuardHome"
 # AdGuardHome 配置
 AGH_CONF="${AGH_PATH}/${AGH_BIN}.yaml"
+# AdGuardHome 本地 Hosts 过滤器: 把 etc/hosts 转成 $dnsrewrite 规则，避免挂载系统 hosts
+HOSTS_FILTER_DIR="${AGH_PATH}/data/userfilters"
+HOSTS_FILTER_FILE="${HOSTS_FILTER_DIR}/sam-hosts.txt"
+HOSTS_FILTER_NAME="SAM Hosts (DNS)"
+HOSTS_FILTER_ID=900000001
 
 # Mihomo 路径
 MIHOMO_BIN="mihomo"
